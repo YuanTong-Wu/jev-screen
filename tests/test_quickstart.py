@@ -27,7 +27,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))  # run without `pip install -e .`
 import safe_env  # noqa: E402,F401  (suite-wide network kill switch: tests/safe_env.py)
 
-from jevscreen import calib, cli, config, consent, guard, keys, quickstart as qs, screen, store  # noqa: E402
+from jevscreen import calib, cli, config, consent, guard, keys, quickstart as qs, review_cli, screen, store  # noqa: E402,E501
 from jevscreen.http import Blocked  # noqa: E402
 from jevscreen.sources import financedatabase_local as fd  # noqa: E402
 from test_screen import FakeJev, FakeKeywords, seed  # noqa: E402
@@ -163,8 +163,18 @@ class QuickCase(unittest.TestCase):
         kw.setdefault("spawn", lambda cfg, key: self.spawned.append(key))
         return qs.front(self.cfg, idea, **kw)
 
+    # what the simulated agent does with the review deck of the first result (scope design §7): 'skip'
+    # (review_cli.judge --skip: the system's list stands, the flow goes on as before) or 'keep' (left pending: the
+    # review tests drive it themselves)
+    review = "skip"
+
     def work(self, key=None):
-        return qs.worker(self.cfg, key or qs.idea_key(IDEA), self.deps)
+        key = key or qs.idea_key(IDEA)
+        code = qs.worker(self.cfg, key, self.deps)
+        ar = ((qs.load_job(self.cfg, key) or {}).get("agent_review") or {})
+        if self.review == "skip" and ar.get("state") == "pending":
+            review_cli.judge(self.cfg, ar["deck_id"], skip=True)
+        return code
 
     def job(self, idea=IDEA):
         return qs.load_job(self.cfg, qs.idea_key(idea))
@@ -348,7 +358,8 @@ class TestWorker(QuickCase):
         self.assertTrue(out["page_opened"])
         self.assertEqual([r["name"] for r in out["top"]], ["RoboCorp", "Robo Two"])
         self.assertEqual(out["summary"]["listed"], 2)
-        self.assertEqual(len(out["next_steps"]), 3)
+        self.assertEqual(len(out["next_steps"]), 2)        # cards are not a human step (scope design §11)
+        self.assertNotIn("borderline companies", " ".join(n["text_en"] for n in out["next_steps"]))
         self.assertIn("RoboCorp", out["text_en"])
         self.assertEqual(self.calls.canary, 1)
         self.assertLess(out["spent_usd"], 1.0)

@@ -69,7 +69,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from . import agent_cli, ondemand_cli, quickstart_cli
-from . import why_cli
+from . import review_cli, why_cli
 
 EXIT_OK, EXIT_ERROR, EXIT_BLOCKED, EXIT_LOCKED, EXIT_BUSY, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
 EXIT_BUDGET, EXIT_JEV_UNAVAILABLE = 5, 6       # screen / answer only
@@ -311,6 +311,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the English sentence the Jev questions use (instead of the local translation); a "
                          "--from-run inherits its base run's and refuses a different one")
     sc.add_argument("--no-page", action="store_true", help="do not write page.html (the result page)")
+    sc.add_argument("--scope-scan", action="store_true",
+                    help="also read the facet layer (role / scope / geo of each verified company, a few cents at "
+                         "most, cached): what the scope questions and the human's scope answers need; on by itself "
+                         "when the sieve has an enforced scope answer or the --from-run base read facets")
     sc.add_argument("--rank", choices=RANK_CHOICES, default=None, action=_Given,
                     help="label (default: the L2 label's weight) or ev (the mean probabilities; measured, not the "
                          "default)")
@@ -362,6 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
     why_cli.add_sieve_subparsers(svs)   # sieve new / set / add / remove / pin / unpin / list; check --json / --run
     agent_cli.add_parsers(sub)   # doctor, keys, consent (agent-first operation)
     why_cli.add_parsers(sub)     # why
+    review_cli.add_parsers(sub)  # judge, decide (your AI's review, the human's scope answers)
     ondemand_cli.add_parsers(sub)   # fetch-docs
     add_pack_parser(sub)
     quickstart_cli.add_parsers(sub)   # quickstart, page
@@ -1176,6 +1181,7 @@ def cmd_screen(args, cfg) -> int:
             read_offset=getattr(args, "read_offset", 0), from_run=getattr(args, "from_run", None),
             l1_new=bool(getattr(args, "l1_new", False)), sieve=getattr(args, "sieve", "auto"), rank=_screen_arg(args, "rank", getattr(args, "rank", None), u),
             shells=_screen_arg(args, "shells", getattr(args, "shells", None), u),
+            facet_scan=True if getattr(args, "scope_scan", False) else "auto",
             **({"idea_en": args.idea_en} if getattr(args, "idea_en", None) else {}))
     except ValueError as e:
         print(f"error: screen: {e}", file=sys.stderr)
@@ -1302,10 +1308,12 @@ def _deck_for(cfg, con, result: dict[str, Any], out_dir: Path, max_cards: int
     """(cards.json deck, inputs rebuilt) of a finished run, from results.json, its stored L2 reads (load_pool),
     l2_inputs.jsonl and the idea's sieve."""
     from . import calib
+    from . import review
     sv, _path = _run_sieve(cfg, result)
     pool = calib.load_pool(con, result["run_id"], result.get("params"))
     inputs, rebuilt = _run_inputs(con, result, out_dir, pool)
-    return calib.build_deck(result, inputs, sv, max_cards=max_cards, pool=pool), rebuilt
+    agent = review.agent_verdicts(cfg, result.get("idea") or "") if result.get("idea") else {}
+    return calib.build_deck(result, inputs, sv, max_cards=max_cards, pool=pool, agent=agent), rebuilt
 
 
 def _deck_text(deck: dict[str, Any], path: Path | None, run_id: str | None = None, *, lang: str = "zh",
@@ -1513,8 +1521,10 @@ def cmd_answer(args, cfg) -> int:
         say(T(f"已撤销第 {args.undo} 条回答：{who}（{calib.answer_words_zh(removed.get('want'), removed.get('chip'))}）",
               f"Removed answer {args.undo}: {who} ({calib.answer_words_en(removed.get('want'), removed.get('chip'))})")
             + (f" → {sv_path}" if verbose else ""))
-        say(calib.render_diff(result, calib.rerank_result(result, saved, pool=pool),
-                              title=T("撤销后（免费）", "After the undo (free)"), lang=lang))
+        from . import review as _review
+        say(calib.render_diff(result, calib.rerank_result(result, saved, pool=pool, inputs=inputs,
+                                                          agent=_review.agent_verdicts(cfg, idea)),
+                              title=T("撤销后（免费）", "After the undo (free)"), lang=lang, sieve=saved))
         summary["undone"] = removed
         return done(EXIT_OK, "undone")
 
@@ -1554,7 +1564,10 @@ def cmd_answer(args, cfg) -> int:
               f"These cards come from an earlier version ({run_id}); the answers re-rank the newest version "
               f"({base_id}), so companies added since are kept."))
         summary["applied_to_run"] = base_id
-    stage_a = calib.rerank_result(base_result, saved, pool=base_pool)
+    from . import review as _review
+    agent_now = _review.agent_verdicts(cfg, idea)
+    stage_a = calib.rerank_result(base_result, saved, pool=base_pool, inputs=calib.load_inputs(
+        base_result.get("output_dir") or out_dir), agent=agent_now)
     say(calib.render_diff(base_result, stage_a, lang=lang))
     summary.update(answers=[a._asdict() for a in answers],
                    stage_a={"rows": [r["security_id"] for r in stage_a["rows"]],
@@ -1993,6 +2006,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
 }
 COMMANDS.update(agent_cli.COMMANDS)
 COMMANDS.update(why_cli.COMMANDS)
+COMMANDS.update(review_cli.COMMANDS)
 COMMANDS.update(ondemand_cli.COMMANDS)
 COMMANDS.update(quickstart_cli.COMMANDS)
 

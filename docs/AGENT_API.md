@@ -382,7 +382,10 @@ per run, 1.5 s between requests.
 
 ```
 jevscreen quickstart "<idea>" [--idea-en TEXT] [--approve-budget USD] [--min-mcap 1e9] [--countries A,B]
-        [--lang auto|zh|en] [--fd-file PATH] [--no-open] [--retry] [--new-run] [--fill-descriptions yes|no] [--json]
+        [--lang auto|zh|en] [--fd-file PATH] [--no-open] [--retry] [--new-run] [--fill-descriptions yes|no]
+        [--facets JSON] [--json]
+jevscreen judge --deck ADECK_ID (--file ANSWERS.json | --skip) [--json]         # $0, your AI's review
+jevscreen decide "s1=no c2=yes keep=TICKER" --run RUN_ID [--via chat|page] [--json]   # $0, the human's answers
 jevscreen quickstart --status [IDEA | --key K] [--wait S] [--json]
 jevscreen page [RUN_ID|OUT_DIR|latest] [--lang zh|en] [--open] [--text] [--json] # $0, rebuilds page.html
 jevscreen page RUN --export-strings FILE | --import-translations FILE [--json]   # $0, your translations
@@ -583,6 +586,104 @@ and a hit refuses the write. The result page is scanned the same way.
 
 `jevscreen doctor --json` carries `quickstart_command` (the front command with a placeholder idea).
 
+### Scope questions and your AI's review (`judge`, `decide`)
+
+After the first result the human answers no calibration cards. Instead:
+
+1. **Facet layer** (inside the screen, `facet_scan`): a cheap Jev choice question per L2-verified company (at most
+   150, plus pins and checks) over the **same L2 text**: `role` (supplier / buyer / holding / upstream parts /
+   hardware sold to operators / target only / unclear), for a technology idea `scope` (specific / general only),
+   for a geography idea `geo` (in the target / outside only). Read 0 of every item, 2 more reads when read 0 lies in
+   0.40-0.75 (the mean decides). Typical cost $0.01-0.02 (at most about $0.025), a cached rerun $0; skipped with a
+   note when the approval's rest cannot cover it (labels are then carried from the base run by evidence_sha). L1 is
+   never re-read or re-priced. `results.json` gains `facets` `{company_key: {role|scope|geo: {label, p, n,
+   evidence_sha}}}`, `scope` and `excluded_by_scope` / `excluded_by_agent`.
+2. **Your AI's review**: when the result is done the status is `needs_agent` (exit 11) with ONE pending item:
+
+```jsonc
+{"id": "agent_review", "ask_agent": true, "blocking": true, "deck_id": "adeck-scr-…-A",
+ "deck_path": "/…/screens/…/agent_deck_A.json", "items": 23,
+ "record_command": "jevscreen judge --deck adeck-scr-…-A --file <answers.json> --json",
+ "skip_command": "jevscreen judge --deck adeck-scr-…-A --skip --json", "instructions_en": "…"}
+```
+
+   `text_<lang>` is only 「结果出来了，我正在逐家核对…」: the list is not relayed yet. The page shows the list with a
+   "your AI is checking" note and keeps refreshing. If nothing is recorded within 600 s, `--status` finalizes the
+   questions without the AI (`agent_review.state: "timed_out"`, a note) and the status is `done`.
+
+   The deck (`jevscreen.agent_deck/1`, a local file in the run folder; personal use, keep it on this computer):
+   `items[]` = `{n, group: top|held|below_cut|gap|removed_by_scope|followup, held_sid, held_kind, company_key,
+   security_id, name, name_zh, rank, system: {label, p_pos, p_explicit, edge, facets}, evidence: {kind, source, form,
+   filing_date, lang, sentences: [[1, "…"], …]}, evidence_sha, mentions_idea}`; the header carries `criteria_en` (the
+   L2 criteria plus the human's scope answers as sentences), `chips` (c-k with their zh/en words), `held_questions`
+   (`[{sid, kind, criterion_en}]`), `instructions_en`, `answer_schema`, `record_command`, `skip_command`,
+   `licence_note`. Part A (<= 25: the top 10, the side-V rows of the provisional scope splits, <= 3 below-cut / gap
+   rows) blocks; part B (ranks 11..max_out, strong rows removed by scope, below-cut, gap; <= 45) never blocks
+   (`agent_review.part_b`); follow-up parts `F<n>` come after a decide brings unread companies into the list.
+
+   The answers file (`jevscreen.agent_answers/1`):
+
+```jsonc
+{"format": "jevscreen.agent_answers/1", "deck_id": "adeck-scr-…-A", "agent": "<optional: product/model>",
+ "answers": {"1": {"v": "yes", "level": "explicit", "quote_ids": [3, 4], "why": "<human's language, <= 80 字 / 160>"},
+             "2": {"v": "no", "chip": "k", "quote_ids": [2], "why": "…", "quote_tr": "<only when evidence.lang differs>"},
+             "3": {"v": "unsure", "unsure_kind": "thin", "why": "…"},
+             "7": {"v": "no", "chip": "k", "quote_ids": [1], "why": "…", "in_group": true, "short": "<= 10 字 / 40"}}}
+```
+
+   yes needs `level`; no needs a chip of the deck; yes / no cite 1-3 existing `quote_ids` (else the answer counts as
+   unsure, `quote_bad`); an unsure may cite the sentences it is unsure about (an escalation without cited
+   sentences quotes the item's first sentences); `why` / `short` in the other language than `human_lang` are
+   dropped (the chip or level words stand in); a missing item is "not reviewed". The answers go to `<home>/sieves/<idea_key>.agent.json`
+   (`jevscreen.agent_verdicts/1`), a separate lower-precedence layer: they never set the human's `user_verdict`,
+   never re-score and never list an unverified company; a verdict applies only to the evidence it was given for.
+   Weak disagreements are applied without asking; an answer is **escalated** to the human (never applied) when:
+   E1 unsure about the meaning on a listed / gap / below-cut row, E2 a no on a row the system is confident about,
+   E3 a yes on an unverified row that would make the list, E4 a conflict with the human's own answer. Thin
+   evidence gets a gap badge, never a question.
+
+   `jevscreen judge --deck ID (--file F | --skip) [--json]` (free, seconds): `{applied, queued, run_id, removed,
+   escalated, questions, defaults, part_b, text_zh, text_en}`. Exit 0; 1 a bad file / deck (`error_zh`,
+   `error_en`); 3 the database stayed busy. With answers it makes a new version (`change_kind: agent`, rank_only:
+   no Jev call, $0); `--skip` keeps the list as it is.
+3. **The human round** (status `done`): `ask_now` (at most 3, optional, in order: `fill_descriptions`, at most 2
+   `scope_question`s, at most 2 `confirm_company` escalations on the relayed top 10 or E3/E4, the fetch questions),
+   `later` (the rest, JSON only; the page's question box also shows the open scope questions and up to 3 open
+   escalations by rank), `scope` `{questions,
+   defaults, answered}`, `escalations`, `agent_summary` `{read, annual, profile, removed: [<= 5 {security_id, name,
+   chip_words_zh, chip_words_en}], removed_total, text_zh, text_en}`, `agent_review` `{state: pending | done |
+   skipped | timed_out | none, deck_id, deck_path, part_b}`, `next_action_en`, and `agent_optional` (the optional
+   `facets` request before the screen). The first response whose `ask_now` is not empty fixes the chat round: the same
+   `ask_now` comes back on every status until a `decide` or a new version, then every new item goes to `later`
+   (a response without questions, e.g. a timed-out review, uses no round). A scope question:
+
+```jsonc
+{"id": "scope_question", "sid": "s1", "ask_human": true, "optional": true,
+ "question_zh": "AI 读摘录后认为，名单前 40 家里有 9 家卖硬件或设备给提供「数字支付」的公司…这类公司要不要留在名单里？（不要：…）",
+ "question_en": "Reading the excerpts, the AI thinks 9 of the top 40 … Keep this kind of company on the list? (Drop: …)",
+ "answer_words": {"zh": {"yes": "要", "no": "不要", "unsure": "不确定"}, "en": {"yes": "Keep", "no": "Drop", "unsure": "Not sure"}},
+ "tokens": {"yes": "s1=yes", "no": "s1=no", "unsure": "s1=?"},
+ "record_command": "jevscreen decide '<tokens>' --run scr-… --via chat --json"}
+```
+
+   A question is asked only when the list really splits on that boundary (at least max(4, 10%) of the listed
+   companies on the side it would remove, at least max(4, 20%) that clearly supply), is about kinds of company
+   (never one company), says it is the AI's inference, and gives 3 + 2 example companies. 不要 removes the kind
+   (the scope-only "the excerpt names only the broad category" question demotes instead), 要 keeps it, 不确定 lets
+   your AI's call on each one stand. The answer is recorded in `sieve.scope_answers` (never in `sieve.rules`; the L2
+   question does not change) and applied directly. Idea-wording defaults (`--facets` `implied_no`) are applied
+   the same way, shown as one line each with their undo token (`s2=yes`).
+
+   `jevscreen decide "<tokens>" --run RUN [--via chat|page] [--json]` (free, seconds): tokens `sN=yes|no|?`,
+   `cN=yes|no|?` (an escalation: yes/no becomes the human's pin, `via: escalation`), `keep=TICKER` / `drop=TICKER`
+   (override your AI's call: a human pin, `via: override_agent`), `clear=TICKER` (undo those pins). Open questions
+   the tokens omit are recorded as skipped (not asked again). Output `{applied, queued, run_id, diff_zh, diff_en,
+   followup, later}`; exit 0, 1 an unknown token / id / ticker, 3 busy. While the idea's profile fill runs, judge
+   and decide save the answers and return `queued: true`; the fill re-applies them when it ends.
+
+`jevscreen why` explains removals by a scope answer (`stop: scope_removed`, with the answer, the inference and the
+undo token) and by your AI (`stop: agent_removed`, with its words and the cited excerpt).
+
 ### The one page per idea
 
 `<home>/pages/<idea_key>.html` is the only page the human needs (owner decision 2026-09-27). Top to bottom:
@@ -595,11 +696,14 @@ and a hit refuses the write. The result page is scanned the same way.
 2. **Progress**: per data item done / total with a bar (the stock list, the profiles with MB downloaded, the AI's
    first read n/N, its check n/N, the annual reports fetched n/N), an ETA from the stage's own pace, the dollars
    spent against the approved cap; blocks, cooldowns and stops in red, in plain words.
-3. **Scope questions**: an empty slot (`data.questions.items`, hidden while empty) for 1-2 questions with answer
-   buttons that build the line to paste to the AI (`data.questions.template` with `{answers}`), plus a copy button.
+3. **Scope questions**: at most 2 questions about the idea's boundary (`data.questions.items`, from the version's
+   `review.json`; hidden while empty and while your AI is still checking), each with its effect in plain words and
+   要 / 不要 / 不确定 (Keep / Drop / Not sure) buttons whose values are `decide` tokens; the page joins the clicked
+   ones into the line to paste to the AI (`data.questions.template`: `jevscreen decide "{answers}" --run <run_id>
+   --via page`), plus a copy button. The idea-wording default lines (`data.questions.notes`) sit above them.
 4. **Results**: a compact top-10 table, then one expandable row per company (evidence with the translation /
-   original toggle; labels fact / inference / gap / your or your AI's call; source links), the unconfirmed
-   companies, the gaps.
+   original toggle; labels fact / inference / gap / your or your AI's call; source links), the companies your scope
+   answers or your AI removed (each with its reason, marked inference), the unconfirmed companies, the gaps.
 
 There are no card buttons and no answer bar on the page: the cards stay a CLI tool for you (`jevscreen cards`,
 `jevscreen answer`). The status part is the data block's `live` object (jevscreen.pagestatus): it is built from the

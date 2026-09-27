@@ -98,8 +98,27 @@ def l2_label(text: str) -> tuple[str, dict[str, float]]:
     return "insufficient", {"explicit": 0.05, "partial": 0.15, "contradicted": 0.1, "insufficient": 0.7}
 
 
+def facet_label(question, text: str) -> tuple[str, dict[str, float]]:
+    """Default facet answer of the fakes (question keys facet_role / facet_scope / facet_geo): the family's keep label
+    (the first criterion) with 0.85, unless FACET_KEYWORDS names another label for a word of the text."""
+    labels = list(question.criteria)
+    fam = question.key[len("facet_"):]
+    t = text.lower()
+    for word, fam_w, label, p in FACET_KEYWORDS:
+        if fam_w == fam and word in t and label in labels:
+            rest = [x for x in labels if x != label]
+            return label, {label: p, rest[0]: round(1 - p, 4)}
+    return labels[0], {labels[0]: 0.85, labels[-1]: 0.15}
+
+
+# (word in the L2 text, family, label, probability): the fixtures' facet answers (e.g. "pos" -> hardware)
+FACET_KEYWORDS: list[tuple[str, str, str, float]] = [("pos terminal", "role", "hardware", 0.9),
+                                                      ("gearbox", "role", "upstream", 0.9)]
+
+
 class FakeJev:
-    """Deterministic JevClient stand-in: labels by keyword, $0.01 per request of `pack_size` items."""
+    """Deterministic JevClient stand-in: labels by keyword, $0.01 per request of `pack_size` items. Facet questions
+    (facet_*) are answered by facet_label."""
     COST = 0.01
 
     def __init__(self, cfg, *, run_id, layer, budget_usd, dry_run=False, pack_size=8, log=None):
@@ -125,10 +144,17 @@ class FakeJev:
         return {"requests": n, "items": len(items), "est_input_tokens": sum(len(i.text) for i in items) // 4,
                 "est_cost_usd": n * self.COST, "basis": "fake"}
 
+    def estimate_uncached(self, items, question):
+        return self.estimate(items, question)      # the fake keeps no answer cache: every item is priced
+
     def classify(self, items, question):
         assert not self.dry_run, "dry run must not classify"
         self.classified.append((list(items), question))
-        fn = l1_label if question.key == "fit" else l2_label
+        if question.key.startswith("facet_"):
+            def fn(text, _q=question):
+                return facet_label(_q, text)
+        else:
+            fn = l1_label if question.key == "fit" else l2_label
         out = []
         for i in range(0, len(items), self.pack_size):
             pack = items[i:i + self.pack_size]

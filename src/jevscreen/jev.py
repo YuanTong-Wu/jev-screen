@@ -1007,6 +1007,32 @@ class JevClient:
                 "est_reserved_usd": round(tokens_cost_usd(tokens) * self.reserve_factor, 8),
                 "provider": self.provider.name, "model": self.provider.model}
 
+    def estimate_uncached(self, items: list[Item], question: Question) -> dict:
+        """The cache-aware estimate: like estimate(), but only the items without a stored ok answer (the item_key
+        lookup of the reuse cache) are priced; cached_items counts the free ones. A busy store prices everything
+        (an upper bound, never an under-estimate)."""
+        keys: dict[int, str] = {}
+        for pos, item in enumerate(items):
+            issuer, text, _note, skip = _clean_item(item, self.max_text_chars)
+            if not skip:
+                keys[pos] = item_key(question, issuer, text, self.provider)
+        prior: dict[str, dict] = {}
+        if keys:
+            try:
+                prior = self._item_lookup(set(keys.values()))
+            except store.StoreLocked:
+                prior = {}
+        miss = [items[p] for p, k in keys.items() if not (prior.get(k) or {}).get("ok")]
+        if miss:
+            est = self.estimate(miss, question)
+        else:
+            est = {"requests": 0, "items": 0, "est_input_tokens": 0, "est_cost_usd": 0.0, "basis": CALIBRATION_BASIS,
+                   "est_output_tokens": 0, "skipped_empty": 0, "truncated": 0, "pack_size": self.pack_size,
+                   "est_reserved_usd": 0.0, "provider": self.provider.name, "model": self.provider.model}
+        est["cached_items"] = len(keys) - len(miss)
+        est["basis"] = f"{est.get('basis') or ''}; items already answered (cache) are free"
+        return est
+
     # -- classify
     def classify(self, items: list[Item], question: Question) -> list[dict]:
         items = list(items)

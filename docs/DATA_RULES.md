@@ -524,6 +524,25 @@ EDINET is not fetched on demand. Every company still on a profile gets a reason 
   which some company got no answer adopts nothing, and only a rule set that passed together is adopted (never the
   passing singles of a rejected combination). The agreement is in-sample (用你的回答算的) and is labelled so. Nothing
   numeric is fitted.
+- Scope answers (`sieve.scope_answers`, written by `jevscreen decide` and by the idea-wording defaults of
+  quickstart `--facets`): the human's answer to a question about a KIND of company (a buyer, an upstream parts
+  maker, hardware sold to operators, a holding, a company that only uses the target, business outside the target
+  place, an excerpt naming only the broad category), never about one company. They never enter `sieve.rules` or the
+  L2 question. They are enforced in the ranking step over the facet labels (facet layer: cheap Jev choice questions
+  over the same L2 text, `screen_results` layers `facet_role` / `facet_scope` / `facet_geo`, results.json `facets`)
+  at p >= 0.60 (a question is asked only at p >= 0.70): 不要 removes that kind (excerpt-only: moves it to the end),
+  directly and reversibly, every removal listed with its reason (推断) and one undo token; an answer is tied to the
+  sieve's facets (`facets_sha`) and goes inert when they change. Idea-wording defaults (`source: idea_wording`) must
+  quote the idea's own words and are shown with their undo token. 精调 rules that contradict a scope answer are not
+  adopted.
+- The user's AI's review (`data/sieves/<idea_key>.agent.json`, `jevscreen judge`): the AI reads the same excerpt
+  the system read (the deck is a local file in the run folder; personal use, covered like the rest of the run's
+  outputs) and answers yes / no / unsure per company citing sentence numbers. Its calls are a separate layer below
+  the human's: never `user_verdict`, never a re-score, never an unverified company listed, only on the evidence it
+  read (`evidence_sha`). Strong disagreements and unsure meanings go to the human as optional questions; weak ones
+  apply with the reason shown. Precedence in the ranking: scope answers, then the AI's calls, then the human's pins
+  (a human pin wins over both). A new version made from answers is `rank_only`: the stored answers re-ranked, no Jev
+  call, $0 (`params.rank_only`, `change_kind` scope | agent | decide | reapply).
 - Repeated reads: L2 items whose read-0 P(explicit)+P(partial) lies in 0.30-0.75 get `--reads K` (default 3) reads
   in total, each a separate cache entry (`Question.read` salts the item key only when > 0, so read-0 keys and the
   whole cache stay valid) with reshuffled packets; the label is the argmax of the MEAN probabilities. Rows with a mean

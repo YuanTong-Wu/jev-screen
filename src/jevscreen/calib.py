@@ -43,6 +43,9 @@ SIEVE_FORMAT = "jevscreen.sieve/1"
 CARDS_FORMAT = "jevscreen.cards/1"
 WANTS = ("explicit", "partial", "no", "unsure")
 PIN_WANTS = ("explicit", "partial", "no")
+# how a human pin was made: a card answer (no via / 'card'), `sieve pin`, an escalation the human answered, or the
+# human overriding their AI's call (keep= / drop= of `jevscreen decide`)
+PIN_VIAS = ("card", "pin", "escalation", "override_agent")
 USER_ONLY_NOTE = "用户判断（年报未写明）"
 LANGS = screen.LANGS
 
@@ -455,13 +458,16 @@ def validate_sieve(data: Any) -> list[str]:
             errs.append(f"examples[{i}].want must be one of {', '.join(WANTS)}")
         if ex.get("source", "card") not in ("card", "sieve"):
             errs.append(f"examples[{i}].source must be 'card' or 'sieve'")
+        if ex.get("via") is not None and ex["via"] not in PIN_VIAS:
+            errs.append(f"examples[{i}].via must be one of {', '.join(PIN_VIAS)}")
         if chip is not None:
             if chip not in YES_CHIPS + NO_CHIPS:
                 errs.append(f"examples[{i}].chip must be one of a-k")
             elif (chip in YES_CHIPS) != (want in ("explicit", "partial")) or want == "unsure":
                 errs.append(f"examples[{i}].chip {chip!r} does not fit want {want!r}")
-    from . import sieve_author
+    from . import scope, sieve_author
     errs += sieve_author.field_problems(data)       # author fields (should_pass / should_fail / idea_en / ...)
+    errs += scope.validate_entries(data.get("scope_answers"))     # the human's scope answers (spec §5.1)
     return errs
 
 
@@ -576,7 +582,7 @@ def closest_sieve(cfg, idea: str, *, min_similarity: float = 0.6) -> dict[str, A
     own = sieve_path(cfg, idea)
     best = None
     for p in sorted(own.parent.glob("*.json")) if own.parent.is_dir() else []:
-        if p.name == own.name:
+        if p.name == own.name or p.name.endswith(".agent.json"):     # the agent layer file is not a sieve
             continue
         try:
             sv = load_sieve(p)
@@ -815,13 +821,14 @@ def apply_pins(verified: list[dict[str, Any]], unverified: list[dict[str, Any]],
         want = ex["want"]
         if want == "no":
             excluded.append({**e, "user_verdict": "no", "verdict_source": "user", "user_chip": ex.get("chip"),
-                             **({"user_pin_via": "pin", "user_pin_at": ex.get("at")} if ex.get("via") == "pin"
-                                else {})})
+                             **({"user_pin_via": ex["via"], "user_pin_at": ex.get("at")}
+                                if ex.get("via") in ("pin", "escalation", "override_agent") else {})})
             continue
         row = {**e, "user_verdict": want, "user_chip": ex.get("chip"),
                "score": screen.score_of(want, e.get("l1_p_core"), e.get("market_cap_usd"), e.get("l2_evidence"))}
-        if ex.get("via") == "pin":          # `jevscreen sieve pin` (the human told their AI), not a card answer
-            row.update(user_pin_via="pin", user_pin_at=ex.get("at"))
+        if ex.get("via") in ("pin", "escalation", "override_agent"):
+            # `jevscreen sieve pin` / `jevscreen decide` (the human told their AI), not a card answer
+            row.update(user_pin_via=ex["via"], user_pin_at=ex.get("at"))
         if is_verified:
             row["verdict_source"] = "evidence+user"
         else:
@@ -845,7 +852,7 @@ def _merge_candidates(result: dict[str, Any], pool: Iterable[dict[str, Any]] | N
     then `pool` (load_pool: all L2-read companies from screen_results) for companies not listed and to fill the
     fields a row lacks. '_in_out' marks the output rows."""
     by: dict[str, dict[str, Any]] = {}
-    for where in ("rows", "unverified", "excluded_by_user"):
+    for where in ("rows", "unverified", "excluded_by_user", "excluded_by_scope", "excluded_by_agent"):
         for r in result.get(where) or []:
             if r.get("company_key") and r["company_key"] not in by:
                 by[r["company_key"]] = {**r, "_in_out": where == "rows" and r.get("rank") is not None}
@@ -889,23 +896,35 @@ def ranking_entries(cands: list[dict[str, Any]], sieve: dict[str, Any] | None, r
         label = c.get("l2_label")
         if label == "contradicted" and not pinned:
             continue
-        e = {k: v for k, v in c.items() if k not in _USER_KEYS and k != "rank"}
+        e = {k: v for k, v in c.items() if k not in _USER_KEYS and k not in screen.SCOPE_ROW_KEYS
+             and k != "rank"}
         e["score"] = _evidence_score(c, rank)
         (verified if label in screen.L2_VERIFIED else unverified).append(e)
     return verified, unverified
 
 
 def rerank_result(result: dict[str, Any], sieve: dict[str, Any] | None, *,
-                  pool: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """The run's ranking redone with `sieve`'s pins, free (screen.pin_and_rank: the same code as screen's step 4, so
-    this equals what a rerun gives when no rule or text changes). `pool` (load_pool) adds the verified companies
-    ranked below max_out, which results.json does not list, so backfill works as in screen.
-    Returns {'rows' (ranked: the top max_out plus user yes pins below it, below_cut), 'unverified', 'excluded_by_user', 'notes', 'max_out', 'rank'}."""
+                  pool: Iterable[dict[str, Any]] | None = None, inputs: Any = None,
+                  agent: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The run's ranking redone with `sieve`'s pins, scope answers and the `agent` layer, free (screen.pin_and_rank:
+    the same code as screen's step 4, so this equals what a rerun gives when no rule or text changes). `pool`
+    (load_pool) adds the verified companies ranked below max_out, which results.json does not list, so backfill works
+    as in screen; `inputs` (l2_inputs) gives those rows their evidence_sha. The facet labels are the run's own
+    (results.json 'facets', read under params.facets_sha).
+    Returns {'rows' (ranked: the top max_out plus user yes pins below it, below_cut), 'unverified',
+    'excluded_by_user', 'excluded_by_scope', 'excluded_by_agent', 'notes', 'max_out', 'rank'}."""
     params = result.get("params") or {}
     max_out = int(params.get("max_out") or screen.SCREEN_DEFAULTS["max_out"])
     rank = params.get("rank") or "label"
-    verified, unverified = ranking_entries(_merge_candidates(result, pool), sieve, rank)
-    v2, u2, excluded, notes = screen.pin_and_rank(verified, unverified, sieve, max_out)
+    cands = _merge_candidates(result, pool)
+    ins = _inputs_map(inputs) if inputs is not None else {}
+    for c in cands:
+        if not c.get("evidence_sha"):
+            c["evidence_sha"] = (ins.get(c["company_key"]) or {}).get("evidence_sha")
+    verified, unverified = ranking_entries(cands, sieve, rank)
+    extra: dict[str, Any] = {}
+    v2, u2, excluded, notes = screen.pin_and_rank(verified, unverified, sieve, max_out, facets=result.get("facets"),
+                                                  agent=agent, fsha=params.get("facets_sha"), out=extra)
 
     def out(e: dict[str, Any], i: int | None) -> dict[str, Any]:
         row = {k: v for k, v in e.items() if not k.startswith("_")}
@@ -914,7 +933,10 @@ def rerank_result(result: dict[str, Any], sieve: dict[str, Any] | None, *,
 
     return {"rows": [out(e, i) for i, e in screen.output_entries(v2, max_out)],
             "unverified": [out(e, None) for e in u2[:max_out]],
-            "excluded_by_user": [out(e, None) for e in excluded], "notes": notes, "max_out": max_out, "rank": rank}
+            "excluded_by_user": [out(e, None) for e in excluded],
+            "excluded_by_scope": [out(e, None) for e in extra.get("excluded_by_scope") or []],
+            "excluded_by_agent": [out(e, None) for e in extra.get("excluded_by_agent") or []],
+            "notes": notes, "max_out": max_out, "rank": rank}
 
 
 US_EXCHANGES = frozenset({"NASDAQ", "NYSE", "AMEX", "NYSEARCA", "NYSEAMERICAN", "NYSEMKT", "OTC", "BATS", "CBOE"})
@@ -988,14 +1010,38 @@ def answer_words_en(want: str | None, chip: str | None = None, *, user_only: boo
 
 
 def render_diff(before: dict[str, Any], after: dict[str, Any], *, title: str | None = None,
-                lang: str = "zh") -> str:
-    """render_diff_zh in the reader's language (lang 'en': the English twin)."""
+                lang: str = "zh", sieve: dict[str, Any] | None = None) -> str:
+    """render_diff_zh in the reader's language (lang 'en': the English twin). `sieve` names the kinds of company a
+    scope answer removed in its facet words."""
     if lang == "en":
-        return _diff_en(before, after, title or DIFF_EN["title"])
-    return render_diff_zh(before, after, **({"title": title} if title else {}))
+        return _diff_en(before, after, title or DIFF_EN["title"], sieve=sieve)
+    return render_diff_zh(before, after, sieve=sieve, **({"title": title} if title else {}))
 
 
-def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str) -> str:
+def _scope_agent_cause(after: dict[str, Any], k: str, lang: str, sieve: dict[str, Any] | None) -> str | None:
+    """The plain cause of a removal by a scope answer, an idea-wording default or your AI (None otherwise)."""
+    from . import scope
+    for r in after.get("excluded_by_scope") or []:
+        if r.get("company_key") == k:
+            kind = scope.kind_words(r.get("scope_value") or "", sieve, lang)
+            if r.get("scope_by") == "agent":
+                return (f"你的 AI 也判为这一类：{kind}" if lang == "zh" else f"your AI judged it this kind: {kind}")
+            if r.get("scope_source") == "idea_wording":
+                return f"按你的原话：{kind}" if lang == "zh" else f"your own words: {kind}"
+            return f"按你的范围回答：{kind}" if lang == "zh" else f"your scope answer: {kind}"
+    for r in after.get("excluded_by_agent") or []:
+        if r.get("company_key") == k:
+            why = r.get(f"agent_why_{lang}") or ""
+            return (f"你的 AI：不要（{why}）" if why else "你的 AI：不要") if lang == "zh" else \
+                (f"your AI: no ({why})" if why else "your AI: no")
+    return None
+
+
+def _demoted(after: dict[str, Any], k: str) -> bool:
+    return any(r.get("company_key") == k and r.get("scope_demoted") for r in after.get("rows") or [])
+
+
+def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str, sieve: dict[str, Any] | None = None) -> str:
     """The English twin of render_diff_zh (same rows, same causes)."""
     b_rows = {r["company_key"]: r for r in before.get("rows") or []}
     a_rows = {r["company_key"]: r for r in after.get("rows") or []}
@@ -1016,7 +1062,9 @@ def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str) -> str:
         return None
     removed = [f"{_display(r)} #{r.get('rank')} ({CAUSE_WORDS_EN.get(c, c)})"
                for k, r in b_rows.items() if k not in a_rows
-               for c in ["你：不要" if k in a_excl else cause_of(k) or "被挤出"]]
+               for c in ["你：不要" if k in a_excl else _scope_agent_cause(after, k, "en", sieve)
+                         or ("moved to the end: the excerpt does not name the target" if _demoted(after, k) else None)
+                         or cause_of(k) or "被挤出"]]
     added, backfill = [], []
     max_out = after.get("max_out") or (after.get("params") or {}).get("max_out")
     for k, r in a_rows.items():
@@ -1029,7 +1077,7 @@ def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str) -> str:
                 tag += DIFF_EN["below"].format(rank=r.get("rank"), max_out=max_out or "?")
             added.append(f"{_display(r)} ({tag})")
         elif r.get("backfill"):
-            backfill.append(_display(r))
+            backfill.append(_display(r) + (" (your AI read it)" if r.get("agent_verdict") == "yes" else ""))
         else:
             c = cause_of(k)
             added.append(f"{_display(r)} ({CAUSE_WORDS_EN.get(c, c)})" if c else _display(r))
@@ -1048,7 +1096,8 @@ def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str) -> str:
     return "\n".join(lines)
 
 
-def render_diff_zh(before: dict[str, Any], after: dict[str, Any], *, title: str = "立即生效（免费）") -> str:
+def render_diff_zh(before: dict[str, Any], after: dict[str, Any], *, title: str = "立即生效（免费）",
+                   sieve: dict[str, Any] | None = None) -> str:
     """The row diff between two rankings (a result and rerank_result / a newer result), Chinese, each change
     tagged with its cause in plain words: 你：不要 / 你：要（年报没写，按你的判断）/ 递补，未经你确认 / 年报摘录换了一段 /
     按新规则重判 / AI 重读后结论变了 / 被排名更高的公司挤出; then the rank moves of the companies the user answered."""
@@ -1074,7 +1123,8 @@ def render_diff_zh(before: dict[str, Any], after: dict[str, Any], *, title: str 
     for k, r in b_rows.items():
         if k in a_rows:
             continue
-        cause = "你：不要" if k in a_excl else evidence_cause(k) or "被挤出"
+        cause = "你：不要" if k in a_excl else _scope_agent_cause(after, k, "zh", sieve) \
+            or ("排到后面：摘录没提到具体对象" if _demoted(after, k) else None) or evidence_cause(k) or "被挤出"
         removed.append(f"{_display(r)} #{r.get('rank')}（{CAUSE_WORDS_ZH.get(cause, cause)}）")
     added, backfill = [], []
     max_out = after.get("max_out") or (after.get("params") or {}).get("max_out")
@@ -1088,7 +1138,7 @@ def render_diff_zh(before: dict[str, Any], after: dict[str, Any], *, title: str 
                 tag += f" · 排第{r.get('rank')}，在前{max_out or '?'}名外，照样列出"
             added.append(f"{_display(r)}（{tag}）")
         elif r.get("backfill"):
-            backfill.append(_display(r))
+            backfill.append(_display(r) + ("（你的 AI 已看过）" if r.get("agent_verdict") == "yes" else ""))
         else:
             cause = evidence_cause(k)
             added.append(f"{_display(r)}（{CAUSE_WORDS_ZH.get(cause, cause)}）" if cause else _display(r))
@@ -1137,7 +1187,10 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
         d = {"security_id": sid, "label": label, "probs": json.loads(pj) if pj else {}, "status": status,
              "input_source": src, "input_tier": tier, "evidence_url": url,
              "reads": json.loads(rj) if rj else None, "p_pos": pp, "p_pos_sd": psd}
-        (l1 if layer == "l1" else l2)[ck] = d
+        if layer == "l1":
+            l1[ck] = d
+        elif layer == "l2":           # facet layers (facet_role / facet_scope / facet_geo) are not L2 answers
+            l2[ck] = d
     keys = sorted(l2)
     if not keys:
         return []
@@ -1541,7 +1594,7 @@ def _lang_of(c: dict[str, Any], inp: dict[str, Any]) -> str:
 
 def select_cards(result: dict[str, Any], inputs: Any, sieve: dict[str, Any] | None, *, max_cards: int = CARDS_MAX,
                  seed: int | None = None, pool: Iterable[dict[str, Any]] | None = None,
-                 draws: int = PI_DRAWS) -> list[dict[str, Any]]:
+                 draws: int = PI_DRAWS, agent: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The calibration deck of a finished run: a pure, deterministic list of card dicts (cards.json 'cards').
 
     result: results.json (rows = the output O, unverified, excluded_by_user, params max_out / rank, run_id);
@@ -1588,10 +1641,16 @@ def select_cards(result: dict[str, Any], inputs: Any, sieve: dict[str, Any] | No
     def pinned(c):
         return pin.get(c["company_key"]) or pin.get(c.get("security_id"))
 
+    scoped = {r.get("company_key") for w in ("excluded_by_scope", "excluded_by_agent")
+              for r in result.get(w) or []}
+
     def blocked(c) -> bool:
         if c.get("l2_label") is None or c["company_key"] in checks or c.get("security_id") in checks:
             return True
-        if pinned(c):
+        if pinned(c) or c["company_key"] in scoped:
+            return True
+        ag = (agent or {}).get(c["company_key"])       # your AI already decided it (same evidence): not asked again
+        if ag and ag.get("state") == "applied" and ag.get("evidence_sha") and ag["evidence_sha"] == sha(c):
             return True
         ex = answered.get(c["company_key"]) or answered.get(c.get("security_id"))
         return ex is not None and (not ex.get("evidence_sha") or ex.get("evidence_sha") == sha(c))
@@ -1648,7 +1707,9 @@ def select_cards(result: dict[str, Any], inputs: Any, sieve: dict[str, Any] | No
     # 3) scope
     tt = (sieve or {}).get("target_terms") if isinstance((sieve or {}).get("target_terms"), dict) else {}
     n_scope = 0
-    if tt:
+    from . import scope as _scope
+    if tt and _scope.entry_for(sieve, "scope", "general_only", _scope.facets_sha(sieve)) is None:
+        # (a scope question about the same boundary was already asked: no scope card)
         def no_target(c):
             terms = tt.get(_lang_of(c, inp(c))) or []
             return bool(terms) and not screen.matched_terms(_body(inp(c).get("text")), terms)
@@ -1803,7 +1864,8 @@ def deck_chips(sieve: dict[str, Any] | None) -> dict[str, dict[str, str]]:
 
 def build_deck(result: dict[str, Any], inputs: Any, sieve: dict[str, Any] | None, *, max_cards: int = CARDS_MAX,
                pool: Iterable[dict[str, Any]] | None = None, deck_n: int | None = None, now: str | None = None,
-               seed: int | None = None, draws: int = PI_DRAWS) -> dict[str, Any]:
+               seed: int | None = None, draws: int = PI_DRAWS,
+               agent: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """cards.json (jevscreen.cards/1) of a run: select_cards plus the deck header (deck_id 'deck-<run_id>-<n>', n =
     the run's decks in the sieve + 1; stabilize = the run's band reads; chips)."""
     from . import keywords
@@ -1812,7 +1874,7 @@ def build_deck(result: dict[str, Any], inputs: Any, sieve: dict[str, Any] | None
         deck_n = 1 + sum(1 for d in (sieve or {}).get("decks") or [] if isinstance(d, dict)
                          and d.get("run_id") == run_id)
     band = ((result.get("layers") or {}).get("l2") or {}).get("band")
-    cards = select_cards(result, inputs, sieve, max_cards=max_cards, seed=seed, pool=pool, draws=draws)
+    cards = select_cards(result, inputs, sieve, max_cards=max_cards, seed=seed, pool=pool, draws=draws, agent=agent)
     return {"format": CARDS_FORMAT, "deck_id": f"deck-{run_id}-{deck_n}", "run_id": run_id,
             "idea": result.get("idea"), "idea_key": keywords.idea_key(result.get("idea") or ""),
             "created_at": now or now_iso(), "facets_en": _facets(sieve),
@@ -2539,6 +2601,9 @@ def candidate_rules(sieve: dict[str, Any], deck: dict[str, Any], answers: list[A
     for rid in order:
         e = found[rid]
         e["from"] = "; ".join(e["from"])
+        if scope_conflict(sieve, rid):
+            dropped.append({"id": rid, "why_zh": SCOPE_CONFLICT_ZH, "why_en": SCOPE_CONFLICT_EN})
+            continue
         old = adopted.get(rid)
         if old is not None and (rid != "homonym" or set(e.get("terms") or []) <= set(
                 (old.get("terms") if isinstance(old, dict) else None) or [])):
@@ -2930,11 +2995,31 @@ def trial_rules(candidates: list[dict[str, Any]], sieve: dict[str, Any], base_re
     return out
 
 
+SCOPE_CONFLICT_ZH = "和你的范围回答冲突，没采用"
+SCOPE_CONFLICT_EN = "conflicts with your scope answer; not adopted"
+
+
+def scope_conflict(sieve: dict[str, Any] | None, rule_id: str | None) -> bool:
+    """A 精调 rule that contradicts the human's scope answers (scope design §11): scope_broad after a 不要 to
+    'the excerpt names only the broad category', or a no-rule for a kind of company the human said 要 (keep) to."""
+    from . import scope
+    fsha = scope.facets_sha(sieve)
+    if rule_id == "scope_broad" and any(e["family"] == "scope" and e["value"] == "general_only"
+                                        for e in scope.enforced(sieve, fsha)):
+        return True
+    chip = (RULES.get(rule_id or "") or {}).get("chip")
+    return bool(chip) and chip in scope.kept_kinds(sieve, fsha)
+
+
 def adopt_rules(sieve: dict[str, Any], trial: dict[str, Any]) -> dict[str, Any]:
     """sieve' with the trial's adopted rules in sieve.rules (replacing an older entry of the same id and, for
-    scope_narrow / scope_broad, the other one) and its rejections in sieve.rejected_rules. Not saved."""
+    scope_narrow / scope_broad, the other one) and its rejections in sieve.rejected_rules; an adopted rule that
+    contradicts a scope answer recorded meanwhile is rejected instead (scope_conflict). Not saved."""
     sv = json.loads(json.dumps(sieve))
     rules = list(sv.get("rules") or [])
+    conflicting = [e for e in trial.get("adopted") or [] if scope_conflict(sv, e.get("id"))]
+    trial = {**trial, "adopted": [e for e in trial.get("adopted") or [] if e not in conflicting],
+             "rejected": list(trial.get("rejected") or []) + [{**e, "why_zh": SCOPE_CONFLICT_ZH} for e in conflicting]}
     for e in trial.get("adopted") or []:
         drop = {e["id"]} | (EXCLUSIVE_RULES if e["id"] in EXCLUSIVE_RULES else set())
         rules = [r for r in rules if _rule_id(r) not in drop] + [e]

@@ -25,6 +25,10 @@ in the top 10) and Taiwan annual reports from MOPS (only when a Taiwan company i
 box offering the command line developer tools (they click Install, a few minutes); and when neither `uv` nor a
 Python >= 3.10 exists, they run one command that installs uv (Step 1 below).
 
+After the result, at most 3 optional questions in one message: filling missing profiles, at most 2 questions about
+the idea's boundary (kinds of company, never single companies), and the companies your review could not decide.
+Everything else waits on the page. They are never asked again in chat.
+
 Follow the steps **in order**. Every step ends with a **Verify** line: do not move on until it holds.
 Machine-readable schemas for every command below: [docs/AGENT_API.md](docs/AGENT_API.md); every command and flag:
 [docs/REFERENCE.md](docs/REFERENCE.md).
@@ -40,7 +44,7 @@ output: [docs/AGENT_API.md](docs/AGENT_API.md#jevscreen-quickstart).
 **0. Before you install, say this** (in the human's language; both versions are also in every `quickstart` JSON as
 `before_you_start_zh` / `before_you_start_en`):
 
-> 开始前说明：①会问你可不可以用两个数据源（TradingView 的股票清单、Yahoo 的公司简介）：它们的条款限制程序取用，只能你个人研究用、不能分享；②要一个能付费用 Jev（读简介和年报的 AI 服务）的账号：TypeSafe 官方 API、OpenRouter 或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。
+> 开始前说明：①会问你可不可以用两个数据源（TradingView 的股票清单、Yahoo 的公司简介）：它们的条款限制程序取用，只能你个人研究用、不能分享；②要一个能付费用 Jev（读简介和年报的 AI 服务）的账号：TypeSafe 官方 API、OpenRouter 或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。出结果后，你的 AI 会再逐家读约 25–40 家公司的摘录来核对，用的是它自己的额度，要几分钟。
 
 > Before we start: (1) I will ask if you are OK with two data sources (TradingView's stock list, Yahoo company
 > profiles) whose terms restrict automated use: for your personal research only, never shared; (2) you need an account
@@ -49,7 +53,8 @@ output: [docs/AGENT_API.md](docs/AGENT_API.md#jevscreen-quickstart).
 > plus a payment fee; see the provider's payment page) and needs a card that pays in US dollars; this screen uses
 > about $0.30 of it and the rest stays for later. (3) About 15–25 minutes the first time, including the sign-up. On a
 > Mac, a box may offer to install the command line developer tools: click Install (a few minutes). You answer one
-> round of questions.
+> round of questions. After the result, your AI reads the excerpts of about 25-40 companies to check them, on its
+> own quota; that takes a few minutes.
 
 **1. Install** (no admin rights, no Homebrew, no system Python needed):
 
@@ -80,7 +85,8 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
 
 **3. The loop.**
 
-- `needs_agent` (exit 11): the idea is not English. Write **one English sentence** (at most 400 characters, no
+- `needs_agent` (exit 11): do the `ask_agent` item in `pending` (`idea_en` or `agent_review`; `next_action_en`
+  names it). With `idea_en` the idea is not English: write **one English sentence** (at most 400 characters, no
   company names or tickers that are not in the idea) and rerun the same command with `--idea-en '<sentence>'` right
   away. This comes first because the human sees that sentence in the spend question. Ordinary words are fine even
   when a company happens to be called that ("Core suppliers of ...", "Immersion cooling ..."), and so is the English
@@ -92,7 +98,39 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
   is an ordinary word and you only lower-case it (e.g. "Harmonic" → "harmonic") or swap Core / Main / Key / Leading /
   Major / Primary, the human's approval stands and you do **not** ask again; tell them the English changed in one
   line (`text_<lang>` says it). Any other sentence (a company name dropped or replaced) comes back as
-  `reprice_idea_en` (below): ask it.
+  `reprice_idea_en` (below): ask it. In the same rerun you may add `--facets '<json>'` (the item's
+  `facets_help_en`; for an English idea the same request comes as `agent_optional` `facets`, never blocking): the
+  idea's category and target in English and Chinese, plus at most 2 `implied_no` defaults whose `because` quotes the
+  idea's own words (e.g. `{"key": "geo.outside_only", "because": "东南亚"}`). It lets the result ask at most 2 plain
+  questions about the idea's boundary. Never put a company name in it; a string that names one is dropped with a
+  note, and the run goes on.
+- **`agent_review` (exit 11, once per idea after the first result).** Tell the human one line first
+  (`text_<lang>`). Open `deck_path`.
+
+  For every item, decide from `evidence.sentences` **only**. Do not use what you know about the company from
+  elsewhere; the name alone is not evidence. Follow `criteria_en`, including the human's own scope answers.
+
+  Answer:
+  - `yes` with `level` `explicit` (it offers exactly this) or `partial` (related, small or early);
+  - `no` with the fitting chip from `chips`;
+  - `unsure` with `unsure_kind` `thin` (too little text) or `meaning` (the text is there but unclear).
+
+  Every yes/no cites 1–3 `quote_ids` (sentence numbers) and gives `why` in the human's language (≤ 80 字 / 160
+  chars). When the evidence is in another language, add `quote_tr`. For `held` items also give `in_group` (is it
+  really the kind named in `held_questions`?) and `short` (what the company is, ≤ 10 字 / 40 chars).
+
+  Save the file anywhere in the jev-screen folder and run `record_command` (`jevscreen judge --deck ... --file
+  ... --json`). It is free and takes seconds. Then run `jevscreen quickstart --status --key K --json` and relay as
+  for `done`: `text_<lang>`, the `top` rows and the `ask_now` items, in one message.
+
+  After relaying, if `agent_review.part_b` is pending, review it the same way. It never blocks. Tell the human only
+  if it changed the top 10.
+
+  Never answer the human's scope questions or escalations yourself. Never turn an escalation into a pin without the
+  human's answer. Put all of the human's answers into ONE `decide` command (`jevscreen decide "s1=no c3=yes"
+  --run <run_id> --via chat --json`; keep=/drop=/clear=TICKER override your own calls when the human says so).
+
+  If you cannot read files, run `skip_command`: the system's list stands.
 - `needs_human` (exit 10): read `intro_<lang>` to the human, then ask **every** `pending` item in one message:
   - `consent_gray_sources`: ask `question_<lang>` word for word, followed by `note_<lang>` (who receives the text
     sent to Jev: the active provider, and the company in between if any); run only the one command of
@@ -153,12 +191,21 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
     usually 1–4 rounds, at most 6). Then tell the human in one line to refresh the page.
     Translations are marked "AI 翻译 / AI translation" on the page with the verbatim original one tap away, and are
     reused by later runs. Never edit the page file or the evidence yourself.
-  - If `pending` holds `fill_descriptions` (optional), ask its `question_<lang>` word for word **in the same
-    message**, together with any `fetch.questions` (each also optional and only there when it helps a company in
-    the top 10). Yes: rerun `next_command` plus `rerun_with` (`--fill-descriptions yes`); the status is `running`
+  - If `pending` holds `fill_descriptions` (optional; it is also the first `ask_now` item), ask its
+    `question_<lang>` word for word **in the same message**, together with the other `ask_now` items (the
+    `fetch.questions` among them are also optional and only there when they help a company in the top 10). Yes: rerun `next_command` plus `rerun_with` (`--fill-descriptions yes`); the status is `running`
     for about the minutes it names, poll it, the page updates itself. No: rerun `next_command` plus `decline_with`
     (it is not asked again). No answer is fine too.
-  - Offer the three `next_steps` in one line each.
+  - `ask_now` (at most 3, all optional, in this order: the profile fill, at most 2 scope questions, at most 2
+    companies your review could not decide, the annual-report fetch questions): ask each `question_<lang>` word for
+    word **in the same message**, as `text_<lang>` labels them (问题 1 / Q1, apart from the numbered top rows),
+    labelled optional. `ask_now` stays the same on every `--status` until the human answers (`decide`) or a new
+    version comes, so a second status never loses it. Everything else is in `later` (JSON) and never asked in chat;
+    the page's question box shows the open scope questions and up to 3 companies your review could not decide. The human's answers to scope questions and companies go into ONE `record_command`
+    (`jevscreen decide "<tokens>" --run <run_id> --via chat --json`, tokens from each item's `tokens`: `s1=yes|no|?`,
+    `c3=yes|no|?`); it answers in seconds with `diff_<lang>` (what changed, in plain words), free. A line the human
+    pastes from the page (`jevscreen decide "..." --run ... --via page`) is run as given.
+  - Offer the `next_steps` in one line each.
 - `budget_exhausted` (exit 5): the page shows what was checked. Ask the pending `approve_budget` top-up question
   (`kind: "topup"`) before anything else; after a yes, rerun `next_command` plus its `rerun_with` (the new total).
   The next run continues where the old one stopped: answers already paid for come from the cache for $0.
@@ -184,7 +231,7 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
 | `budget_exhausted` | 5 | ask the top-up question; rerun with its `rerun_with` after a yes |
 | `ai_unavailable` | 6 | 402: human tops up; 401/403: new key |
 | `needs_human` | 10 | ask all pending human items in one message |
-| `needs_agent` | 11 | write `--idea-en` and rerun at once |
+| `needs_agent` | 11 | do the ask_agent item in pending (idea_en, facets or agent_review); next_action_en names it |
 | `declined` | 12 | stop |
 
 A usage error (a typo in the flags) exits 2 **with no JSON**: that is a typo, not a block.
@@ -192,16 +239,20 @@ A usage error (a typo in the flags) exits 2 **with no JSON**: that is a typo, no
 **4. After the first result.** The same idea again returns the finished result for $0. A new idea costs about
 $0.25 and 4 minutes with no downloads. The idea's one page (`page`) opened in the browser at the worker's first step:
 the checklist, the progress while the work runs (it reloads itself every 3 seconds) and then the result, so the
-human never has to refresh it. Cards are not a human step: only when the human asks to sharpen the list, run
-`jevscreen cards <run_id>` yourself, judge the few borderline companies, and apply your answers with
-`jevscreen answer "1a 2h 3c" --deck deck-...` (about $0.01–0.03); that updates the same page, and
-`quickstart --status` then reports that newest version. A new version can bring
+human never has to refresh it. Its "Help the AI get the scope right" box holds the scope questions and up to 3 companies your review
+could not decide, with 要 / 不要 / 不确定 buttons (a row your AI judged shows "Your AI's call"); they build the `decide` line the human pastes to you: run it as given. A new version can bring
 new foreign texts: when `quickstart --status --json` shows `translation_pending` > 0 again, do the translation
 rounds again (translations made before are reused). The page, the `--text` list, `why`, `answer` and `cards` speak
 the human's language (`--lang zh|en`, default: the language of the idea's quickstart job). If the human asks why a
 company is missing, run `jevscreen why <name or ticker> --run <run_id> --json` (free; Step 9).
 Profile gap fills are asked by quickstart itself (`fill_descriptions` above); run a plain
 `jevscreen crawl-descriptions --countries CN --min-mcap 1e9` only when the human asks for it.
+
+**Optional: 精调 (fine-tune cards).** Cards are not a human step. Only when the human asks to sharpen the list, run
+`jevscreen cards <run_id>` yourself, judge the few borderline companies, and apply your answers with
+`jevscreen answer "1a 2h 3c" --deck deck-...` (about $0.01–0.03); that updates the same page, and
+`quickstart --status` then reports that newest version. A rule that contradicts the human's scope answers is not
+adopted.
 
 The steps below are the manual path (doctor, keys, consent, data, screen) for when you need finer control.
 

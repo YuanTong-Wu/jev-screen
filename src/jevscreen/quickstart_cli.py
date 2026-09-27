@@ -50,6 +50,10 @@ def add_parsers(sub: Any) -> None:
     qs.add_argument("--fill-descriptions", choices=("yes", "no"), default=None,
                     help="the human's answer to the optional profile-fill question (pending item fill_descriptions): "
                          "yes fills the missing profiles in the background and re-ranks; no stops the question")
+    qs.add_argument("--facets", default=None, metavar="JSON",
+                    help="optional, from your AI before the screen starts: the idea's category / target in English and "
+                         "Chinese and at most 2 implied_no defaults (see AGENTS.md); it lets the result ask at most 2 "
+                         "plain scope questions")
     qs.add_argument("--status", action="store_true", help="print the job's state (starts the background work "
                     "again only when it waits on nothing; never anything that needs an answer)")
     qs.add_argument("--key", default=None, metavar="IDEA_KEY", help="with --status: the job's idea key")
@@ -150,7 +154,8 @@ def cmd_quickstart(args: argparse.Namespace, cfg: Any) -> int:
         out = qs.front(cfg, args.idea, idea_en=args.idea_en, approve_budget=args.approve_budget,
                        min_mcap=args.min_mcap, countries=args.countries, lang=args.lang, fd_file=args.fd_file,
                        no_open=args.no_open, retry=args.retry, new_run=args.new_run,
-                       fill_descriptions=getattr(args, "fill_descriptions", None))
+                       fill_descriptions=getattr(args, "fill_descriptions", None),
+                       facets=getattr(args, "facets", None))
     except qs.JobSecret as e:
         print(f"error: quickstart: {e}", file=sys.stderr)
         return 1

@@ -52,7 +52,8 @@ ONE_LINE_CHARS = 160
 QUOTE_CHARS = 300
 CNY_PER_USD = 7.2            # fixed, labelled rate for the ≈ ¥ figure next to USD
 CRAWL_REQ_PER_S = 1.96       # measured effective profile-crawl rate (minutes estimate of the China gap fill)
-BADGE_ORDER = ("no_mention", "profile_only", "stale", "edge", "read_once", "backfill")
+BADGE_ORDER = ("no_mention", "profile_only", "stale", "edge", "read_once", "backfill", "scope_no_target",
+               "scope_unchecked", "agent_thin")
 TOP_TABLE = 10
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
        "base-uri 'none'; form-action 'none'")
@@ -103,7 +104,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "mcap": "市值", "badges": "标记", "what": "做什么",
         "badge_profile_only": "只有简介，没有年报（证据弱）", "badge_stale": "年报超过 3 年",
         "badge_edge": "边缘：多读几次可能变", "badge_read_once": "只读了一次", "badge_backfill": "递补，未经核对",
-        "badge_no_mention": "边缘：摘录没提到你的想法",
+        "badge_no_mention": "边缘：摘录没提到你的想法", "badge_scope_no_target": "摘录没提到具体对象（按你的范围回答排后）",
+        "badge_scope_unchecked": "范围回答未检查（预算不够）", "badge_agent_thin": "证据太少，你的 AI 也判断不了",
         "badge_user": "你的判断",
         "cards_title": "帮系统判断几家（可选，约 3–5 分钟）",
         "cards_intro": "每张点一个按钮，不想答就跳过。答完把下面那行复制给你的 AI；应用后会重新排序（约 $0.01–0.03，不再下载）。",
@@ -119,6 +121,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "st_no_excerpt": "年报里没找到相关段落", "st_insufficient": "年报/简介说得不够清楚",
         "st_other": "未核对",
         "excluded_title": "你排除的（{n} 家）",
+        "removed_title": "按你的范围回答和你的 AI 的判断移出的（{n} 家）",
+        "why_scope": "按你的范围回答：{kind}（AI 读摘录后的推断，把握 {p}）",
+        "why_scope_agent": "按你的范围回答：{kind}（你的 AI 判为这一类）",
+        "why_default": "按你的原话：{kind}（AI 读摘录后的推断，把握 {p}）",
+        "why_agent": "你的 AI 判断不要：{why}", "why_agent0": "你的 AI 判断不要",
         "gaps_title": "缺口（没读到的，不是“不相关”）",
         "gap_no_description": "{n} 家没有任何简介，这次没读（不是“不相关”）：{by}。补中国：让你的 AI 运行 {cmd}（约 {m} 分钟，可后台）。",
         "gap_no_description_other": "{n} 家没有任何简介，这次没读（不是“不相关”）：{by}。",
@@ -187,6 +194,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "badge_edge": "Borderline: may change on re-reading", "badge_read_once": "Read once",
         "badge_backfill": "Filled in, not checked", "badge_user": "Your call",
         "badge_no_mention": "Borderline: the excerpt does not mention your idea",
+        "badge_scope_no_target": "The excerpt does not name the target (moved down by your scope answer)",
+        "badge_scope_unchecked": "Scope answer not checked (budget)",
+        "badge_agent_thin": "Too little evidence; your AI could not tell either",
         "cards_title": "Help sharpen the list (optional, about 3–5 min)",
         "cards_intro": "Tap one button per card; skip any. When done, copy the line below to your AI; applying "
                        "re-ranks the list (about $0.01–0.03, no downloads).",
@@ -203,6 +213,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "st_failed": "check failed", "st_no_excerpt": "no relevant passage in the filing",
         "st_insufficient": "the filing/profile does not say enough", "st_other": "not checked",
         "excluded_title": "You excluded ({n})",
+        "removed_title": "Removed by your scope answers and your AI ({n})",
+        "why_scope": "your scope answer: {kind} (the AI's inference from the excerpt, {p} sure)",
+        "why_scope_agent": "your scope answer: {kind} (your AI judged it this kind)",
+        "why_default": "your own words: {kind} (the AI's inference from the excerpt, {p} sure)",
+        "why_agent": "your AI's call, drop: {why}", "why_agent0": "your AI's call: drop",
         "gaps_title": "Gaps (not read, which is not the same as not relevant)",
         "gap_no_description": "{n} {companies_have} no profile at all and were not read (not \"not relevant\"): {by}. "
                               "To fill China: ask your AI to run {cmd} (about {m} min, can run in the background).",
@@ -227,7 +242,9 @@ ONE_PAGE_STRINGS: dict[str, dict[str, str]] = {
            "results_wait": "结果会在筛选完成后出现在这里。这页会自己刷新，不用管它。",
            "results_none": "还没有结果。", "rows_title": "每家的证据（{n} 家，点开看）",
            "refreshing": "这页每 3 秒自动刷新", "st_ok": "已完成", "st_run": "进行中", "st_wait": "还没开始",
-           "st_need": "需要你处理", "st_fail": "出错", "st_opt": "可选", "open_row": "点开看证据"},
+           "st_need": "需要你处理", "st_fail": "出错", "st_opt": "可选", "open_row": "点开看证据",
+           "agent_tag": "你的 AI 判断", "agent_yes": "符合", "agent_no": "不符合", "agent_unsure": "拿不准",
+           "agent_wait": "等你决定（见上面的问题）", "agent_not_applied": "没采用，按你的回答"},
     "en": {"sec_ready": "Getting ready", "sec_optional": "Optional ({k} of {n} set; this result does not need them)",
            "show_checks": "Show each check", "sec_progress": "Progress",
            "sec_questions": "Help the AI get the scope right (optional)",
@@ -238,7 +255,10 @@ ONE_PAGE_STRINGS: dict[str, dict[str, str]] = {
            "results_none": "No results yet.", "rows_title": "Evidence for each company ({n}; tap to open)",
            "refreshing": "This page refreshes itself every 3 seconds", "st_ok": "done", "st_run": "running",
            "st_wait": "not started", "st_need": "needs you", "st_fail": "error", "st_opt": "optional",
-           "open_row": "Tap to see the evidence"},
+           "open_row": "Tap to see the evidence",
+           "agent_tag": "Your AI's call", "agent_yes": "fits", "agent_no": "does not fit", "agent_unsure": "not sure",
+           "agent_wait": "waiting for you (see the questions above)", "agent_not_applied": "not used: your answer "
+                                                                                         "wins"},
 }
 for _lg, _t in ONE_PAGE_STRINGS.items():
     STRINGS[_lg].update(_t)
@@ -319,6 +339,12 @@ def _badges(r: dict[str, Any], today: dt.date | None, no_mention: bool = False) 
         out.append("read_once")
     if r.get("backfill"):
         out.append("backfill")
+    if r.get("scope_demoted"):
+        out.append("scope_no_target")          # a scope answer moved it to the end (scope design §5.3)
+    if r.get("scope_unchecked"):
+        out.append("scope_unchecked")
+    if r.get("agent_thin"):
+        out.append("agent_thin")
     return [b for b in BADGE_ORDER if b in out]
 
 
@@ -596,7 +622,11 @@ def _row(r: dict[str, Any], one_line: str | None, today: dt.date | None, terms: 
             "user_only": user and r.get("l2_label") not in ("explicit", "partial"),
             "details": {"reads": _reads(r), "l1": r.get("l1_label"), "l2": r.get("l2_label"),
                         "p_pos": r.get("l2_p_pos"), "p_core": None if r.get("l1_p_core") is None
-                        else round(float(r["l1_p_core"]), 2)}}
+                        else round(float(r["l1_p_core"]), 2)},
+            # your AI's call on this row (its own layer, never the human's) and a scope answer's demotion
+            "agent": ({"v": r.get("agent_verdict"), "state": r.get("agent_state"), "chip": r.get("agent_chip"),
+                       "why": r.get(f"agent_why_{lang}")} if r.get("agent_verdict") else None),
+            "scope_demoted": bool(r.get("scope_demoted"))}
 
 
 def _card_why_en(c: dict[str, Any], max_out: int | None, facets: dict[str, Any] | None = None) -> str:
@@ -759,11 +789,12 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
     exc = [{"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
             "name_zh": local_names.get(r.get("security_id") or ""), "note": r.get("user_note")}
            for r in result.get("excluded_by_user") or []]
+    removed = _removed(result, local_names, lang)
     cards, chip_text = _cards(deck, params.get("max_out"), lang)
     for c in cards:
         c["name_zh"] = local_names.get(c.get("security_id") or "")
     if lang == "en":                  # an English page shows English names only
-        for x in rows + unv + exc + cards:
+        for x in rows + unv + exc + cards + removed:
             x["name_zh"] = None
     f = result.get("funnel") or {}
     lin = lineage or {}
@@ -789,7 +820,7 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
                    "floor_text": _floor_text(params.get("min_mcap_usd"), lang)},
         "rows": rows, "unverified": unv, "unverified_total": len(result.get("unverified") or []),
         "unverified_groups": _unverified_groups(result.get("unverified") or []),
-        "excluded": exc, "cards": cards, "chips": chip_text, "idea_terms": idea_words_shown(result, lang), "top_n": TOP_TABLE,
+        "excluded": exc, "removed": removed, "cards": cards, "chips": chip_text, "idea_terms": idea_words_shown(result, lang), "top_n": TOP_TABLE,
         "gaps": _gap_lines(result, country_of or {}, extra),
         "strings": {lang: STRINGS[lang]}, "idea_key": _idea_key(idea),
         # the one page's upper parts: prerequisites + progress (jevscreen.pagestatus; set by page_data / write),
@@ -797,6 +828,30 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
         "live": extra.get("live"), "questions": extra.get("questions") or {"items": []},
     }
     return tr_mod.apply(data, translations)
+
+
+def _removed(result: dict[str, Any], local_names: dict[str, str], lang: str) -> list[dict[str, Any]]:
+    """The companies a scope answer (or the idea's own words) or the user's AI removed, each with its reason in the
+    page's language (an inference: the AI read the excerpt)."""
+    from . import scope
+    S = STRINGS[lang]
+    sv = {"facets": (result.get("scope") or {}).get("facets"), "facets_zh": (result.get("scope") or {}).get(
+        "facets_zh")}
+    out = []
+    for r in result.get("excluded_by_scope") or []:
+        kind = scope.kind_words(r.get("scope_value") or "", sv, lang)
+        key = "why_default" if r.get("scope_source") == "idea_wording" else "why_scope_agent" \
+            if r.get("scope_by") == "agent" else "why_scope"
+        p = r.get("scope_p")
+        out.append({"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
+                    "name_zh": local_names.get(r.get("security_id") or ""), "kind": "scope",
+                    "why": S[key].format(kind=kind, p=f"{float(p):.0%}" if p is not None else "?")})
+    for r in result.get("excluded_by_agent") or []:
+        why = r.get(f"agent_why_{lang}") or ""
+        out.append({"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
+                    "name_zh": local_names.get(r.get("security_id") or ""), "kind": "agent",
+                    "why": S["why_agent"].format(why=why) if why else S["why_agent0"]})
+    return out
 
 
 def _idea_key(idea: str | None) -> str | None:
@@ -856,6 +911,20 @@ def shown_text(holder: dict[str, Any] | None, field: str) -> str | None:
     return holder.get(f"{field}_tr") or holder.get(field)
 
 
+def agent_words(r: dict[str, Any], lang: str) -> str | None:
+    """'你的 AI 判断：拿不准——why · 等你决定' of a row your AI answered (None when it did not)."""
+    a = r.get("agent") or {}
+    if a.get("v") not in ("yes", "no", "unsure"):
+        return None
+    S = STRINGS[lang]
+    zh = lang == "zh"
+    why = a.get("why")
+    text = S["agent_tag"] + ("：" if zh else ": ") + S[f"agent_{a['v']}"] + (
+        (("——" if zh else ": ") + str(why)) if why else "")
+    state = {"escalated": "agent_wait", "not_applied": "agent_not_applied"}.get(a.get("state") or "")
+    return text + (" · " + S[state] if state else "")
+
+
 def render_text(data: dict[str, Any], lang: str | None = None) -> str:
     """The page as plain text (the <noscript> block and `jevscreen page --text`), in the page's one language:
     header, the ranked list with the verdict, the evidence kind and the one-line description (the AI translation
@@ -909,10 +978,31 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
                                            + ([S["badge_user"]] if r.get("user") else []))
         line = f"#{r.get('rank')} {name}" + (f"（{other}）" if other else "")
         out.append(f"{line} {where} — {verdict} · {ev}" + (f" [{marks}]" if marks else ""))
+        if agent_words(r, lang):
+            out.append(f"    {agent_words(r, lang)}")
         if r.get("one_line"):
             one = shown_text(r, "one_line")
             tag = S["text_ai"] if r.get("one_line_tr") else (S["text_untranslated"] if r.get("one_line_x") else "")
             out.append(f"    {S['what']}{sep}{one}{tag}")
+    q = data.get("questions") or {}
+    if q.get("items") or q.get("notes"):
+        out.append("")
+        out.append(S["sec_questions"])
+        for n in q.get("notes") or []:
+            out.append("  " + str(n))
+        for i, it in enumerate(q.get("items") or [], 1):
+            out.append(f"  {i}. {it.get('text')}")
+            if it.get("note"):
+                out.append(f"     {it['note']}")
+            out.append("     " + " / ".join(f"{o['label']} = {o['value']}" for o in it.get("options") or []))
+        if q.get("template"):
+            out.append("  " + S["q_line"] + " " + str(q["template"]))
+    removed = data.get("removed") or []
+    if removed:
+        out.append("")
+        out.append(S["removed_title"].format(n=len(removed)))
+        for x in removed:
+            out.append(f"  {display_name(x, lang)} {x.get('ticker') or ''} — {x.get('why')}")
     groups = data.get("unverified_groups") or []
     if groups:
         out.append("")
@@ -1117,11 +1207,13 @@ function secProgress(m){if(!ST)return;var al=ST.alerts||[],p=ST.progress;if(!al.
 // 3) scope questions: hidden until the data has some; the answers build the line to paste to the AI
 function qLine(q){var parts=[];(q.items||[]).forEach(function(it){if(A[it.id])parts.push(A[it.id]);});
  if(!parts.length)return '';return String(q.template||'{answers}').replace('{answers}',parts.join(' '));}
-function secQuestions(m){var q=D.questions||{};if(!(q.items||[]).length)return;var box=E('section','box questions');
- box.appendChild(E('h2',null,S('sec_questions')));box.appendChild(E('p','small muted',S('q_intro')));
+function secQuestions(m){var q=D.questions||{};if(!(q.items||[]).length&&!(q.notes||[]).length)return;var box=E('section','box questions');
+ box.appendChild(E('h2',null,S('sec_questions')));(q.notes||[]).forEach(function(n){var p=E('p','small');p.appendChild(tag('inference'));p.appendChild(T(n));box.appendChild(p);});
+ if(!(q.items||[]).length){m.appendChild(box);return;}box.appendChild(E('p','small muted',S('q_intro')));
  var ta=E('textarea');ta.readOnly=true;ta.rows=2;ta.setAttribute('aria-label',S('q_line'));var cp=E('button',null,S('copy'));var msg=E('span','small muted');
  function refresh(){var line=qLine(q);ta.value=line;ta.placeholder=S('q_empty');cp.disabled=!line;cp.textContent=S('copy');}
  q.items.forEach(function(it,i){var d=E('div','q'+(i===0?' first':''));d.appendChild(E('div',null,(i+1)+'. '+it.text));var bt=E('div','btns');
+  if(it.note)d.appendChild(E('div','small muted',it.note));
   (it.options||[]).forEach(function(o){var b=E('button',A[it.id]===o.value?'on':null,o.label);b.onclick=function(){A[it.id]=(A[it.id]===o.value?null:o.value);
    var kids=bt.children||[];for(var k=0;k<kids.length;k++){kids[k].className=(kids[k]===b&&A[it.id])?'on':'';}refresh();save();};bt.appendChild(b);});
   d.appendChild(bt);box.appendChild(d);});
@@ -1138,18 +1230,23 @@ function topTable(m){var rows=(D.rows||[]).slice(0,D.top_n||10);if(!rows.length)
   a.onclick=function(){var d=document.getElementById('r'+r.rank);if(d&&d.tagName&&String(d.tagName).toLowerCase()==='details'){d.open=true;OPEN['r'+r.rank]=1;save();}};
   var c0=E('td');c0.appendChild(a);tr.appendChild(c0);
   var c1=E('td');c1.appendChild(E('div','name',nm(r)));if(sub(r))c1.appendChild(E('div','small muted',sub(r)));c1.appendChild(E('div','small muted',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));tr.appendChild(c1);
-  tr.appendChild(E('td',null,S('verdict_'+(r.verdict||'partial'))+(r.edge?' · '+S('filter_edge'):'')));
+  tr.appendChild(E('td',null,S('verdict_'+(r.verdict||'partial'))+(r.edge?' · '+S('filter_edge'):'')+(agentShort(r)?' · '+agentShort(r):'')));
   var ev=evCell(r);tr.appendChild(E('td',ev[1],ev[0]));t.appendChild(tr);});
  var w=E('div','tablewrap');w.appendChild(t);m.appendChild(w);}
+function agentLine(r){var a=r.agent;if(!a||['yes','no','unsure'].indexOf(a.v)<0)return null;var d=E('div','small');
+ d.appendChild(tag('inference',S('agent_tag')));var t=S('agent_'+a.v)+(a.why?(L==='zh'?'——':': ')+a.why:'');
+ var st={escalated:'agent_wait',not_applied:'agent_not_applied'}[a.state];d.appendChild(T(' '+t+(st?' · '+S(st):'')));return d;}
+function agentShort(r){var a=r.agent;return (a&&(a.v==='no'||a.v==='unsure'))?S('agent_tag')+(L==='zh'?'：':': ')+S('agent_'+a.v):null;}
 function rowBox(r){var d=fold('r'+r.rank,'row',false);var sm=E('summary');sm.appendChild(E('span','rank','#'+r.rank));sm.appendChild(E('span','name',nm(r)));
  sm.appendChild(E('span','muted small',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));
  sm.appendChild(E('span','small',S('verdict_'+(r.verdict||'partial'))));
- if((r.badges||[]).length)sm.appendChild(E('span','badge',S('badge_'+r.badges[0])));d.appendChild(sm);
+ if((r.badges||[]).length)sm.appendChild(E('span','badge',S('badge_'+r.badges[0])));
+ if(agentShort(r))sm.appendChild(E('span','badge',agentShort(r)));d.appendChild(sm);
  var b=E('div','body');if(sub(r))b.appendChild(E('div','small muted',sub(r)));
  if(r.one_line)b.appendChild(trLine('small',S('what')+colon(),r.one_line,r.one_line_tr,r.one_line_x,'o:r'+r.rank+':what'));
  var v=E('div');v.appendChild(tag('inference'));v.appendChild(E('strong',null,S('verdict_'+(r.verdict||'partial'))));
  v.appendChild(T(' · '+S(r.user_only?'evidence_user':'evidence_'+(r.evidence||'profile'))));
- if(r.user){v.appendChild(T(' '));v.appendChild(tag('user'));}b.appendChild(v);
+ if(r.user){v.appendChild(T(' '));v.appendChild(tag('user'));}b.appendChild(v);if(agentLine(r))b.appendChild(agentLine(r));
  b.appendChild(quote(r.quote,r.evidence==='profile',r.user,'o:r'+r.rank+':quote'));
  var det=E('details','tech');det.appendChild(E('summary',null,S('details')));var g=E('div','grid');
  function kv(k,val){if(val===null||val===undefined||val==='')return;g.appendChild(E('div','muted',S(k)));g.appendChild(E('div',null,val));}
@@ -1181,6 +1278,8 @@ function secResults(m){var box=E('section','results');m.appendChild(box);
   groups.forEach(function(gr){var p=E('p','small');p.appendChild(tag('gap'));p.appendChild(T(fmt(S('unverified_group'),{n:gr.n,why:S(gr.key)})));ud.appendChild(p);
    var us=byKey[gr.key]||[];if(us.length)ud.appendChild(E('div','small muted names',us.map(function(u){return nmFull(u)+(u.ticker?' '+u.ticker:'');}).join(L==='zh'?'、':', ')+(us.length<gr.n?' …':'')));});
   box.appendChild(ud);}
+ if((D.removed||[]).length){var rd=fold('removed','unv',false);rd.appendChild(E('summary',null,fmt(S('removed_title'),{n:D.removed.length})));
+  D.removed.forEach(function(x){var p=E('div','small');p.appendChild(tag('inference'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')+' — '+x.why));rd.appendChild(p);});box.appendChild(rd);}
  if((D.excluded||[]).length){box.appendChild(E('h2',null,fmt(S('excluded_title'),{n:D.excluded.length})));
   D.excluded.forEach(function(x){var p=E('div','small');p.appendChild(tag('user'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')));box.appendChild(p);});}
  if((D.gaps||[]).length){box.appendChild(E('h2',null,S('gaps_title')));D.gaps.forEach(function(g){var p=E('p','small');p.appendChild(tag('gap'));
@@ -1207,11 +1306,14 @@ render();
 
 CHANGE_TEXT = {"zh": {"answers": "应用了你的 {n} 个回答后重排", "fetch": "补抓 {n} 家年报后重排",
                       "fill": "补了 {n} 家公司简介后重排", "fill_fetch": "补了 {m} 家公司简介、补抓 {n} 家年报后重排",
-                      "rerun": "重新筛选"},
+                      "rerun": "重新筛选", "scope": "按你的 {n} 个范围回答调整", "agent": "你的 AI 核对了 {n} 家后调整",
+                      "decide": "按你的回答调整", "reapply": "补简介后按你的回答重排"},
                "en": {"answers": "re-ranked with your {n} answers", "fetch": "re-ranked after fetching {n} annual "
                       "reports", "fill": "re-ranked after filling profiles of {n} companies",
                       "fill_fetch": "re-ranked after filling profiles of {m} companies and fetching {n} annual reports",
-                      "rerun": "screened again"}}
+                      "rerun": "screened again", "scope": "adjusted with your {n} scope answers",
+                      "agent": "adjusted after your AI checked {n} companies", "decide": "adjusted with your answers",
+                      "reapply": "re-ranked with your answers after the profile fill"}}
 
 
 def change_of(result: dict[str, Any], lineage: dict[str, Any] | None = None) -> dict[str, str] | None:
@@ -1221,6 +1323,17 @@ def change_of(result: dict[str, Any], lineage: dict[str, Any] | None = None) -> 
     params = result.get("params") or {}
     if not params.get("from_run") and not result.get("supersedes"):
         return None
+    ck = params.get("change_kind")
+    if ck in ("scope", "agent", "decide", "reapply"):
+        # a free rank_only version (judge / decide / the fill's reapply): never 'applied your N answers'
+        n = 0
+        if ck == "agent":
+            n = int(((result.get("layers") or {}).get("rank_only") or {}).get("reviewed") or 0)
+        elif ck == "scope":
+            n = len(((result.get("scope") or {}).get("enforced")) or [])
+        m = 0
+        return {"kind": ck, "n": n, "m": m, "zh": CHANGE_TEXT["zh"][ck].format(n=n, m=m),
+                "en": CHANGE_TEXT["en"][ck].format(n=n, m=m)}
     answers = int(((result.get("calibration") or {}).get("answers")) or (lineage or {}).get("answers") or 0)
     fetched = (((result.get("layers") or {}).get("fetch") or {}).get("fetched") or {})
     if answers:
@@ -1531,6 +1644,12 @@ def page_data(cfg, result: dict[str, Any], deck: dict[str, Any] | None, *, lang:
         with contextlib.suppress(Exception):   # the idea's cumulative cost and time (quickstart.idea_totals)
             from . import quickstart
             ex["totals"] = quickstart.idea_totals(cfg, result["idea"], wait_s=5.0)
+    if "questions" not in ex and result.get("output_dir"):
+        with contextlib.suppress(Exception):     # the scope-question slot of this version (review.json)
+            from . import review_cli
+            q = review_cli.page_questions(cfg, result, "en" if lang == "en" else "zh")
+            if q is not None:
+                ex["questions"] = q
     data = build_page_data(result, deck, lang=lang, lineage=lineage, descriptions=descs, country_of=countries,
                            extra=ex, local_names=local)
     if data.get("live") is None:
@@ -1671,7 +1790,13 @@ def top_rows(data: dict[str, Any] | None, n: int = 10) -> list[dict[str, Any]]:
                     "one_line_translated": bool(r.get("one_line_tr")),
                     "one_line_needs_translation": bool(r.get("one_line_x") and not r.get("one_line_tr")),
                     "excerpt_mentions_idea": q.get("mentions"), "edge": bool(r.get("edge")),
-                    "user": bool(r.get("user")), "verdict_from_user": bool(r.get("user_only"))})
+                    "user": bool(r.get("user")), "verdict_from_user": bool(r.get("user_only")),
+                    "agent": (r.get("agent") or {}).get("v"), "agent_state": (r.get("agent") or {}).get("state"),
+                    f"agent_why_{lang}": (r.get("agent") or {}).get("why"),
+                    "scope_demoted": bool(r.get("scope_demoted")),
+                    # the decide tokens that override your AI / the evidence for this row (the human's call)
+                    "overrides": {"keep": f"keep={r.get('security_id')}", "drop": f"drop={r.get('security_id')}"}
+                    if r.get("security_id") else None})
     return out
 
 

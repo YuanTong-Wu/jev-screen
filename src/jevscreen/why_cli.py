@@ -643,7 +643,7 @@ def cmd_sieve_unpin(args: argparse.Namespace, cfg: Any) -> int:
         keep, gone, card = [], 0, None
         for i, ex in enumerate(sv2.get("examples") or [], 1):
             same = ex.get("pin") and (ex.get("company_key") == m.company_key or ex.get("security_id") == m.security_id)
-            if same and ex.get("via") == "pin":
+            if same and ex.get("via") in ("pin", "escalation", "override_agent"):   # sieve pin / jevscreen decide
                 sv2.setdefault("history", []).append({**ex, "undone_at": now})
                 gone += 1
                 continue

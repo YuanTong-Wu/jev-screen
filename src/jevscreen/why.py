@@ -31,7 +31,8 @@ QUOTE_MAX_CHARS = 200
 MISSING_TERMS_MAX = 5
 STAGE_IDS = ("not_found", "ambiguous", "not_in_universe", "null_mcap", "below_min_mcap", "below_min_volume",
              "other_country", "shell", "no_description", "dry_run", "l1_not_sent", "l1_rejected", "l2_not_sent",
-             "l2_failed", "l2_contradicted", "l2_unverified", "ranked_below_cut", "excluded_by_user", "in_output",
+             "l2_failed", "l2_contradicted", "l2_unverified", "ranked_below_cut", "excluded_by_user", "scope_removed",
+             "agent_removed", "in_output",
              "forced_extra", "pre_ledger")
 # exchange -> (sync command, key it needs or None, seconds, extra flags); per-company syncs only (never sync-sec: it
 # has no --codes). sync-mops needs --mode annual: its default 'basic' stores the 主要經營業務 profile, not the report
@@ -241,6 +242,8 @@ def _attach_db(ctx: RunCtx, con) -> None:
                 ln = ctx.lines.setdefault(ck, {"k": ck, "id": sid, "n": None, "s": "l1_sent", "m": None,
                                                "pre_ledger": True})
                 pr = json.loads(pj) if pj else {}
+                if layer not in ("l1", "l2"):
+                    continue             # facet layers (the scope questions) are not step answers
                 if layer == "l1":
                     res = {"status": status, "label": label, "probs": pr}
                     ln["l1"] = {"lab": label, "p": [pr.get(n) for n in ("core", "adjacent", "unrelated",
@@ -371,7 +374,7 @@ def _ledger_index(ctx: RunCtx):
 
 
 def _row(ctx: RunCtx, k: str) -> tuple[str | None, dict[str, Any] | None]:
-    for where in ("rows", "excluded_by_user", "unverified"):
+    for where in ("rows", "excluded_by_user", "excluded_by_scope", "excluded_by_agent", "unverified"):
         for r in ctx.result.get(where) or []:
             if r.get("company_key") == k:
                 return where, r
@@ -914,6 +917,8 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
         return _in_output(ctx, out, row)
     if where == "excluded_by_user":
         return _excluded(ctx, out, row, match)
+    if where in ("excluded_by_scope", "excluded_by_agent"):
+        return _removed_by_review(ctx, out, row, match, where)
     if not st1["ok"]:
         words = _idea_words(ctx)
         text = _l1_text(ctx, k)
@@ -1005,6 +1010,50 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
     return _below_cut(ctx, out, match)
 
 
+def _removed_by_review(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], match, where: str) -> dict[str, Any]:
+    """A company a scope answer (or the idea's own words) or the user's AI removed (scope design §8.4): the
+    answer, the inference behind it, the AI's words and the one decide token that brings it back."""
+    from . import review, scope
+    lab = row.get("l2_label") or row.get("l2_status")
+    out["stages"].append({"id": "l2", "ok": lab in ("explicit", "partial"), "text_zh": f"第二步：{_lab_zh(lab)}",
+                          "text_en": f"step 2: {_lab_en(lab)}"})
+    sv = ctx.sieve
+    keep = _step(["jevscreen", "decide", f"keep={match.security_id}", "--run", ctx.ref.run_id], ask_human=True)
+    if where == "excluded_by_scope":
+        sid, kind = row.get("scope_sid") or "?", row.get("scope_value") or ""
+        kz, ke = scope.kind_words(kind, sv, "zh"), scope.kind_words(kind, sv, "en")
+        p = row.get("scope_p")
+        pz = f"，把握 {float(p):.0%}" if p is not None else ""
+        pe = f", {float(p):.0%} sure" if p is not None else ""
+        src_zh = "按你的原话" if row.get("scope_source") == "idea_wording" else f"按你的范围回答（{sid} 不要：{kz}）"
+        src_en = "by your own words" if row.get("scope_source") == "idea_wording" else             f"by your scope answer ({sid} drop: {ke})"
+        by_agent = row.get("scope_by") == "agent"
+        _set(out, "scope_removed",
+             f"{src_zh}移出；" + (f"你的 AI 读摘录判为这一类（推断）" if by_agent else f"AI 读摘录判为这一类{pz}（推断）"),
+             f"Removed {src_en}; " + ("your AI read the excerpt and judged it this kind (inference)" if by_agent
+                                      else f"the AI read the excerpt and judged it this kind{pe} (inference)"))
+        out["inferences"].append({"zh": f"AI 读摘录后认为它{kz}", "en": f"the AI read the excerpt: it {ke}"})
+        undo = _step(["jevscreen", "decide", f"{sid}=yes", "--run", ctx.ref.run_id], ask_human=True)
+        out["changes"].append(_change("undo_scope", f"这一类都要（{sid}=yes，需要你本人同意）",
+                                      f"Keep this kind ({sid}=yes; needs your own yes)", [undo],
+                                      "这一类公司回到名单", "Companies of this kind come back"))
+        out["changes"].append(_change("keep_one", "只把它留下（需要你本人同意）", "Keep only this one (needs your own "
+                                      "yes)", [keep], "它回到名单", "It comes back"))
+        return out
+    why_zh, why_en = row.get("agent_why_zh") or "", row.get("agent_why_en") or ""
+    words = review.chip_words(sv).get(row.get("agent_chip") or "") or {}
+    _set(out, "agent_removed", f"你的 AI 判断不要：{why_zh or words.get('zh') or ''}",
+         f"Your AI's call, drop: {why_en or words.get('en') or ''}")
+    inp = ctx.inputs.get(match.company_key) or {}
+    q = review.quote_of(inp.get("text"), row.get("agent_quote_ids") or [])
+    if q:
+        out["facts"].append({"zh": f"摘录：「{q}」", "en": f"excerpt: \"{q}\""})
+    out["changes"].append(_change("keep_one", "留下它（改你的 AI 的判断，需要你本人同意）",
+                                  "Keep it (overrides your AI; needs your own yes)", [keep], "它回到名单",
+                                  "It comes back"))
+    return out
+
+
 def _quote(inp: dict[str, Any], row: dict[str, Any] | None) -> dict[str, Any] | None:
     text = (row or {}).get("evidence_excerpt") or ""
     if not text:
@@ -1080,9 +1129,15 @@ def _below_cut(ctx: RunCtx, out: dict[str, Any], match) -> dict[str, Any]:
     max_out = int(ctx.params.get("max_out") or 40)
     rank = None
     if ctx.pool is not None:      # the full ranking, offline (the same code as screen's step 4)
-        verified, unverified = calib.ranking_entries(calib._merge_candidates(ctx.result, ctx.pool), ctx.sieve,
-                                                     ctx.params.get("rank") or "label")
-        v2, _u2, _ex, _n = screen.pin_and_rank(verified, unverified, ctx.sieve, max_out)
+        from . import review
+        cands = calib._merge_candidates(ctx.result, ctx.pool)
+        for c in cands:
+            if not c.get("evidence_sha"):
+                c["evidence_sha"] = (ctx.inputs.get(c["company_key"]) or {}).get("evidence_sha")
+        verified, unverified = calib.ranking_entries(cands, ctx.sieve, ctx.params.get("rank") or "label")
+        v2, _u2, _ex, _n = screen.pin_and_rank(verified, unverified, ctx.sieve, max_out,
+                                               facets=ctx.result.get("facets"), fsha=ctx.params.get("facets_sha"),
+                                               agent=review.agent_verdicts(ctx.cfg, ctx.result.get("idea") or ""))
         rank = next((i for i, e in enumerate(v2, 1) if e["company_key"] == match.company_key), None)
     _set(out, "ranked_below_cut", f"它通过了两步，但排第 {rank or '?'}，名单只显示前 {max_out}",
          f"It passed both steps but ranks #{rank or '?'}; the list shows the top {max_out}")
@@ -1110,6 +1165,22 @@ def _in_output(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any]) -> dict[st
         out["facts"].append({"zh": "递补，未经确认：别人被你排除后它才进前面", "en": "backfill: moved up after your exclusions"})
     if row.get("l2_edge"):
         out["inferences"].append({"zh": "边缘：再读一次可能会翻", "en": "borderline: another read could flip it"})
+    if row.get("scope_demoted"):
+        out["inferences"].append({"zh": f"按你的范围回答（{row.get('scope_sid')} 不要）排到后面：AI 读摘录后认为它的年报摘录"
+                                        "只写了大类、没写具体对象（推断）",
+                                  "en": f"moved down by your scope answer ({row.get('scope_sid')} drop): the AI read "
+                                        "the excerpt as naming only the broad category (inference)"})
+    if row.get("agent_verdict") and row.get("agent_state") in ("applied", "held", "escalated"):
+        state_zh = {"applied": "", "held": "（等你回答范围问题后才生效）", "escalated": "（和系统意见不同，等你定）"}
+        state_en = {"applied": "", "held": " (waits for your scope answer)", "escalated": " (differs from the system; "
+                                                                                          "waits for your call)"}
+        v = row["agent_verdict"]
+        out["facts"].append({"zh": f"你的 AI 判断：{ {'yes': '要', 'no': '不要', 'unsure': '拿不准'}.get(v, v)}"
+                                   + (f"——{row['agent_why_zh']}" if row.get("agent_why_zh") else "")
+                                   + state_zh.get(row["agent_state"], ""),
+                             "en": f"your AI's call: { {'yes': 'keep', 'no': 'drop', 'unsure': 'not sure'}.get(v, v)}"
+                                   + (f" ({row['agent_why_en']})" if row.get("agent_why_en") else "")
+                                   + state_en.get(row["agent_state"], "")})
     return out
 
 
@@ -1127,6 +1198,10 @@ def _excluded(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], match) -> d
     if ex.get("via") == "pin":
         out["facts"].append({"zh": f"来源：你让 AI 钉选的（{str(ex.get('at') or '')[:10]}）", "en": "source: sieve pin"})
         step = _step(["jevscreen", "sieve", "unpin", match.security_id, "--run", ctx.ref.run_id], ask_human=True)
+    elif ex.get("via") in ("escalation", "override_agent"):
+        out["facts"].append({"zh": f"来源：你回答你的 AI 的问题时说的（{str(ex.get('at') or '')[:10]}）",
+                             "en": "source: your answer to your AI's question"})
+        step = _step(["jevscreen", "decide", f"clear={match.security_id}", "--run", ctx.ref.run_id], ask_human=True)
     else:
         out["facts"].append({"zh": f"来源：你答卡片时选的（{ex.get('deck_id') or '-'}）", "en": "source: card answer"})
         step = _step(["jevscreen", "answer", "--undo", str(n or 0), "--run", ctx.ref.run_id, "--no-apply"],

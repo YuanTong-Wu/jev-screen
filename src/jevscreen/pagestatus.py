@@ -92,7 +92,9 @@ T: dict[str, dict[str, str]] = {
         "ph_done": "完成", "ph_partial": "部分完成", "ph_budget": "预算用完（部分结果）",
         "ph_blocked": "暂停：网站暂时拒绝了请求", "ph_failed": "出错停下了", "ph_key": "等你处理 key",
         "ph_declined": "已停止", "ph_fill": "正在补公司简介并重新排序", "ph_stopped": "后台任务中断了",
-        "ph_busy": "排队中：另一个任务正在用数据库",
+        "ph_busy": "排队中：另一个任务正在用数据库", "ph_review": "你的 AI 正在逐家核对摘录",
+        "review_banner": "你的 AI 正在逐家核对摘录，完成后这页会更新（约 2–4 分钟）",
+        "review_over": "你的 AI 没有完成核对，先看系统的名单。",
         "it_universe": "股票清单（TradingView）", "it_desc": "公司简介（FinanceDatabase）", "it_pack": "开放数据包",
         "it_l1": "AI 初读公司简介", "it_l2": "AI 用年报/简介核对", "it_fetch": "补抓年报原文",
         "it_fill": "补公司简介（TradingView）",
@@ -177,7 +179,10 @@ T: dict[str, dict[str, str]] = {
         "ph_budget": "Budget ran out (partial)", "ph_blocked": "Paused: a site refused our requests for now",
         "ph_failed": "Stopped with an error", "ph_key": "Waiting for you to fix the key", "ph_declined": "Stopped",
         "ph_fill": "Filling company profiles and re-ranking", "ph_stopped": "The background work stopped",
-        "ph_busy": "Queued: another task is using the database",
+        "ph_busy": "Queued: another task is using the database", "ph_review": "Your AI is checking the excerpts",
+        "review_banner": "Your AI is checking the excerpts company by company; this page updates when it is done "
+                         "(about 2-4 minutes)",
+        "review_over": "Your AI did not finish checking the excerpts; here is the system's list for now.",
         "it_universe": "Stock list (TradingView)", "it_desc": "Company profiles (FinanceDatabase)",
         "it_pack": "Open data pack", "it_l1": "AI first read of the profiles", "it_l2": "AI check against reports / "
                                                                                         "profiles",
@@ -638,6 +643,23 @@ def _alerts(cfg, job: dict[str, Any] | None, lang: str) -> list[dict[str, Any]]:
     return out
 
 
+def review_overdue(job: dict[str, Any] | None, now: dt.datetime | None = None) -> bool:
+    """Part A is still pending but older than review.AGENT_REVIEW_TIMEOUT_S: the user's AI stopped (the page gives
+    up waiting even when nobody polls the status any more)."""
+    from . import review
+    ar = (job or {}).get("agent_review") or {}
+    t = _parse(ar.get("created_at"))
+    if ar.get("state") != "pending" or t is None:
+        return False
+    now = now or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    return (now - t).total_seconds() >= review.AGENT_REVIEW_TIMEOUT_S
+
+
+def review_pending(job: dict[str, Any] | None, now: dt.datetime | None = None) -> bool:
+    """The user's AI is reviewing the first result (scope design §7.3: agent_review part A pending, not overdue)."""
+    return ((job or {}).get("agent_review") or {}).get("state") == "pending" and not review_overdue(job, now)
+
+
 def _phase(job: dict[str, Any] | None, lang: str, result: dict[str, Any] | None,
            checks: list[dict[str, Any]]) -> tuple[str, str]:
     """(phase id, the words of the status pill)."""
@@ -656,6 +678,8 @@ def _phase(job: dict[str, Any] | None, lang: str, result: dict[str, Any] | None,
         rs = (job.get("result") or {}).get("status")
         if job.get("queued"):
             return "busy", S["ph_busy"]
+        if review_pending(job):
+            return "review", S["ph_review"]
         return "done", S["ph_partial"] if rs == "partial" else S["ph_budget"] if rs == "budget_exhausted" else \
             S["ph_done"]
     if st == "failed":
@@ -743,12 +767,18 @@ def build(cfg, *, lang: str, job: dict[str, Any] | None = None, result: dict[str
     if st == "done" and (job.get("fill") or {}).get("answer") == "yes" and not (job.get("fill") or {}).get(
             "finished_at"):
         refresh = True
+    alerts = _alerts(cfg, job, lang)
+    if review_pending(job, now):
+        refresh = True             # the user's AI is reviewing: the page updates itself when it is done
+        alerts = [{"kind": "note", "text": S["review_banner"]}] + alerts
+    elif review_overdue(job, now):
+        alerts = [{"kind": "note", "text": S["review_over"]}] + alerts
     show_progress = job is not None and (st != "done" or phase == "fill")
     return {"lang": lang, "phase": phase, "phase_words": words, "refresh": bool(refresh),
             "checks": checks, "optional": _optional(cfg, lang), "all_ok": all_ok,
             "ok_line": (S["all_ok"].format(p=shown) if shown else S["all_ok_nokey"]) if all_ok else None,
             "progress": _progress(job, lang, now) if show_progress else None,
-            "alerts": _alerts(cfg, job, lang), "stale": stale}
+            "alerts": alerts, "stale": stale}
 
 
 def text_lines(status: dict[str, Any] | None, lang: str) -> list[str]:

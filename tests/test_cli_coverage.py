@@ -278,11 +278,13 @@ class CliTest(_CliBase):
         self.assertEqual(p.parse_args(["status"]).command, "status")
         # exact per module (a stray or leftover command fails): the base commands, then the ones each add-on
         # module wires in with its own COMMANDS table
-        from jevscreen import agent_cli, ondemand_cli, quickstart_cli, why_cli
+        from jevscreen import agent_cli, ondemand_cli, quickstart_cli, review_cli, why_cli
         extra = {"agent_cli": set(agent_cli.COMMANDS), "quickstart_cli": set(quickstart_cli.COMMANDS),
-                 "ondemand_cli": set(ondemand_cli.COMMANDS), "why_cli": set(why_cli.COMMANDS)}
+                 "ondemand_cli": set(ondemand_cli.COMMANDS), "why_cli": set(why_cli.COMMANDS),
+                 "review_cli": set(review_cli.COMMANDS)}
         self.assertEqual(extra, {"agent_cli": {"doctor", "keys", "consent"}, "quickstart_cli": {"quickstart", "page"},
-                                 "ondemand_cli": {"fetch-docs"}, "why_cli": {"why"}})
+                                 "ondemand_cli": {"fetch-docs"}, "why_cli": {"why"},
+                                 "review_cli": {"judge", "decide"}})
         self.assertEqual(set(cli.COMMANDS) - set().union(*extra.values()),
                          {"init", "refresh-universe", "import-fd", "crawl-descriptions", "sync-sec", "sync-cninfo",
                           "sync-edinet", "sync-dart", "keywords", "coverage", "status", "screen", "cards", "answer",

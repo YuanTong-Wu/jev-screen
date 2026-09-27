@@ -88,7 +88,9 @@ RELAY_EVERY_S = 60
 DEFAULT_MIN_MCAP = 1e9
 DEFAULT_APPROVAL_USD = 1.0
 READS = 3
-CARDS = 8
+CARDS = 5                   # the optional 精调 cards (a tool for the user's AI, never a default human step)
+CHAT_Q_MAX = 3              # at most this many questions in the chat message after the result (ask_now)
+CHAT_ESC_MAX = 2            # of which at most this many companies your AI could not decide
 CANARY_BUDGET_USD = 0.001
 UNIVERSE_FRESH_DAYS = 7
 DESC_IMPORT_FRESH_DAYS = 30
@@ -129,7 +131,8 @@ STRINGS: dict[str, dict[str, str]] = {
                   "只能你个人研究用、不能分享；②要一个能付费用 Jev（读简介和年报的 AI 服务）的账号：TypeSafe 官方 API、OpenRouter "
                   "或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家"
                   "付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟"
-                  "（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。",
+                  "（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。出结果后，你的 AI 会再"
+                  "逐家读约 25–40 家公司的摘录来核对，用的是它自己的额度，要几分钟。",
         "intro": "接下来：先下载股票清单和公司简介（免费，约 1 分钟），再让 AI 读这些简介、用年报核对（约 3 分钟，约 $0.3），"
                  "最后在浏览器里给你一个排好序的名单，每家都附原文证据。",
         "bg_started": "免费下载已经在后台开始了，你准备 key 的时候不耽误。",
@@ -206,7 +209,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "ev_gap_annual_report": "年报摘录未提到（缺口）", "ev_gap_profile": "简介摘录未提到（缺口）",
         "ev_user": "按你的判断（AI 没从原文确认）", "mark_user": "，你的判断", "mark_edge": "，边缘",
         "next_idea": "换一个想法：直接告诉你的 AI（约 4 分钟，约 $0.25，不用再下载）",
-        "next_cards": "想更准：让你的 AI 复核几家边缘公司（可选，你不用做什么；重新排序约 $0.01–0.03）",
+        "review_wait": "结果出来了，我正在逐家核对年报和简介的摘录（约 2–4 分钟），核对完再给你看名单。",
+        "review_page_line": "页面上「帮 AI 把范围定准」里点答案，把生成的那行发给我就行（免费，几秒更新）。",
+        "review_timeout": "你的 AI 没有完成核对，先给你系统的名单。",
+        "ask_label": "问题 {i}：",
+        "ask_optional": "（可选）",
         "next_gap_cn": "补中国公司简介：约 {n} 家，约 {m} 分钟，可后台",
         "next_gap_sec": "用美股年报原文核对：下载时按 SEC 规则附上一个名字和邮箱（可选，不用注册账号）",
         "budget_exhausted": "预算用完了：结果页先给出已核对的 {n} 家。继续需要再同意约 ${x}。",
@@ -243,7 +250,9 @@ STRINGS: dict[str, dict[str, str]] = {
                   "top-up usually has a minimum (a few dollars, plus a payment fee; see the provider's payment page) and "
                   "needs a card that pays in US dollars; this screen uses about $0.30 of it and the rest stays for later. "
                   "(3) About 15–25 minutes the first time, including the sign-up. On a Mac, a box may offer to install "
-                  "the command line developer tools: click Install (a few minutes). You answer one round of questions.",
+                  "the command line developer tools: click Install (a few minutes). You answer one round of questions. "
+                  "After the result, your AI reads the excerpts of about 25-40 companies to check them, on its own "
+                  "quota; that takes a few minutes.",
         "intro": "Next: download the stock list and company profiles (free, about 1 min), have an AI read them and check "
                  "against annual reports (about 3 min, about $0.30), then show you a ranked list with evidence in your "
                  "browser.",
@@ -349,8 +358,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "ev_user": "your call (the AI did not confirm it from the text)", "mark_user": ", your call",
         "mark_edge": ", borderline",
         "next_idea": "Try another idea: just tell your AI (about 4 min, about $0.25, no downloads)",
-        "next_cards": "Sharpen it: let your AI review a few borderline companies (optional, nothing for you to do; "
-                      "re-ranking costs about $0.01–0.03)",
+        "review_wait": "The list is ready; I'm checking the annual-report and profile excerpts company by company "
+                       "(about 2-4 minutes) before I show it to you.",
+        "review_page_line": "On the page, pick your answers under \"Help the AI get the scope right\" and send me the "
+                            "line it builds (free; updates in seconds).",
+        "review_timeout": "Your AI did not finish checking the excerpts; here is the system's list for now.",
+        "ask_label": "Q{i}. ",
+        "ask_optional": " (optional)",
         "next_gap_cn": "Fill Chinese company profiles: about {n} companies, about {m} min, can run in the background",
         "next_gap_sec": "Check US companies against annual reports: give the SEC a contact name and e-mail, sent with "
                         "each download (optional, no account)",
@@ -395,7 +409,15 @@ STRINGS: dict[str, dict[str, str]] = {
 }
 NEEDS_AGENT_EN = ("The idea is not in English and no local translation is available. Write one English sentence "
                   "(<= 400 chars, no company names or tickers that are not in the idea) and rerun: {cmd} --idea-en "
-                  "'<sentence>'. The human will see it in the spend question.")
+                  "'<sentence>'. The human will see it in the spend question. In the same rerun add --facets "
+                  "'<json>' (see facets_help_en): the idea's category and target in English and Chinese, and at most "
+                  "2 implied_no entries whose 'because' quotes the idea's own words.")
+FACETS_HELP_EN = ("--facets '{\"en\": {\"category\": \"<what is offered>\", \"target\": \"<for whom / where / applied "
+                  "to what>\"}, \"zh\": {\"category\": \"...\", \"target\": \"...\"}, \"implied_no\": [{\"key\": "
+                  "\"geo.outside_only\", \"because\": \"<words of the idea>\"}]}' - optional; it lets the result ask at "
+                  "most 2 plain questions about the idea's boundary (kinds of company, never single companies). Keys "
+                  "for implied_no: role.buyer, role.holding, role.upstream, role.hardware, role.target_only "
+                  "(technology ideas), geo.outside_only (geography ideas). Never a company name in any string.")
 
 
 # ------------------------------------------------------------------------------------------------ small helpers
@@ -909,6 +931,12 @@ def apply_flags(cfg, job: dict[str, Any], flags: dict[str, Any]) -> list[str]:
             # Jev cache for $0, so the new run continues where the old one stopped)
             reset_steps(job, "estimate", "screen", "fetch", "finish")
             job.update(state="new", result=None, waiting_on=None)
+    if flags.get("facets") is not None:
+        take_facets(job, flags["facets"])
+    if flags.get("agent_review_state") and (job.get("agent_review") or {}).get("state") == "pending":
+        job["agent_review"] = {**job["agent_review"], "state": flags["agent_review_state"]}
+    if flags.get("reapply"):
+        job["reapply"] = True          # judge / decide while this idea's worker ran: re-rank when it ends
     fd = flags.get("fill_descriptions")
     if fd in ("yes", "no") and job.get("fill_offer") and not (job.get("fill") or {}).get("answer"):
         job["fill"] = {"answer": fd, "at": iso(now_utc()), "offer": job["fill_offer"]}
@@ -916,6 +944,199 @@ def apply_flags(cfg, job: dict[str, Any], flags: dict[str, Any]) -> list[str]:
         reset_steps(job, "estimate", "screen", "fetch", "finish")
         job.update(result=None, state="new", failure=None)
     return problems
+
+
+def take_facets(job: dict[str, Any], raw: Any) -> None:
+    """--facets (spec §7.1): stored until the screen step merges it into the sieve; never blocks. Ignored with a
+    note once the screen has started; unreadable JSON is a note too."""
+    if step_done(job, "screen") or job.get("current_step") in ("screen", "fetch", "finish") \
+            or job.get("facets_applied"):
+        job["facets_notes"] = (job.get("facets_notes") or []) + [
+            "这次的筛选已开始，范围设定下次生效 / the screen has started: the facets apply next time"]
+        return
+    val = raw
+    if isinstance(raw, str):
+        try:
+            val = json.loads(raw)
+        except ValueError:
+            job["facets_notes"] = (job.get("facets_notes") or []) + ["--facets is not valid JSON; ignored"]
+            return
+    if not isinstance(val, dict):
+        job["facets_notes"] = (job.get("facets_notes") or []) + ["--facets must be a JSON object; ignored"]
+        return
+    job["facets_input"] = val
+
+
+def apply_facets(cfg, job: dict[str, Any], names: tuple[list[str], list[str]] | None = None) -> list[str]:
+    """Merge the job's --facets into the idea's sieve (author fields facets / facets_zh) and record its implied_no
+    defaults as scope answers (source idea_wording). A string naming a company (calib.idea_en_name_hits; the
+    geography target is exempt) is dropped with a note and the generic wording is used. Returns the notes."""
+    from . import calib, scope, sieve_author
+    fi = job.get("facets_input")
+    if not isinstance(fi, dict) or job.get("facets_applied"):
+        return []
+    notes: list[str] = []
+    idea = job["idea"]
+    if names is None:
+        n, t, _src = _universe_names(cfg)
+        names = (n, t)
+    en = {k: str(v).strip() for k, v in (fi.get("en") or {}).items() if k in ("category", "target", "mechanism",
+                                                                              "type") and str(v or "").strip()}
+    zh = {k: str(v).strip() for k, v in (fi.get("zh") or {}).items() if k in ("category", "target")
+          and str(v or "").strip()}
+    kind = calib.facet_type(en) if en.get("category") and en.get("target") else None
+    for d, lang in ((en, "en"), (zh, "zh")):
+        for k in list(d):
+            if k == "type":
+                continue
+            if k == "target" and (kind == "geography" or d.get(k, "").lower() in calib._GEO_WORDS):
+                continue
+            hits = calib.idea_en_name_hits(d[k], idea, names[0], names[1])
+            if hits:
+                notes.append(f"facets.{lang}.{k} dropped: it names {', '.join(hits)}")
+                del d[k]
+    if en.get("type") not in (None, *calib.FACET_TYPES):
+        del en["type"]
+    draft: dict[str, Any] = {}
+    if en.get("category") and en.get("target"):
+        draft["facets"] = en
+    if zh.get("category") and zh.get("target"):
+        draft["facets_zh"] = zh
+    path = calib.sieve_path(cfg, idea)
+    for attempt in (0, 1):
+        sv = calib.load_sieve(path) or calib.new_sieve(idea)
+        sv2, _diff = sieve_author.merge_author(sv, draft) if draft else (sv, [])
+        defaults, dnotes = scope.implied_defaults(idea, fi.get("implied_no"), sv2)
+        entries = scope.default_entries(defaults, sv2, fsha=scope.facets_sha(sv2), run_id=None)
+        if entries:
+            sv2 = scope.record(sv2, entries)
+        try:
+            if draft or entries:
+                calib.save_sieve(path, sv2)
+            break
+        except calib.SieveStale:
+            if attempt:
+                notes.append("facets not saved: the sieve changed meanwhile")
+                return notes
+        except ValueError as e:
+            notes.append(f"facets not saved: {str(e)[:160]}")
+            return notes
+    notes += dnotes
+    job["facets_applied"] = True
+    job["facets_implied"] = [f"{d['family']}.{d['value']}" for d in defaults]
+    job["facets_notes"] = (job.get("facets_notes") or []) + notes
+    return notes
+
+
+def run_chain(cfg, run_id: str | None) -> list[str]:
+    """run_id and its ancestors through params.from_run (newest first)."""
+    from . import store
+    out: list[str] = []
+    if not run_id:
+        return out
+    with store.session(cfg, read_only=True, wait_s=10.0) as con:
+        cur: str | None = run_id
+        while cur and cur not in out:
+            out.append(cur)
+            row = con.execute("SELECT params_json FROM screen_runs WHERE run_id = ?", [cur]).fetchone()
+            try:
+                cur = (json.loads(row[0] or "{}") or {}).get("from_run") if row else None
+            except ValueError:
+                cur = None
+    return out
+
+
+def adopt_version(cfg, key: str, res: dict[str, Any], *, deck: dict[str, Any] | None, path: Path | None,
+                  data: dict[str, Any] | None, sieve_version: int | None, review: dict[str, Any] | None = None,
+                  open_page: bool = False) -> bool:
+    """A new version made by judge / decide / the fill's reapply (spec §7.6) becomes the job's result when the job's
+    current run is its ancestor (through params.from_run): run, page, deck, top rows; cost = the job's + the
+    version's; sieve_version = the version just saved (so the same idea again reuses it for $0); the review state
+    (agent_review, the questions, the escalations). follow_update is unchanged. Returns whether the job changed."""
+    from . import page, pagestatus
+    job = load_job(cfg, key)
+    if not job or not job.get("result"):
+        return False
+    old = job["result"]
+    try:
+        chain = run_chain(cfg, res["run_id"])
+    except Exception:  # noqa: BLE001 - a busy store: the page still shows the new version
+        chain = []
+    same = old.get("run_id") == res["run_id"] or (bool(old.get("output_dir"))
+                                                   and str(old.get("output_dir")) == str(res.get("output_dir")))
+    if old.get("run_id") not in chain and not same:
+        return False
+    stable = page.stable_path(cfg, job["idea"]) if path and page.stable_holds(cfg, job["idea"], res["run_id"]) \
+        else path
+    cost = old.get("cost_usd") if same or old.get("cost_usd") is None else \
+        round(float(old["cost_usd"]) + float(res.get("cost_usd") or 0), 6)
+    opened = bool(old.get("page_opened") or job.get("page_opened"))
+    if open_page and not opened and not job.get("no_open") and stable is not None:
+        opened = bool(_default_open(stable))
+        if opened:
+            job["page_opened"] = True
+    if same:          # the same version (judge --skip, a timeout): only the review state and the sieve version
+        job["result"] = {**old, "page_opened": opened}
+    else:
+        job["result"] = result_block(cfg, job, res, deck, path, data, stable=stable, opened=opened, cost=cost,
+                                     seconds=old.get("seconds"))
+    job["result"]["sieve_version"] = sieve_version
+    if review is not None:
+        ar = review.get("agent_review") or {}
+        job["agent_review"] = {**(job.get("agent_review") or {}), **{k: v for k, v in ar.items()},
+                               "run_id": res["run_id"]}
+        job["review"] = review_brief(review, job.get("review"))
+    save_job(cfg, job)
+    pagestatus.write(cfg, job)
+    return True
+
+
+def _qid(item: dict[str, Any]) -> str:
+    """The id of an ask_now item (a scope question's sid, a company's cid, else the item id)."""
+    return str(item.get("sid") or item.get("cid") or item.get("id") or "")
+
+
+def mark_relayed(cfg, key: str, out: dict[str, Any] | None = None) -> None:
+    """The first response that actually hands the human's questions to the agent (ask_now not empty) after the
+    review: the chat round of this version is fixed (the same ask_now until the human answers with decide or a new
+    version comes); new questions go to later from then on. A response without questions (a timed-out review, no
+    open question) relays nothing."""
+    asked = [_qid(i) for i in (out or {}).get("ask_now") or []]
+    if not asked:
+        return
+    job = load_job(cfg, key)
+    if job and job.get("review") and not job["review"].get("relayed"):
+        job["review"].update(relayed=True, relayed_run=job["review"].get("run_id"), relayed_ids=asked)
+        save_job(cfg, job)
+
+
+def review_timeout(cfg, job: dict[str, Any]) -> bool:
+    """The user's AI did not finish part A within AGENT_REVIEW_TIMEOUT_S: finalize the questions without its
+    answers, rewrite the page and note it. A later judge of that deck still works (a new version)."""
+    from . import page, review, review_cli
+    ar = job.get("agent_review") or {}
+    t = parse_iso(ar.get("created_at"))
+    if ar.get("state") != "pending" or t is None or (now_utc() - t).total_seconds() < review.AGENT_REVIEW_TIMEOUT_S:
+        return False
+    res = job.get("result") or {}
+    try:
+        out_dir, result = review_cli.run_files(cfg, res["run_id"])
+        rv = review.load_review(out_dir)
+        sv, _ = review_cli.load_sieve(cfg, job["idea"])
+        _p, _i, names = review_cli.pool_inputs(cfg, result)
+        rv = review_cli.finalize(cfg, result, {**rv, "agent_review": {**(rv.get("agent_review") or {}),
+                                                                      "state": "timed_out"}},
+                                 sieve=sv, agent=review.agent_verdicts(cfg, job["idea"]), names=names)
+        review.save_review(out_dir, rv)
+        page.write_page(cfg, out_dir, result, None, lang=job.get("lang") or "zh", job=job)
+    except Exception as e:  # noqa: BLE001 - the list stands; only the questions are missing
+        rv = {"agent_review": {"state": "timed_out"}}
+        job["notes"] = (job.get("notes") or []) + [f"review timeout: {type(e).__name__}"]
+    job["agent_review"] = {**ar, "state": "timed_out"}
+    job["review"] = review_brief(rv, job.get("review"))
+    job["notes"] = (job.get("notes") or []) + [STRINGS[job.get("lang") or "zh"]["review_timeout"]]
+    save_job(cfg, job)
+    return True
 
 
 def read_ledger(cfg, dirs: list[str], *, wait_s: float, poll_s: float = 0.5) -> float:
@@ -971,6 +1192,9 @@ def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[s
     if job.get("state") == "done" and job.get("reprice"):
         return [reprice_item(job)]            # a new English sentence after the result: asked, never stored silently
     if job.get("state") == "done":
+        ar = agent_review_item(job)
+        if ar is not None:
+            return [ar]                       # the user's AI reviews first; the human round waits (spec §7.2)
         f = fill_item(cfg, job, spent)
         return [f] if f is not None else items
     if job.get("state") == "declined":
@@ -986,7 +1210,9 @@ def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[s
                 "rerun_with": "--idea-en '<sentence>'", "problems": refused,
                 "refused_idea_en": last.get("text") if refused else None,
                 "suggested_idea_en": sug,
-                "rerun_command": front_command(job, idea_en=sug or "<sentence>")}
+                "rerun_command": front_command(job, idea_en=sug or "<sentence>"),
+                "facets_help_en": FACETS_HELP_EN,
+                "rerun_command_with_facets": front_command(job, idea_en=sug or "<sentence>") + " --facets '<json>'"}
         if refused and _held_approval(job) is not None:
             item["instructions_en"] += (" The human already approved the budget for the refused sentence: if the "
                                         "flagged word is an ordinary English word and you only lower-case it (e.g. "
@@ -1017,6 +1243,37 @@ def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[s
     if not k["configured"] or rejected:
         items.append(key_item(cfg, k, rejected, canary.get("status")))
     return items
+
+
+def facets_item(job: dict[str, Any]) -> dict[str, Any] | None:
+    """The optional, non-blocking --facets request for the agent (spec §7.1), until the screen starts. It lives in
+    agent_optional, not in pending: it never changes the status and is never asked of the human."""
+    if job.get("facets_input") or job.get("facets_applied") or step_done(job, "screen") \
+            or job.get("state") in ("done", "declined"):
+        return None
+    return {"id": "facets", "ask_agent": True, "blocking": False, "optional": True,
+            "instructions_en": "Optional, before the screen starts: rerun next_command with " + FACETS_HELP_EN,
+            "rerun_with": "--facets '<json>'"}
+
+
+REVIEW_INSTRUCTIONS_EN = (
+    "Tell the human text_<lang> in one line first. Open deck_path (a local file) and decide every item from "
+    "evidence.sentences ONLY (the deck's instructions_en and criteria_en; the company name alone is not evidence): "
+    "yes with level, no with a chip, or unsure with unsure_kind; cite 1-3 quote_ids and give 'why' in the human's "
+    "language; held items also need in_group and short. Save the answers file inside the jev-screen folder and run "
+    "record_command (free, seconds), then `jevscreen quickstart --status --key K --json` and relay as for done. If "
+    "you cannot read files, run skip_command: the system's list stands. Never answer the human's scope questions or "
+    "company questions yourself.")
+
+
+def agent_review_item(job: dict[str, Any]) -> dict[str, Any] | None:
+    """The blocking agent_review item while deck part A waits for the user's AI (spec §7.2)."""
+    ar = job.get("agent_review") or {}
+    if ar.get("state") != "pending":
+        return None
+    return {"id": "agent_review", "ask_agent": True, "blocking": True, "deck_id": ar.get("deck_id"),
+            "deck_path": ar.get("deck_path"), "items": ar.get("items"), "record_command": ar.get("record_command"),
+            "skip_command": ar.get("skip_command"), "instructions_en": REVIEW_INSTRUCTIONS_EN}
 
 
 def reprice_item(job: dict[str, Any]) -> dict[str, Any]:
@@ -1254,10 +1511,12 @@ def derive_status(cfg, job: dict[str, Any], items: list[dict[str, Any]]) -> str:
         return "needs_human"
     if st == "done" and job.get("queued") and fill_waiting(job):
         return "store_busy"      # the yes to the profile fill waits for another idea's worker
+    if st == "done" and any(i.get("id") == "agent_review" for i in items):
+        return "needs_agent"     # exit 11: do the ask_agent item in pending (next_action_en names it)
     if st == "done":
         r = (job.get("result") or {}).get("status")
         return {"ok": "done", "partial": "partial", "budget_exhausted": "budget_exhausted"}.get(r, "done")
-    if any(i.get("ask_agent") for i in items):
+    if any(i.get("ask_agent") and i.get("blocking", True) for i in items):
         return "needs_agent"
     if st == "failed":
         kind = (job.get("failure") or {}).get("kind")
@@ -1325,8 +1584,27 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         out["poll_command"] = status_command(job)
     if status == "budget_exhausted":
         out["next_command"] = front_command(job)       # plus the top-up item's rerun_with after a yes
+    fi = facets_item(job)
+    out["agent_optional"] = [fi] if fi else []
+    if job.get("facets_notes"):
+        out["facets_notes"] = job["facets_notes"]
+    rvw = review_view(job, items)
+    out.update(agent_review=rvw["agent_review"], scope=rvw["scope"], escalations=rvw["escalations"],
+               ask_now=rvw["ask_now"], later=rvw["later"], agent_summary=rvw["agent_summary"])
+    if items:
+        first = items[0]
+        out["next_action_en"] = (f"Do the pending item {first['id']!r}"
+                                 + (" (for you, the agent: see its instructions_en)" if first.get("ask_agent")
+                                    else " (ask the human)") + ".")
+    elif status in ("done", "partial") and rvw["ask_now"]:
+        out["next_action_en"] = ("Relay text_<lang>, the top rows and the ask_now questions in ONE message; put all "
+                                 "of the human's answers into one decide command.")
+    if any(i.get("id") == "agent_review" for i in items):
+        out["next_command"] = items[0].get("record_command")
+    elif rvw["agent_review"] and status in ("done", "partial"):
+        out["next_command"] = out.get("next_command") or status_command(job, wait=False)
     for lang in ("zh", "en"):
-        out[f"text_{lang}"] = human_text(job, status, items, lang, rem, totals)
+        out[f"text_{lang}"] = human_text(job, status, items, lang, rem, totals, view=rvw)
     if job.get("idea_en_problems") and not job.get("idea_en"):
         out["idea_en_problems"] = job["idea_en_problems"]
         last = job.get("idea_en_last_refused") or {}
@@ -1335,6 +1613,61 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         out["rerun_command"] = front_command(job, idea_en=last.get("suggested") or "<sentence>")
     out.update(extra or {})
     return out
+
+
+def review_view(job: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
+    """The review fields of the JSON (spec §7.4) and the human round: ask_now holds at most CHAT_Q_MAX optional
+    questions in the order fill > scope (<= 2) > companies your AI could not decide in the relayed top 10 (or E3 /
+    E4; <= CHAT_ESC_MAX) > annual-report fetch questions; the rest goes to later (the page / JSON, never asked in
+    chat). After the first relay everything new goes to later."""
+    from . import review_cli
+    rv = job.get("review") or {}
+    ar = job.get("agent_review") or None
+    if ar is not None and (rv.get("followups") or rv.get("part_b")):
+        # the non-blocking decks your AI may review after relaying (part B, follow-ups after a change)
+        ar = {**ar, "part_b": ar.get("part_b") or rv.get("part_b"), "followups": rv.get("followups") or []}
+    res = job.get("result") or {}
+    run_id = rv.get("run_id") or res.get("run_id")
+    ans = rv.get("answered") or {}
+    empty = {"agent_review": ar, "scope": None, "escalations": [], "ask_now": [], "later": [],
+             "agent_summary": rv.get("agent_summary")}
+    if not rv or (ar or {}).get("state") == "pending":
+        fill = [i for i in items if i.get("id") == "fill_descriptions"]
+        return {**empty, "ask_now": fill}
+    cmd = review_cli.decide_command(run_id, "<tokens>") if run_id else None
+    scope_items = [{"id": "scope_question", "sid": q["sid"], "ask_human": True, "optional": True,
+                    "question_zh": q["question_zh"] + q.get("effect_zh", ""),
+                    "question_en": q["question_en"] + " " + q.get("effect_en", ""), "answer_words": q.get("answer_words"),
+                    "tokens": q.get("tokens"), "record_command": cmd}
+                   for q in rv.get("questions") or [] if q["sid"] not in ans][:2]
+    escs = [{**e, "record_command": cmd} for e in rv.get("escalations") or [] if e.get("cid") not in ans]
+    esc_now = [e for e in escs if e.get("in_relayed_top") or e.get("reason") in ("E3", "E4")][:CHAT_ESC_MAX]
+    fetch_qs = [{**q, "id": q.get("id") or "fetch_question"} for q in ((res.get("fetch") or {}).get("questions")
+                                                                       or [])]
+    fill = [i for i in items if i.get("id") == "fill_descriptions"]
+    order = fill + scope_items + esc_now + fetch_qs
+    if rv.get("relayed"):
+        # the round already handed to the agent is repeated (a second status, a lost context) until the human
+        # answers or a new version comes; everything else waits in later
+        ids = set(rv.get("relayed_ids") or []) if rv.get("relayed_run") == rv.get("run_id") else set()
+        ask_now = [it for it in order if _qid(it) in ids]
+        later = [it for it in order if it not in ask_now] + [e for e in escs if e not in esc_now]
+    else:
+        ask_now = order[:CHAT_Q_MAX]
+        later = order[CHAT_Q_MAX:] + [e for e in escs if e not in esc_now]
+    scope = {"questions": scope_items, "defaults": rv.get("defaults") or [], "answered": ans}
+    return {**empty, "scope": scope, "escalations": escs, "ask_now": ask_now, "later": later}
+
+
+def review_brief(rv: dict[str, Any], old: dict[str, Any] | None = None) -> dict[str, Any]:
+    """job['review']: what the chat and the JSON need from a version's review.json (relayed carried over)."""
+    from . import review_cli
+    return {"run_id": rv.get("run_id"), "questions": [review_cli._q_brief(q) for q in rv.get("questions") or []],
+            "defaults": rv.get("defaults") or [], "escalations": rv.get("escalations") or [],
+            "answered": rv.get("answered") or {}, "agent_summary": rv.get("agent_summary"),
+            "followups": rv.get("followups") or [], "relayed": bool((old or {}).get("relayed")),
+            "relayed_run": (old or {}).get("relayed_run"), "relayed_ids": (old or {}).get("relayed_ids") or [],
+            "part_b": (rv.get("agent_review") or {}).get("part_b")}
 
 
 def intro_text(job: dict[str, Any], items: list[dict[str, Any]], lang: str) -> str:
@@ -1381,8 +1714,10 @@ def top_evidence(T: dict[str, str], r: dict[str, Any]) -> str:
 
 
 def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], lang: str,
-               rem: float | None, totals: dict[str, Any] | None = None) -> str:
+               rem: float | None, totals: dict[str, Any] | None = None, view: dict[str, Any] | None = None) -> str:
     T = STRINGS[lang]
+    if status == "needs_agent" and any(i.get("id") == "agent_review" for i in items):
+        return T["review_wait"]           # the list is not relayed before the user's AI has checked it
     res = job.get("result") or {}
     failure = job.get("failure") or {}
     fixes = [T["idea_en_fix"].format(old=c["old"], new=c["new"], words=", ".join(c.get("words") or []) or "?")
@@ -1414,9 +1749,21 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
             lines.append(fill[f"message_{lang}"])
         elif fill.get("finished_at") and fill.get("answer") == "yes" and not fill.get("added"):
             lines.append(T["fill_none"])
-        for it in items:
-            if it.get("id") == "fill_descriptions":
-                lines.append(it[f"question_{lang}"])
+        view = view if view is not None else review_view(job, items)
+        summ = view.get("agent_summary") or {}
+        if summ.get(f"text_{lang}"):
+            lines.append(summ[f"text_{lang}"])                 # 我核对了 n 家的摘录 …（first person）
+        for d in (view.get("scope") or {}).get("defaults") or []:
+            lines.append(d[f"text_{lang}"])
+        if (job.get("agent_review") or {}).get("state") == "timed_out":
+            lines.append(T["review_timeout"])                  # why no check by your AI happened
+        for i, it in enumerate(view.get("ask_now") or [], 1):
+            q = it.get(f"question_{lang}") or it.get(f"human_question_{lang}") or it.get(f"text_{lang}") or ""
+            opt = T["ask_optional"] if it.get("id") in ("scope_question", "confirm_company") else ""
+            # labelled apart from the numbered top rows below, so '1 要' / 'Q1 keep' is never ambiguous
+            lines.append(T["ask_label"].format(i=i) + f"{q}{opt}")
+        if (view.get("scope") or {}).get("questions") or view.get("escalations"):
+            lines.append(T["review_page_line"])            # the page's question slot holds both
         from .page import STRINGS as PAGE_STRINGS
         for r in res.get("top") or []:
             # an agent-translated name keeps the original beside it; a translated line is marked, as on the page
@@ -1532,9 +1879,10 @@ def _save_and_page(cfg, job: dict[str, Any]) -> None:
 def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float | None = None,
           min_mcap: float | None = None, countries: list[str] | None = None, lang: str = "auto",
           fd_file: str | None = None, no_open: bool = False, retry: bool = False, new_run: bool = False,
-          fill_descriptions: str | None = None,
+          fill_descriptions: str | None = None, facets: Any = None,
           spawn: Callable[[Any, str], Any] | None = None) -> dict[str, Any]:
-    """The front command (fast, no network). Returns the quickstart JSON (with exit_code)."""
+    """The front command (fast, no network). Returns the quickstart JSON (with exit_code). facets: the agent's
+    --facets (a dict or its JSON text; scope design §7.1), accepted until the screen starts."""
     from . import guard
     idea = (idea or "").strip()
     if not idea:
@@ -1545,6 +1893,7 @@ def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float |
                                                ("fd_file", fd_file), ("no_open", no_open or None),
                                                ("retry", retry or None), ("new_run", new_run or None),
                                                ("fill_descriptions", fill_descriptions),
+                                               ("facets", facets),
                                                ("lang", lang if lang in ("zh", "en") else None)) if v is not None}
     try:
         lock = guard.budget_lock(cfg, LOCK)
@@ -1596,8 +1945,14 @@ def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float |
             (spawn or spawn_worker)(cfg, key)
             return _with_refusal(response(cfg, job), job, problems)
         if job.get("state") == "done" and (reusable(cfg, job) or exhausted(job)):
+            if review_timeout(cfg, job):
+                job = load_job(cfg, key) or job
             _save_and_page(cfg, job)           # the result as it is ($0); an exhausted one carries the top-up question
-            return _with_refusal(response(cfg, job), job, problems)
+            out = _with_refusal(response(cfg, job), job, problems)
+            if out["status"] in ("done", "partial") and (job.get("agent_review") or {}).get("state") not in (
+                    None, "pending"):
+                mark_relayed(cfg, key, out)
+            return out
         if job.get("state") == "done":        # sieve / scope changed: screen again (the Jev cache makes it cheap)
             reset_steps(job, "estimate", "screen", "fetch", "finish")
             job.update(state="new", result=None)
@@ -1718,10 +2073,15 @@ def _view(cfg, key: str, spawn: Callable[[Any, str], Any] | None) -> dict[str, A
         job = {**job, "state": "interrupted"}
     if _resumable(cfg, job):
         return front(cfg, job["idea"], spawn=spawn)
+    if job.get("state") == "done" and review_timeout(cfg, job):
+        job = load_job(cfg, key) or job
     if job.get("state") != "running":      # no worker writes the page now: it follows the answers given since
         from . import pagestatus
         pagestatus.write(cfg, job)
-    return response(cfg, job)
+    out = response(cfg, job)
+    if out["status"] in ("done", "partial") and (job.get("agent_review") or {}).get("state") not in (None, "pending"):
+        mark_relayed(cfg, key, out)
+    return out
 
 
 def status(cfg, key: str | None = None, *, idea: str | None = None, wait_s: float = 0.0,
@@ -2359,7 +2719,7 @@ class Worker:
             res = screen.screen(self.cfg, self.job["idea"], idea_en=self.job["idea_en"], min_mcap_usd=min_mcap,
                                 countries=countries, budget_usd=max(budget, 0.0001), reads=READS, dry_run=True,
                                 out_dir=Path(tmp) / "estimate", sieve="auto", jev_factory=self.d.jev_factory,
-                                keywords_fn=self.d.keywords_fn)
+                                keywords_fn=self.d.keywords_fn, facet_scan=True)
         b = res.get("dry_run_budget") or {}
         l1 = ((res.get("layers") or {}).get("l1") or {}).get("estimate") or {}
         return {"est_cost_usd": b.get("est_cost_usd"), "est_reserved_usd": b.get("est_reserved_usd"),
@@ -2501,11 +2861,17 @@ class Worker:
             p["run_spent_usd"] = 0.0
         self.progress(4, T["zh"]["p_l1"].format(done=0, total="…"), T["en"]["p_l1"].format(done=0, total="…"),
                       force=True, stage="l1")
+        with self.mu:      # the agent's --facets: into the sieve before the first paid step (never blocking)
+            try:
+                for n in apply_facets(self.cfg, self.job):
+                    self.note(f"facets: {n}")
+            except Exception as e:  # noqa: BLE001 - the scope questions are optional; the screen goes on
+                self.note(f"facets not applied: {type(e).__name__}: {str(e)[:120]}")
         try:
             res = screen.screen(self.cfg, self.job["idea"], idea_en=self.job["idea_en"],
                                 min_mcap_usd=float(self.job["min_mcap_usd"]), countries=self.job.get("countries"),
                                 budget_usd=rem, reads=READS, sieve="auto", out_dir=out_dir,
-                                retry_uncertain=retry_unc, progress=on_progress,
+                                retry_uncertain=retry_unc, progress=on_progress, facet_scan=True,
                                 jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn)
         except ValueError as e:
             return self.fail("failed", str(e)[:300], reason="screen_args")
@@ -2671,7 +3037,10 @@ class Worker:
         an empty fill keeps the current result."""
         from . import cli, ops, screen, store
         from .sources import tradingview_profiles
+        from . import calib, review
         fill = self.job["fill"]
+        sv0 = calib.load_sieve(calib.sieve_path(self.cfg, self.job["idea"]))
+        versions = ((sv0 or {}).get("version"), review.version_of(self.cfg, self.job["idea"]))
         o = fill.get("offer") or self.job.get("fill_offer") or {}
         market = o.get("country") or "CN"
         mz, me = FILL_MARKET_WORDS.get(market, (market, market))
@@ -2747,6 +3116,7 @@ class Worker:
             return
         self.result = res
         self.step_fetch("fill_fetch")
+        self.reapply_if_needed(versions)
         with self.mu:
             fill["finished_at"] = iso(now_utc())
         self.step_finish()
@@ -2787,6 +3157,7 @@ class Worker:
         seconds = (round(sum(x for x in secs if x is not None), 1) if res.get("supersedes") and secs[0] is not None
                    else (res.get("timing") or {}).get("total_s"))
         deck, _path = cli._write_run_cards(self.cfg, res, CARDS)
+        rv = self.prepare_review(res)
         self.tick()
         totals = idea_totals(self.cfg, self.job["idea"], self.job, wait_s=30.0)
         path, data = page.write_page(self.cfg, res["output_dir"], res, deck, lang=self.job.get("lang") or "zh",
@@ -2809,6 +3180,11 @@ class Worker:
                                  if not str(n).startswith(("worker stopped without finishing", "interrupted ("))]
             self.job["result"] = result_block(self.cfg, self.job, res, deck, path, data, stable=stable,
                                               opened=opened, cost=cost, seconds=seconds)
+            if rv is not None:
+                ar = rv.get("agent_review") or {}
+                if ar.get("state") == "pending" or not self.job.get("agent_review"):
+                    self.job["agent_review"] = {**ar, "run_id": res["run_id"]}
+                self.job["review"] = review_brief(rv, self.job.get("review"))
             if totals:
                 self.job["totals"] = totals
             self.job["state"] = "done"
@@ -2824,6 +3200,55 @@ class Worker:
         self.record("finish", "ok", t0, "结果页已生成" if path else "结果页没有生成", "page written" if path
                     else "page not written", page=str(stable) if stable else None)
         return "ok"
+
+    def prepare_review(self, res: dict[str, Any]) -> dict[str, Any] | None:
+        """The review of a finished version (spec §7.3): the first result gets deck part A (blocking: the user's AI
+        checks it before the list is relayed); a later version (a fill) of an idea whose AI already reviewed gets a
+        non-blocking follow-up deck of the listed companies it has not read. Never fails the job."""
+        from . import review, review_cli
+        if res.get("status") not in ("ok", "partial"):
+            return None
+        done_before = (self.job.get("agent_review") or {}).get("state") in ("done", "skipped", "timed_out", "none")
+        try:
+            if not done_before:
+                return review_cli.prepare(self.cfg, res, lang=self.job.get("lang"))
+            sv, _ = review_cli.load_sieve(self.cfg, self.job["idea"])
+            agent = review.agent_verdicts(self.cfg, self.job["idea"])
+            pool, _i, names = review_cli.pool_inputs(self.cfg, res)
+            old = self.job.get("review") or {}
+            rv = {"run_id": res["run_id"], "idea": self.job["idea"], "lang": self.job.get("lang"),
+                  "provisional": [], "questions": old.get("questions") or [], "answered": old.get("answered") or {},
+                  "agent_review": {"state": (self.job.get("agent_review") or {}).get("state")}}
+            rv = review_cli.finalize(self.cfg, res, rv, sieve=sv, agent=agent, names=names)
+            fu = review_cli._followup(self.cfg, res, sv, agent, rv, self.job.get("lang") or "zh", names)
+            if fu:
+                rv["followups"] = [fu]
+            review.save_review(res["output_dir"], rv)
+            return rv
+        except Exception as e:  # noqa: BLE001 - the questions are optional: the list stands
+            self.note(f"review not prepared: {type(e).__name__}: {str(e)[:160]}")
+            return None
+
+    def reapply_if_needed(self, versions: tuple[int | None, int]) -> None:
+        """At the end of a fill: judge / decide ran meanwhile (the inbox's reapply, or the sieve / agent file moved
+        on since the fill started): re-rank the fill's result with them (rank_only, free) before it is shown."""
+        from . import calib, review, screen
+        flags = take_inbox(self.cfg, self.job["idea_key"])
+        again = bool(flags.pop("reapply", None) or self.job.pop("reapply", None))
+        if flags:
+            with self.mu:
+                apply_flags(self.cfg, self.job, flags)
+        sv = calib.load_sieve(calib.sieve_path(self.cfg, self.job["idea"]))
+        now = ((sv or {}).get("version"), review.version_of(self.cfg, self.job["idea"]))
+        res = getattr(self, "result", None)
+        if not res or not (again or now != versions):
+            return
+        try:
+            self.result = screen.screen(self.cfg, self.job["idea"], from_run=res["run_id"], rank_only=True,
+                                        change_kind="reapply", sieve="auto")
+            self.add_run(self.result.get("run_id"))
+        except Exception as e:  # noqa: BLE001 - the fill's own result stands; the answers apply next time
+            self.note(f"reapply after the fill skipped: {type(e).__name__}: {str(e)[:160]}")
 
     def run(self) -> int:
         fill = self.job.get("fill") or {}
@@ -2854,9 +3279,7 @@ class Worker:
 
 def _next_steps(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     steps = [{"text_zh": STRINGS["zh"]["next_idea"], "text_en": STRINGS["en"]["next_idea"], "command": None,
-              "cost_usd": 0.25, "minutes": 4},
-             {"text_zh": STRINGS["zh"]["next_cards"], "text_en": STRINGS["en"]["next_cards"], "command": None,
-              "cost_usd": 0.01, "minutes": 3}]
+              "cost_usd": 0.25, "minutes": 4}]
     g = next((x for x in gaps if x["id"] == "no_description" and x.get("cn")), None)
     if g is not None:
         steps.append({"text_zh": STRINGS["zh"]["next_gap_cn"].format(n=g["cn"], m=g["minutes"]),

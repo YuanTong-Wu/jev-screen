@@ -1352,6 +1352,108 @@ def _l2_band_reads(client, items: list, res: dict[str, dict], q2, reads: int, re
     return out
 
 
+def _carry_facets(base: dict[str, Any], inputs: dict[str, dict], into: dict[str, dict[str, Any]]) -> int:
+    """Carry the base run's facet labels forward for companies (and families) this run has no label for, when the
+    evidence is the same (evidence_sha). Returns how many labels were carried."""
+    n = 0
+    for k, fams in (base or {}).items():
+        sha = (inputs.get(k) or {}).get("evidence_sha")
+        if not isinstance(fams, dict) or not sha:
+            continue
+        for fam, lab in fams.items():
+            if not isinstance(lab, dict) or lab.get("evidence_sha") != sha or fam in (into.get(k) or {}):
+                continue
+            into.setdefault(k, {})[fam] = {**lab, "carried": True}
+            n += 1
+    return n
+
+
+def _estimate_uncached(client, items, question) -> dict[str, Any] | None:
+    """The cache-aware estimate (jev.JevClient.estimate_uncached: only the items without a stored answer are
+    priced); a client without it falls back to the upper-bound estimate."""
+    fn = getattr(client, "estimate_uncached", None)
+    try:
+        return dict(fn(items, question)) if callable(fn) else dict(client.estimate(items, question))
+    except Exception as e:  # noqa: BLE001 - an estimate must never stop the screen
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
+def _facet_layer(make, items: list, questions: dict[str, Any], remaining: float, inputs: dict[str, dict],
+                 base_facets: dict[str, Any], clients: dict[str, Any], tell=None
+                 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """({company_key: {family: {label, p, n, evidence_sha, probs, request_id}}}, layer info) of the facet layer.
+
+    Worst case = the cache-aware read-0 estimate x (1 + 2 x FACET_BAND_SHARE); the layer is skipped (with a note)
+    when that exceeds `remaining`. Per family: read 0 of every item, then reads 1 and 2 of the items whose read-0
+    top non-neutral probability lies in FACET_BAND (cached draws, as in the L2 band), decided on the mean
+    (scope.aggregate). Missing labels are carried forward from the base run by evidence_sha. Never raises for Jev
+    errors: they end the layer early (partial)."""
+    from . import scope
+    info: dict[str, Any] = {"items": len(items), "families": sorted(questions), "status": "ok", "skipped": None,
+                            "cost_usd": 0.0, "requests": 0, "band_items": 0, "carried": 0, "labelled": 0,
+                            "estimate_usd": None, "notes": []}
+    out: dict[str, dict[str, Any]] = {}
+    if not items or not questions:
+        info["carried"] = _carry_facets(base_facets, inputs, out)
+        return out, info
+    try:
+        clients["facet"] = client = make("facet", max(0.0, remaining), False)
+    except Exception as e:  # noqa: BLE001
+        if not _is_error(e, "JevUnavailable"):
+            raise
+        info.update(status="skipped", skipped="jev_unavailable")
+        info["notes"].append(f"范围检查跳过：AI 服务不可用 / scope check skipped: Jev unavailable ({type(e).__name__})")
+        info["carried"] = _carry_facets(base_facets, inputs, out)
+        return out, info
+    worst = 0.0
+    for q in questions.values():
+        est = _estimate_uncached(client, items, q) or {}
+        worst += float(est.get("est_cost_usd") or 0.0) * (1 + 2 * scope.FACET_BAND_SHARE)
+    info["estimate_usd"] = round(worst, 6)
+    if worst > remaining + 1e-12:
+        info.update(status="skipped", skipped="budget")
+        info["notes"].append("范围检查跳过：预算不够 / scope check skipped: not enough budget")
+        info["carried"] = _carry_facets(base_facets, inputs, out)
+        return out, info
+    spent0, sent0 = _client_stats(client)
+    stop = None
+    for fam, q in sorted(questions.items(), key=lambda x: scope.FAMILY_ORDER.index(x[0])):
+        if stop:
+            break
+        if tell is not None:
+            tell("facet", 0, len(items), getattr(client, "spent_usd", None))
+        got, err_status, err = _call_classify(client, items, q)
+        reads: dict[str, list[dict]] = {it.item_id: [r] for it, r in zip(items, got)}
+        rid = {it.item_id: r.get("request_id") for it, r in zip(items, got)}
+        if err_status:
+            stop = err_status
+            info["notes"].append(f"范围检查没读完（{err_status}）/ scope check incomplete ({err})")
+        band = [it for it, r in zip(items, got) if r.get("status") == "ok" and scope.in_band(fam, r.get("probs"))]
+        info["band_items"] += len(band)
+        for r_i in scope.FACET_BAND_READS:
+            if stop or not band:
+                break
+            order = sorted(band, key=lambda it: hashlib.sha256(f"{r_i}:{it.item_id}".encode("utf-8")).hexdigest())
+            got2, err2, e2 = _call_classify(client, order, scope.replace_read(q, r_i))
+            for it, r in zip(order, got2):
+                reads[it.item_id].append(r)
+            if err2:
+                stop = err2
+                info["notes"].append(f"范围检查的复读没读完（{err2}）/ scope re-reads incomplete ({e2})")
+        for it in items:
+            agg = scope.aggregate(fam, reads.get(it.item_id) or [])
+            if agg is None:
+                continue
+            out.setdefault(it.item_id, {})[fam] = {**agg, "evidence_sha": (inputs.get(it.item_id) or {}).get(
+                "evidence_sha"), "request_id": rid.get(it.item_id)}
+            info["labelled"] += 1
+    spent1, sent1 = _client_stats(client)
+    info.update(cost_usd=round(spent1 - spent0, 6), requests=sent1 - sent0,
+                cache_hits=None, status="partial" if stop else "ok")
+    info["carried"] = _carry_facets(base_facets, inputs, out)
+    return out, info
+
+
 def _client_stats(client) -> tuple[float, int]:
     if client is None:
         return 0.0, 0
@@ -1617,6 +1719,10 @@ def _result_row(run_id: str, c: dict, layer: str, r: dict, inp: dict | None, agg
                   else (None, None, None))
 
 
+# the scope / agent fields a ranked row carries into results.json (scope design §5)
+SCOPE_ROW_KEYS = ("scope_sid", "scope_value", "scope_p", "scope_source", "scope_by", "scope_demoted",
+                  "scope_unchecked", "scope_exempt_agent", "agent_verdict", "agent_state", "agent_chip",
+                  "agent_why_zh", "agent_why_en", "agent_quote_ids", "agent_level", "agent_thin", "agent_note")
 RESULT_COLS = ("run_id", "company_key", "security_id", "layer", "label", "probs_json", "p_top", "request_id",
                "input_source", "input_tier", "evidence_url", "evidence_excerpt", "status", "error")
 RESULT_COLS_L2 = RESULT_COLS + ("reads_json", "p_pos", "p_pos_sd")    # L2 rows: the repeated reads (aggregate_reads)
@@ -1710,7 +1816,8 @@ def load_base_run(con, run_id: str) -> dict[str, Any]:
     """{'run_id', 'idea', 'params', 'status', 'l1': {company_key: L1 result}} of an earlier screen run: its
     params_json and its stored L1 answers (screen_results layer l1, returned in the shape classify returns them,
     cached=True). Raises ValueError for an unknown run or one without stored L1 answers (a dry run)."""
-    row = con.execute("SELECT idea, params_json, status FROM screen_runs WHERE run_id = ?", [run_id]).fetchone()
+    row = con.execute("SELECT idea, params_json, status, output_dir FROM screen_runs WHERE run_id = ?",
+                      [run_id]).fetchone()
     if row is None:
         raise ValueError(f"from_run: unknown screen run {run_id!r}")
     try:
@@ -1728,7 +1835,20 @@ def load_base_run(con, run_id: str) -> dict[str, Any]:
     l2_labels = dict(con.execute("SELECT company_key, label FROM screen_results WHERE run_id = ? AND layer = 'l2' "
                                  "AND status = 'ok'", [run_id]).fetchall())
     return {"run_id": run_id, "idea": row[0], "params": params if isinstance(params, dict) else {},
-            "status": row[2], "l1": l1, "l2_p0": _base_l2_first_reads(con, run_id), "l2_labels": l2_labels}
+            "status": row[2], "l1": l1, "l2_p0": _base_l2_first_reads(con, run_id), "l2_labels": l2_labels,
+            "output_dir": row[3], "facets": _base_facets(row[3])}
+
+
+def _base_facets(out_dir: str | None) -> dict[str, Any]:
+    """The facet labels of a base run (results.json 'facets'), {} when it has none or cannot be read."""
+    if not out_dir:
+        return {}
+    try:
+        res = json.loads((Path(out_dir) / "results.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    f = res.get("facets") if isinstance(res, dict) else None
+    return f if isinstance(f, dict) else {}
 
 
 def _base_l2_first_reads(con, run_id: str) -> dict[str, float]:
@@ -1779,24 +1899,43 @@ def _order(e: dict[str, Any]) -> tuple:
 
 
 def pin_and_rank(verified: list[dict[str, Any]], unverified: list[dict[str, Any]], sieve: dict[str, Any] | None,
-                 max_out: int) -> tuple[list[dict], list[dict], list[dict], list[str]]:
-    """The ranking step with the sieve's pins (screen step 4; calib.rerank_result uses the same code, so its free diff
-    equals what a rerun produces when no rule changes). Entries are dicts with company_key, security_id, name,
-    market_cap_usd, l1_p_core, l2_label, l2_evidence and score.
+                 max_out: int, *, facets: dict[str, Any] | None = None, agent: dict[str, dict[str, Any]] | None = None,
+                 fsha: str | None = None, out: dict[str, Any] | None = None
+                 ) -> tuple[list[dict], list[dict], list[dict], list[str]]:
+    """The ranking step with the sieve's pins, scope answers and your AI's calls (screen step 4; calib.rerank_result
+    uses the same code, so its free diff equals what a rerun produces when no rule changes). Entries are dicts with
+    company_key, security_id, name, market_cap_usd, l1_p_core, l2_label, l2_evidence, evidence_sha and score.
 
-    Returns (verified', unverified', excluded_by_user, notes): calib.apply_pins, then both lists sorted (score desc,
-    market cap desc, security_id). A verified' row in the top max_out that was not there before the pins and is not
-    itself a user yes is flagged backfill=True (递补，未经确认: it moved up only because others were removed)."""
-    from . import calib
+    Precedence (scope design §5.2): 1) `before` = the top max_out by score; 2) scope.apply_scope (the
+    enforced scope answers over the `facets` labels; fsha: the facets_sha the labels were read under, default the
+    sieve's); 3) review.apply_agent (the `agent` layer); 4) calib.apply_pins: a human pin wins over everything (scope
+    and agent leave pinned rows alone). Then both lists are sorted (a scope-demoted row after the others; score desc,
+    market cap desc, security_id). A verified' row in the top max_out that was not there before and is not itself a
+    user yes is flagged backfill=True (后面的公司往前补，未经确认: it moved up only because others were removed).
+
+    Returns (verified', unverified', excluded_by_user, notes); `out` (a dict) also receives excluded_by_scope and
+    excluded_by_agent."""
+    from . import calib, review, scope
     before = {e["company_key"] for e in sorted(verified, key=_order)[:max_out]}
-    v2, excluded, notes = calib.apply_pins(verified, unverified, sieve)
+    human = {k for k in calib.pins(sieve)}
+    fsha = fsha if fsha is not None else scope.facets_sha(sieve)
+    kept, ex_scope, s_notes = scope.apply_scope(verified, facets, sieve, agent, fsha=fsha, human_keys=human)
+    kept, ex_agent, a_notes = review.apply_agent(kept, agent, human_keys=human,
+                                                 kept_chips=scope.kept_kinds(sieve, fsha))
+    v2, excluded, notes = calib.apply_pins(kept, unverified, sieve)
+    for e in v2:
+        if e.get("agent_verdict") == "yes" and e.get("agent_state") == "applied" \
+                and e.get("verdict_source") == "evidence":
+            e["verdict_source"] = "evidence+agent"
     moved = {e["company_key"] for e in v2} | {e["company_key"] for e in excluded}
     unv2 = [e for e in unverified if e["company_key"] not in moved]
-    v2.sort(key=_order)
+    v2.sort(key=lambda e: (bool(e.get("scope_demoted")), *_order(e)))
     unv2.sort(key=_order)
     for i, e in enumerate(v2):
         e["backfill"] = i < max_out and e["company_key"] not in before and e.get("user_verdict") is None
-    return v2, unv2, excluded, notes
+    if out is not None:
+        out.update(excluded_by_scope=ex_scope, excluded_by_agent=ex_agent)
+    return v2, unv2, excluded, notes + s_notes + a_notes
 
 
 def output_entries(verified: list[dict[str, Any]], max_out: int) -> list[tuple[int, dict[str, Any]]]:
@@ -1825,7 +1964,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
            reads: int = UNSET, read_offset: int = 0, from_run: str | None = None, sieve: Any = None,
            rank: str = UNSET, shells: str = UNSET, supersedes: str | None = None,
            fetch_info: dict[str, Any] | None = None, idea_en: str | None = UNSET,
-           progress: Callable | None = None, l1_new: bool = False) -> dict[str, Any]:
+           progress: Callable | None = None, l1_new: bool = False, facet_scan: Any = "auto",
+           rank_only: bool = False, change_kind: str | None = None) -> dict[str, Any]:
     """Run one screen. Returns the result dict that is also written to results.json.
 
     result['status']: ok | partial (some L2 skipped/failed, band reads skipped, fundamentals unreadable) |
@@ -1871,11 +2011,24 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     progress(phase, done, total): phase boundaries and per-request heartbeats ('l1', 'l2'). On-demand annual
     reports are fetched after the run (jevscreen.ondemand_cli.run_fetch: screen --fetch-docs, fetch-docs,
     quickstart), never inside it.
+    facet_scan (scope design §3): True | False | 'auto' - the facet layer after L2 (cheap Jev choice
+    questions over the same L2 text: role / scope / geo per L2-verified company, FACET_SET, cached, budgeted, skipped
+    with a note when the budget cannot cover it; L1 is never re-read or re-priced). 'auto' is on when the sieve has an
+    enforced scope answer or the base run had facets. The labels feed the scope answers' enforcement and the split
+    detection (jevscreen.scope); result['facets'] holds them.
+    rank_only=True (requires from_run): no Jev call at all - the base run's stored answers re-ranked with the current
+    sieve (pins, scope answers) and the agent layer into a new run (change_kind: scope | agent | decide | reapply);
+    RankOnlyUnsafe when the sieve changed what Jev was asked (the caller then runs a full from_run).
     Raises ValueError for bad parameters, an unknown country token, an unknown / mismatched base run or an invalid
     sieve (including a rule text that would carry a company name or ticker: calib.rule_text_problems), before
     anything is sent or written."""
     if not idea or not idea.strip():
         raise ValueError("idea must not be empty")
+    if rank_only:
+        if not from_run:
+            raise ValueError("rank_only needs from_run (it re-ranks that run's stored answers)")
+        return rank_only_run(cfg, idea, from_run=resolve_from_run(from_run),
+                             sieve="auto" if sieve is None else sieve, change_kind=change_kind, out_dir=out_dir)
     given = {"min_mcap_usd": min_mcap_usd, "min_avg_volume": min_avg_volume, "countries": countries,
              "max_out": max_out, "budget_usd": budget_usd, "l2_max": l2_max, "keywords": keywords,
              "l1_adjacent_min": l1_adjacent_min, "l1_core_min": l1_core_min, "keywords_zh": keywords_zh,
@@ -1916,11 +2069,16 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
         raise ValueError(f"shells must be one of {', '.join(_shells.MODES)} (got {shells_mode!r})")
     sv, sv_path = resolve_sieve(cfg, idea, sieve)
     sieve_hint = None
-    from . import calib
+    from . import calib, review, scope
     if sv is not None:
         calib.render_rules(sv.get("rules") or [], sv.get("facets"))    # ValueError on an unknown rule id
     elif sieve == "auto":
         sieve_hint = calib.closest_sieve(cfg, idea)       # a reworded idea: the closest sieve, for --sieve PATH
+    # the agent layer (your AI's calls) goes with the calibration: none for an explicit sieve='none'
+    agent = review.agent_verdicts(cfg, idea) if sieve not in (None, "none") else {}
+    fsha = scope.facets_sha(sv)
+    base_facets = (base or {}).get("facets") or {}
+    facet_on = bool(facet_scan) if facet_scan != "auto" else bool(scope.enforced(sv, fsha) or base_facets)
     t0 = time.monotonic()
     started = store.now_utc()
     run_id = f"scr-{started.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
@@ -1934,7 +2092,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
               "from_run": from_run or None, "l1_new": bool(l1_new), "rank": rank,
               "sieve_path": (str(sv_path) if sv_path else "<inline>" if sv is not None else None),
               "sieve_version": (sv or {}).get("version"), "sieve_sha256": _sieve_sha(sv, sv_path),
-              "shells": shells_mode, "shells_version": _shells.SHELLS_VERSION}
+              "shells": shells_mode, "shells_version": _shells.SHELLS_VERSION, "facet_scan": facet_on,
+              "facets_sha": fsha}
     if supersedes is not None:
         # the update pass runs on a small cap; a later from_run of this run inherits the user's own budget
         params.update(budget_usd=inherited.get("budget_usd", SCREEN_DEFAULTS["budget_usd"]),
@@ -1949,7 +2108,7 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
         rows = load_universe(con, min_mcap_usd=min_mcap_usd, min_avg_volume=None)
         descs = load_descriptions(con, min_mcap_usd=min_mcap_usd)
         docs = load_documents(con, min_mcap_usd=min_mcap_usd)
-        names = calib.load_names(con) if (sv or {}).get("rules") or idea_en else None
+        names = calib.load_names(con) if (sv or {}).get("rules") or idea_en or facet_on else None
         frozen = _frozen_idea_en(con, idea) if (sv or {}).get("idea_en") else (False, None)
         facts = _shells.load_facts(con, min_mcap_usd=min_mcap_usd)
         st = _shells.st_list(con, started.date())
@@ -1978,6 +2137,13 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     params["l2_question_sha"] = question_sha(build_l2_question(idea, kinfo.get("idea_en"), rules=(sv or {}).get(
         "rules") or (), facets=(sv or {}).get("facets")))
     params["sieve_terms_sha"] = sieve_terms_sha(sv)
+    fquestions: dict[str, Any] = {}
+    if facet_on:
+        fquestions, fnotes = scope.build_questions(idea, kinfo.get("idea_en"), sv, names=(names or ([], []))[0],
+                                                   tickers=(names or ([], []))[1],
+                                                   terms=calib.keyword_terms(kinfo["terms"], sv))
+        notes += fnotes
+    params["facet_question_sha"] = scope.question_sha(fquestions) if facet_on else None
     if names is not None and idea_en:
         # the same isolation for the English sentence every question carries (quickstart / screen --idea-en, a
         # --from-run base): no company name or ticker the idea itself does not name
@@ -2035,7 +2201,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
                               retry_uncertain=retry_uncertain, clients=clients, reads=reads, read_offset=read_offset,
                               rank=rank, base=base, sieve=sv, sieve_path=sv_path, sieve_hint=sieve_hint, pre=pre,
                               supersedes=supersedes, fetch_info=fetch_info, l1_new=l1_new,
-                              progress=progress)
+                              progress=progress, fquestions=fquestions, base_facets=base_facets, agent=agent,
+                              facet_on=facet_on, fsha=fsha)
     except BaseException as e:
         # Ctrl-C / SIGTERM / a crash: never leave screen_runs 'running' without the money already spent.
         if not dry_run:
@@ -2144,8 +2311,11 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                    universe, described, no_desc, docs, keywords, dry_run, budget_usd, l2_max, max_out,
                    l1_adjacent_min, l1_core_min, retry_uncertain, clients, kinfo=None, reads=1, read_offset=0,
                    rank="label", base=None, sieve=None, sieve_path=None, sieve_hint=None, pre=None,
-                   supersedes=None, fetch_info=None, progress=None, l1_new=False) -> dict[str, Any]:
+                   supersedes=None, fetch_info=None, progress=None, l1_new=False, fquestions=None,
+                   base_facets=None, agent=None, facet_on=False, fsha=None) -> dict[str, Any]:
     _, Item = _jev_types()
+    from . import scope as _scope
+    fquestions = fquestions or {}
     pre = pre or {}
     hits: dict[str, dict] = pre.get("hits") or {}
     kinfo = kinfo or resolve_keywords(cfg, idea, keywords=keywords, keywords_by_lang=None, translate=False,
@@ -2318,9 +2488,14 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         layers["l2"]["inputs"] = len(hypo_items)
         e1 = layers["l1"]["estimate"] or {}
         e2 = est2 or {}
-        est_cost = float(e1.get("est_cost_usd") or 0) + float(e2.get("est_cost_usd") or 0)
+        fest = _scope.estimate_items(len(hypo_items), len(fquestions)) if facet_on and fquestions else 0.0
+        if fest:
+            layers["facet"] = {"estimate": {"est_cost_usd": fest, "families": sorted(fquestions),
+                                            "basis": "facet layer upper bound: min(150, 35% of the L2 items) x "
+                                                     "families x $0.00005 x 1.6"}}
+        est_cost = float(e1.get("est_cost_usd") or 0) + float(e2.get("est_cost_usd") or 0) + fest
         est_res = (float(e1.get("est_reserved_usd") or e1.get("est_cost_usd") or 0)
-                   + float(e2.get("est_reserved_usd") or e2.get("est_cost_usd") or 0))
+                   + float(e2.get("est_reserved_usd") or e2.get("est_cost_usd") or 0) + fest)
         dry_budget = {"est_cost_usd": round(est_cost, 6), "est_reserved_usd": round(est_res, 6),
                       "budget_usd": budget_usd, "reservation_exceeds_budget": est_res > budget_usd,
                       "est_seconds": round(float(e1.get("est_seconds") or 0) + float(e2.get("est_seconds") or 0), 1)}
@@ -2441,6 +2616,45 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     timing["l2_s"] = round(time.monotonic() - t2, 2)
     l2_client = clients["l2"]
 
+    # 3b) the facet layer (scope design §3): role / scope / geo labels of the L2-verified companies, read
+    # from the SAME L2 text (FACET_SET: score order, capped; plus pins and checks), cached, budgeted
+    facets_map: dict[str, dict[str, Any]] = {}
+    if not dry_run and facet_on and fquestions:
+        tf = time.monotonic()
+        verified_keys = [k for k, r in l2_res.items() if r.get("status") == "ok" and r.get("label") in L2_VERIFIED
+                         and k in l2_inputs and k in by_key]
+        verified_keys.sort(key=lambda k: (-score_of(l2_res[k]["label"], p_core_of(l1_res.get(k)),
+                                                    by_key[k]["market_cap_usd"], l2_inputs[k].get("evidence")),
+                                          -(by_key[k]["market_cap_usd"] or 0), by_key[k]["security_id"]))
+        fset = verified_keys[:_scope.FACET_READ_MAX]
+        for c in forced_cs:
+            k = c["company_key"]
+            if k not in fset and (l2_res.get(k) or {}).get("status") == "ok" and k in l2_inputs:
+                fset.append(k)
+        spent_before = sum(_client_stats(c)[0] for c in (l1_client, clients["l2"]))
+        facets_map, finfo = _facet_layer(make, [l2_item(by_key[k], l2_inputs[k]) for k in fset], fquestions,
+                                         budget_usd - spent_before, l2_inputs, base_facets or {}, clients, tell)
+        finfo["seconds"] = round(time.monotonic() - tf, 2)
+        layers["facet"] = finfo
+        notes += finfo.pop("notes", [])
+        if facets_map:
+            rows_f = []
+            for k, fams in facets_map.items():
+                if k not in by_key:
+                    continue
+                for fam, lab in fams.items():
+                    if lab.get("carried"):
+                        continue
+                    rows_f.append(_result_row(run_id, by_key[k], _scope.FAMILIES[fam]["key"],
+                                              {"label": lab["label"], "probs": lab.get("probs") or {},
+                                               "request_id": lab.get("request_id"), "status": "ok"},
+                                              l2_inputs[k], None))
+            if rows_f:
+                _db_write(cfg, lambda con: store.upsert_many(con, "screen_results", RESULT_COLS_L2, rows_f), notes,
+                          "screen_results facets")
+    elif facet_on and base_facets and not dry_run:
+        _carry_facets(base_facets, l2_inputs, facets_map)
+
     # 4) rank: only L2-verified companies; the rest of the L1 passes is 'unverified' (contradicted is dropped).
     # With a sieve, pins then apply (pin_and_rank): a forced company that missed L1 is ranked only when pinned.
     overflow_keys = {c["company_key"] for c in l2_overflow}
@@ -2474,6 +2688,7 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         entry = {"company_key": k, "security_id": c["security_id"], "name": c["name"],
                  "market_cap_usd": c["market_cap_usd"], "l1_p_core": pc, "l2_label": l2_label,
                  "l2_evidence": evidence, "score": score,
+                 "evidence_sha": (inp or {}).get("evidence_sha") if l2_ok else None,
                  "_x": (c, r1, r2, inp if l2_ok else None, l2_status, agg, k in forced_keys)}
         if l2_label in L2_VERIFIED:
             verified.append(entry)
@@ -2482,8 +2697,11 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         else:
             unverified.append(entry)
     excluded: list[dict] = []
-    if sv is not None:
-        verified, unverified, excluded, pin_notes = pin_and_rank(verified, unverified, sv, max_out)
+    rank_extra: dict[str, Any] = {}
+    if sv is not None or agent:
+        verified, unverified, excluded, pin_notes = pin_and_rank(verified, unverified, sv, max_out,
+                                                                 facets=facets_map, agent=agent, fsha=fsha,
+                                                                 out=rank_extra)
         notes += pin_notes
     else:
         for e in verified:
@@ -2537,7 +2755,7 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
             "l2_should_pass": sp_info.get(c["company_key"]),
             "doc_fetch": (l2_inputs.get(c["company_key"]) or {}).get("doc_fetch"),
         }
-        for k in ("user_note", "user_chip", "below_cut", "user_pin_via", "user_pin_at"):
+        for k in ("user_note", "user_chip", "below_cut", "user_pin_via", "user_pin_at") + SCOPE_ROW_KEYS:
             if e.get(k) is not None:
                 row[k] = e[k]
         fl = (hits.get(c["company_key"]) or {}).get("flags")
@@ -2548,6 +2766,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     out_rows = [out_row(i, x) for i, x in ranked]
     unv_rows = [out_row(None, x) for x in unv_top]
     excluded_rows = [out_row(None, x) for x in excluded]
+    scope_rows = [out_row(None, x) for x in rank_extra.get("excluded_by_scope") or []]
+    agent_rows = [out_row(None, x) for x in rank_extra.get("excluded_by_agent") or []]
 
     # layer stats
     for layer, client, res in (("l1", l1_client, l1_res), ("l2", l2_client, l2_res)):
@@ -2582,7 +2802,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     layers["l2"]["inputs_by_lang"] = _counts({k: i for k, i in l2_inputs.items() if i["evidence"] == "annual_report"},
                                              "lang")
     layers["l2"]["summary_inputs"] = sum(1 for i in l2_inputs.values() if i.get("summary"))
-    cost = round(layers["l1"]["cost_usd"] + layers["l2"]["cost_usd"], 6)
+    cost = round(layers["l1"]["cost_usd"] + layers["l2"]["cost_usd"]
+                 + float((layers.get("facet") or {}).get("cost_usd") or 0.0), 6)
 
     def brief(c: dict, r: dict | None = None) -> dict:
         return {"security_id": c["security_id"], "name": c["name"], "market_cap_usd": c["market_cap_usd"],
@@ -2653,6 +2874,27 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     }
     if excluded_rows or sv is not None:
         result["excluded_by_user"] = excluded_rows
+    if scope_rows or agent_rows or facet_on or agent:
+        result["excluded_by_scope"] = scope_rows
+        result["excluded_by_agent"] = agent_rows
+    if facet_on or facets_map:
+        result["facets"] = {k: {f: {x: v for x, v in lab.items() if x in ("label", "p", "n", "evidence_sha", "carried")}
+                                for f, lab in fams.items()} for k, fams in sorted(facets_map.items())}
+    if sv is not None or facet_on:
+        enf = _scope.enforced(sv, fsha)
+        unchecked = sum(1 for r in out_rows if r.get("scope_unchecked"))
+        result["scope"] = {"families": sorted(fquestions), "facets_sha": fsha, "facets": (sv or {}).get("facets"),
+                           "facets_zh": (sv or {}).get("facets_zh"),
+                           "facet_question_sha": params.get("facet_question_sha"),
+                           "enforced": [{k: e.get(k) for k in ("sid", "family", "value", "source", "effect")}
+                                        for e in enf], "unchecked": unchecked,
+                           "removed": len(scope_rows), "demoted": sum(1 for r in out_rows if r.get("scope_demoted"))}
+        if enf and unchecked:
+            notes.append(f"范围回答有 {unchecked} 家没能检查（预算不够），它们暂时留在名单里，标「未检查」 / Your scope answers "
+                         f"could not be checked for {unchecked} companies (budget); they stay listed, marked "
+                         "unchecked")
+            if result["status"] == STATUS_OK:
+                result["status"] = status = STATUS_PARTIAL
     if sieve_hint is not None:
         result["sieve_hint"] = sieve_hint
     if sv is not None:
@@ -3118,3 +3360,221 @@ def write_outputs(result: dict[str, Any], out_path: Path, l2_inputs: list[dict[s
             if kept is not None:
                 with contextlib.suppress(OSError):
                     kept.unlink()
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# rank_only (scope design §5.5): a new version from a run's stored answers, no Jev call at all
+
+RANK_ONLY_WRITE_WAIT_S = 10.0
+CHANGE_KINDS = ("scope", "agent", "decide", "reapply")
+
+
+class RankOnlyUnsafe(ValueError):
+    """The sieve changed what Jev was asked (L2 question, excerpt terms, facet question or facets) or a pinned company
+    was never read: the stored answers do not cover it. The caller runs a full from_run under the remaining budget."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"rank_only is not safe: {reason}")
+        self.reason = reason
+
+
+def _row_from_pool(p: dict[str, Any], inp: dict[str, Any], fund: dict[str, Any]) -> dict[str, Any]:
+    """A results.json row for a company the base run did not list (it moves up after removals): its stored L2 read
+    (load_pool), the text it read (l2_inputs) and its fundamentals."""
+    from . import calib
+    ex = inp.get("excerpts") or []
+    lang = inp.get("lang")
+    if ex:
+        kw = next((e for e in ex if e.get("kind") == "keywords"), None)
+        excerpt = _evidence_excerpt(kw, ex[0], inp.get("matched_terms") or [], lang)
+    else:
+        from . import review
+        excerpt = truncate(review.body_of(inp.get("text")), OUTPUT_EXCERPT_CHARS)
+    _src, form, fdate = calib._filing_of(inp, {})
+    ok = p.get("l2_label") is not None
+    exch = (p.get("security_id") or "").rpartition(":")[0] or None
+    blank = dict.fromkeys(CSV_COLUMNS)
+    return {**blank, **p, "region": coverage.region_for(p.get("country"), exch),
+            "l2_status": p.get("l2_status"), "l2_evidence": inp.get("evidence") or p.get("l2_evidence"),
+            "evidence_excerpt": excerpt if ok else None, "filing_source": inp.get("source_id"),
+            "filing_form": form if inp.get("evidence") == "annual_report" else None,
+            "filing_date": fdate if inp.get("evidence") == "annual_report" else None, "doc_lang": lang,
+            "evidence_sha": inp.get("evidence_sha"), "l2_keyword_hit": inp.get("keyword_hit"),
+            "revenue_ttm_usd": fund.get("revenue_ttm_usd"), "revenue_cagr_3y_local": fund.get("cagr"),
+            "cagr_currency": fund.get("cagr_currency"), "cagr_years": fund.get("cagr_years")}
+
+
+STATES_AGENT = ("applied", "escalated", "held", "not_applied")
+
+
+def rank_only_run(cfg, idea: str, *, from_run: str, sieve: Any = "auto", change_kind: str | None = None,
+                  out_dir=None, agent: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """A new version of run `from_run` re-ranked with the current sieve (pins, scope answers) and the agent layer,
+    for $0 and without any Jev call: its screen_results rows are copied under the new run id (one INSERT ...
+    SELECT), l2_inputs.jsonl and the ledger are copied, the ranking is redone by calib.rerank_result (the same
+    pin_and_rank as a full run, so a full from_run with the same sieve and agent file gives the same list) and
+    results.json / results.csv / report.md / funnel.jsonl.gz are written to a new folder; screen_runs records
+    rank_only, from_run, change_kind and the shas. RankOnlyUnsafe when the stored answers do not cover the sieve;
+    store.StoreLocked after RANK_ONLY_WRITE_WAIT_S (the caller exits 3)."""
+    from . import calib, review, scope
+    if change_kind is not None and change_kind not in CHANGE_KINDS:
+        raise ValueError(f"change_kind must be one of {', '.join(CHANGE_KINDS)}")
+    started = store.now_utc()
+    t0 = time.monotonic()
+    sv, sv_path = resolve_sieve(cfg, idea, sieve)
+    with store.session(cfg, read_only=True, wait_s=RANK_ONLY_WRITE_WAIT_S) as con:
+        row = con.execute("SELECT idea, params_json, status, output_dir, universe_n, l1_n, l1_pass_n, l2_n "
+                          "FROM screen_runs WHERE run_id = ?", [from_run]).fetchone()
+        if row is None:
+            raise ValueError(f"rank_only: unknown screen run {from_run!r}")
+        if (row[0] or "").strip() != idea.strip():
+            raise ValueError(f"rank_only: run {from_run!r} screened another idea")
+        try:
+            params = json.loads(row[1] or "{}")
+        except ValueError:
+            params = {}
+        if row[2] not in (STATUS_OK, STATUS_PARTIAL):
+            raise RankOnlyUnsafe(f"base run status {row[2]}")
+        if not row[3]:
+            raise RankOnlyUnsafe("base run has no output folder")
+        base_dir = Path(row[3])
+        try:
+            result = json.loads((base_dir / "results.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise RankOnlyUnsafe("base results.json unreadable") from None
+        if result.get("run_id") != from_run:
+            raise RankOnlyUnsafe("the base folder holds another run (replaced by an update pass)")
+        pool = calib.load_pool(con, from_run, params)
+        names = calib.load_names(con) if params.get("facet_scan") else ([], [])
+    idea_en = result.get("idea_en")
+    q2 = build_l2_question(idea, idea_en, rules=(sv or {}).get("rules") or (), facets=(sv or {}).get("facets"))
+    if params.get("l2_question_sha") and question_sha(q2) != params["l2_question_sha"]:
+        raise RankOnlyUnsafe("l2_question_sha")
+    if sieve_terms_sha(sv) != params.get("sieve_terms_sha"):
+        raise RankOnlyUnsafe("sieve_terms_sha")
+    fsha = scope.facets_sha(sv)
+    if params.get("facets_sha") is not None and params["facets_sha"] != fsha:
+        raise RankOnlyUnsafe("facets_sha")
+    if params.get("facets_sha") is None and scope.enforced(sv, fsha):
+        raise RankOnlyUnsafe("facets_sha (the base run read no facets)")
+    if params.get("facet_scan"):
+        fq, _ = scope.build_questions(idea, idea_en, sv, names=names[0], tickers=names[1],
+                                      terms=calib.keyword_terms(result.get("terms_by_lang"), sv))
+        if scope.question_sha(fq) != params.get("facet_question_sha"):
+            raise RankOnlyUnsafe("facet_question_sha")
+    read_keys = {p["company_key"] for p in pool} | {p.get("security_id") for p in pool}
+    for ex in calib.pins(sv).values():
+        if ex.get("company_key") not in read_keys and ex.get("security_id") not in read_keys:
+            raise RankOnlyUnsafe("a pinned company was never read by layer 2 in the base run")
+    inputs = calib.load_inputs(base_dir)
+    agent = review.agent_verdicts(cfg, idea) if agent is None else agent
+    rr = calib.rerank_result(result, sv, pool=pool, inputs=inputs, agent=agent)
+    full: dict[str, dict[str, Any]] = {}
+    for where in ("rows", "unverified", "excluded_by_user", "excluded_by_scope", "excluded_by_agent"):
+        for r in result.get(where) or []:
+            if r.get("company_key"):
+                full.setdefault(r["company_key"], r)
+    need = [r["security_id"] for w in ("rows", "unverified", "excluded_by_user", "excluded_by_scope",
+                                       "excluded_by_agent") for r in rr[w]
+            if r.get("company_key") not in full and r.get("security_id")]
+    fund: dict[str, dict] = {}
+    if need:
+        with contextlib.suppress(store.StoreLocked):
+            with store.session(cfg, read_only=True, wait_s=RANK_ONLY_WRITE_WAIT_S) as con:
+                fund = load_fundamentals(con, need)
+    pool_by = {p["company_key"]: p for p in pool}
+    keep_keys = set(SCOPE_ROW_KEYS) | {"rank", "score", "user_verdict", "verdict_source", "backfill", "user_note",
+                                       "user_chip", "below_cut", "user_pin_via", "user_pin_at"}
+
+    def row_of(r: dict[str, Any]) -> dict[str, Any]:
+        k = r["company_key"]
+        base = full.get(k)
+        if base is None:
+            base = _row_from_pool(pool_by.get(k) or r, inputs.get(k) or {}, fund.get(r.get("security_id") or "", {}))
+        out = {x: v for x, v in base.items() if x not in keep_keys and not x.startswith("_")}
+        out.update({x: v for x, v in r.items() if x in keep_keys and v is not None})
+        out["rank"], out["score"] = r.get("rank"), r.get("score")
+        for x in ("user_verdict", "verdict_source", "backfill"):
+            out[x] = r.get(x)
+        return out
+    run_id = f"scr-{started.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    out_path = Path(out_dir) if out_dir is not None else _default_out_dir(cfg, idea, started)
+    new = json.loads(json.dumps(result, default=str))
+    rows = [row_of(r) for r in rr["rows"]]
+    new.update(run_id=run_id, started_at=started.isoformat(timespec="seconds"), cost_usd=0.0, output_dir=str(out_path),
+               rows=rows, unverified=[row_of(r) for r in rr["unverified"]],
+               excluded_by_user=[row_of(r) for r in rr["excluded_by_user"]],
+               excluded_by_scope=[row_of(r) for r in rr["excluded_by_scope"]],
+               excluded_by_agent=[row_of(r) for r in rr["excluded_by_agent"]])
+    new.pop("supersedes", None)
+    new.pop("outputs_written", None)
+    p2 = {k: v for k, v in params.items() if k not in ("update_budget_usd",)}
+    p2.update(from_run=from_run, rank_only=True, change_kind=change_kind, l1_new=False,
+              sieve_path=(str(sv_path) if sv_path else "<inline>" if sv is not None else None),
+              sieve_version=(sv or {}).get("version"), sieve_sha256=_sieve_sha(sv, sv_path),
+              l2_question_sha=question_sha(q2), sieve_terms_sha=sieve_terms_sha(sv), facets_sha=fsha)
+    new["params"] = p2
+    lay = result.get("layers") or {}
+    new["layers"] = {**lay, **{k: {**(lay.get(k) or {}), "cost_usd": 0.0, "requests": 0}
+                               for k in ("l1", "l2", "facet") if k in lay},
+                     "rank_only": {"from_run": from_run, "change_kind": change_kind,
+                                   # every current verdict of your AI, held ones too (the chat counts the same)
+                                   "reviewed": sum(1 for v in agent.values() if v.get("state") in STATES_AGENT)}}
+    new["funnel"] = {**(result.get("funnel") or {}), "output": len(rows)}
+    enf = scope.enforced(sv, fsha)
+    unchecked = sum(1 for r in rows if r.get("scope_unchecked"))
+    new["scope"] = {**(result.get("scope") or {}), "facets_sha": fsha, "facets": (sv or {}).get("facets"),
+                    "facets_zh": (sv or {}).get("facets_zh"),
+                    "enforced": [{k: e.get(k) for k in ("sid", "family", "value", "source", "effect")} for e in enf],
+                    "unchecked": unchecked, "removed": len(new["excluded_by_scope"]),
+                    "demoted": sum(1 for r in rows if r.get("scope_demoted"))}
+    status = row[2]
+    notes = [n for n in result.get("notes") or [] if not str(n).startswith("范围回答有 ")] + list(rr["notes"])
+    if enf and unchecked:
+        notes.append(f"范围回答有 {unchecked} 家没能检查（预算不够），它们暂时留在名单里，标「未检查」 / Your scope answers "
+                     f"could not be checked for {unchecked} companies (budget); they stay listed, marked unchecked")
+        status = STATUS_PARTIAL
+    new["status"], new["notes"] = status, notes
+    if sv is not None:
+        examples = [ex for ex in sv.get("examples") or [] if isinstance(ex, dict)]
+        answers = [ex for ex in examples if ex.get("source", "card") == "card"]
+        new["calibration"] = {**(result.get("calibration") or {}), "sieve_path": p2["sieve_path"],
+                              "sieve_version": sv.get("version"), "sieve_sha256": p2["sieve_sha256"],
+                              "answers": len(answers), "pins": sum(1 for ex in answers if ex.get("pin")),
+                              "excluded": len(new["excluded_by_user"]),
+                              "user_rows": sum(1 for r in rows if r.get("verdict_source") == "user"),
+                              "backfill": sum(1 for r in rows if r.get("backfill")),
+                              "scope_answers": len(scope._entries(sv)),
+                              "summary_zh": f"已加载校准：{len(answers)} 条回答，{len(scope._entries(sv))} 个范围回答"}
+    tiers = sorted({t for r in rows + new["unverified"] + new["excluded_by_user"]
+                    for t in (r.get("l1_input_tier"), r.get("l2_input_tier")) if t})
+    new["tiers_used"], new["gray_private"] = tiers, "gray-private" in tiers
+    new["timing"] = {"total_s": round(time.monotonic() - t0, 2)}
+    finished = store.now_utc()
+    new["finished_at"] = finished.isoformat(timespec="seconds")
+    led = read_ledger(base_dir)
+    ledger = None
+    if led is not None:
+        header, lines = led
+        header = {**header, "run_id": run_id, "status": status, "started_at": new["started_at"],
+                  "params": {**(header.get("params") or {}), "from_run": from_run},
+                  "sieve_sha256": p2["sieve_sha256"], "rank_only": True}
+        ledger = (header, lines)
+    l2_lines = None
+    with contextlib.suppress(OSError, ValueError):
+        raw = (base_dir / "l2_inputs.jsonl").read_text(encoding="utf-8")
+        l2_lines = [json.loads(x) for x in raw.splitlines() if x.strip()]
+
+    def db(con) -> None:
+        cols = [r[0] for r in con.execute("SELECT column_name FROM information_schema.columns WHERE table_name = "
+                                          "'screen_results' ORDER BY ordinal_position").fetchall() if r[0] != "run_id"]
+        store.upsert_many(con, "screen_runs", RUN_COLS, [(
+            run_id, idea, json.dumps({**p2, "idea_en": idea_en}, ensure_ascii=False, sort_keys=True, default=str),
+            started, finished, status, row[4], row[5], row[6], row[7], len(rows), 0.0, str(out_path),
+            f"rank_only from {from_run} ({change_kind})")])
+        con.execute(f"INSERT INTO screen_results (run_id, {', '.join(cols)}) SELECT ?, {', '.join(cols)} "
+                    "FROM screen_results WHERE run_id = ?", [run_id, from_run])
+    with store.session(cfg, wait_s=RANK_ONLY_WRITE_WAIT_S) as con:    # StoreLocked: nothing written
+        db(con)
+    write_outputs(new, out_path, l2_lines, ledger)
+    return new

@@ -19,7 +19,14 @@ Schema: [sieve.schema.json](sieve.schema.json). Code: `src/jevscreen/sieve_autho
 
 Everything else is written by the tool: `resolved` per check entry (security_id, company_key, name, method,
 resolved_at: the company is resolved **once**, when written; a later rename only warns), `idea_en_reprice`, card
-answers, pins, rules, keyword learning.
+answers, pins, rules, keyword learning, and `scope_answers`: the human's answers to the scope questions
+(`jevscreen decide "s1=no"`) and the idea-wording defaults of quickstart `--facets`, each `{sid, family (role |
+scope | geo), value, answer (yes | no | unsure | skipped), source (human | idea_wording), effect (remove | demote),
+facets_sha, question_sha, raw_tokens, relayed_via, run_id, examples, rows_changed, because?, answered_at}`; a newer
+answer for the same kind moves the older one to `history`. Pins made by `decide` carry `via: "escalation"` (the
+human answered a company your AI asked about) or `via: "override_agent"` (keep= / drop=); `sieve unpin` and
+`decide clear=TICKER` remove them. Your AI's own calls are not in the sieve: they live in
+`<idea_key>.agent.json` beside it.
 
 **Refused in a draft**: `include`, `exclude`, `pins`, `examples` (「钉选只能在你本人同意后加：jevscreen sieve pin …」) and
 `rules` (only the card trials adopt rules).
