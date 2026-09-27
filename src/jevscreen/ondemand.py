@@ -594,7 +594,12 @@ def load_run_inputs(con, run_id: str) -> dict[str, Any]:
 
 
 def _is_forced(inp: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+    """A sieve check or pin read by L2 although it missed L1 (fetched first); an L1 miss rescued for its thin
+    profile (params l1_rescued) is not, unless it is such a check too (params l2_forced): plan() orders it after
+    the L1 passes (_is_rescued)."""
     from . import screen
+    if _is_rescued(inp, params):
+        return False
     try:
         probs = json.loads(inp.get("l1_probs") or "{}")
     except ValueError:
@@ -603,6 +608,12 @@ def _is_forced(inp: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
     kw = {"adjacent_min": params.get("l1_adjacent_min", screen.L1_ADJACENT_MIN),
           "core_min": params.get("l1_core_min", screen.L1_CORE_MIN)}
     return not screen.l1_passes(res, **kw)
+
+
+def _is_rescued(inp: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+    """An L1 miss read by L2 only because screen.l1_rescued picked it (not also a sieve check or pin)."""
+    ck = inp.get("company_key")
+    return ck in (params.get("l1_rescued") or ()) and ck not in (params.get("l2_forced") or ())
 
 
 def plan(cfg: Any, run_id: str, *, sources: Iterable[str] | None = None, retry_failed: bool = False,
@@ -683,10 +694,12 @@ def plan(cfg: Any, run_id: str, *, sources: Iterable[str] | None = None, retry_f
         head = next((ln for ln in lines if ln["security_id"] == inp["security_id"]), lines[0])
         e = {"company_key": ck, "security_id": inp["security_id"], "name": head.get("name"),
              "country": head.get("country"), "exchange": head.get("exchange"), "market_cap_usd": mcap,
-             "p_core": inp["p_core"], "forced": _is_forced(inp, pl.params), "lines": lines}
+             "p_core": inp["p_core"], "forced": _is_forced(inp, pl.params),
+             "rescued": _is_rescued(inp, pl.params), "lines": lines}
         pl.entries[ck] = e
         rows.append(e)
-    rows.sort(key=lambda e: (not e["forced"], -(e["p_core"] or 0.0), -(e["market_cap_usd"] or 0.0),
+    # sieve checks and pins that missed L1 first, then the L1 passes, then the rescued L1 misses
+    rows.sort(key=lambda e: (not e["forced"], e["rescued"], -(e["p_core"] or 0.0), -(e["market_cap_usd"] or 0.0),
                              e["security_id"]))
     pl.order = [e["company_key"] for e in rows]
     counts: dict[str, int] = {}
@@ -779,8 +792,10 @@ def start_line(pl: Plan, lang: str, time_s: float) -> str:
     total = len(pl.entries)
     n = pl.n_planned
     rest = total - n
+    res = sum(1 for e in pl.entries.values() if e.get("rescued"))     # L1 misses read anyway (screen.l1_rescued)
     if lang == "zh":
-        line = f"补抓年报：通过第一轮的 {total} 家公司本地没有年报原文"
+        line = (f"补抓年报：{total} 家公司本地没有年报原文（通过第一轮的 {total - res} 家，第一轮没通过、因简介太薄或"
+                f"偏题要照读年报的 {res} 家）" if res else f"补抓年报：通过第一轮的 {total} 家公司本地没有年报原文")
         if n:
             line += (f"；其中 {n} 家现在从官方网站免费下载（最多 {_dur(time_s, lang)}，约 {pl.est_mb:.0f} MB）："
                      + _per_source(pl.planned, lang))
@@ -789,7 +804,9 @@ def start_line(pl: Plan, lang: str, time_s: float) -> str:
         if rest:
             line += f"；另外 {rest} 家这次不抓（见报告“年报原文与缺口”）"
         return line
-    line = f"Fetching annual reports: {total} companies that passed the first round have no annual-report text stored"
+    line = (f"Fetching annual reports: {total} companies have no annual-report text stored ({total - res} passed the "
+            f"first round, {res} missed it but are read anyway for a thin or one-sided profile)" if res else
+            f"Fetching annual reports: {total} companies that passed the first round have no annual-report text stored")
     if n:
         line += (f"; downloading {n} now from official sites (free, at most {_dur(time_s, lang)}, about "
                  f"{pl.est_mb:.0f} MB): " + _per_source(pl.planned, lang))
@@ -872,8 +889,8 @@ def readiness_lines(rd: Mapping[str, Any], lang: str) -> list[str]:
     return out
 
 
-DRY_RUN_SUFFIX = {"zh": "（另加最多 {m}，免费补抓年报：只抓通过第一轮、本地没有年报原文的公司）",
-                  "en": " (+ up to {m}, free, fetching annual reports for first-round companies with none stored)"}
+DRY_RUN_SUFFIX = {"zh": "（另加最多 {m}，免费补抓年报：只抓第二步要读、本地没有年报原文的公司）",
+                  "en": " (+ up to {m}, free, fetching annual reports for the companies step 2 reads with none stored)"}
 
 
 def dry_run_suffix(lang: str, time_s: float = FETCH_TIME_DEFAULT_S) -> str:
@@ -1173,7 +1190,13 @@ def outcomes(pl: Plan, events: Mapping[str, list[dict]], summaries: Mapping[str,
 
 
 def questions_for(pl: Plan, by_reason: Mapping[str, int]) -> list[dict[str, Any]]:
-    """ask_human questions, only when a company of this run is affected (and never again after a recorded 'no')."""
+    """ask_human questions, only when a company of this run is affected (and never again after a recorded 'no'). An
+    L1 miss read anyway (screen.l1_rescued) does not count: the human is not asked for a company step 1 rejected."""
+    rescued: dict[str, int] = {}
+    for e in pl.entries.values():
+        if e.get("rescued") and e.get("reason"):
+            rescued[e["reason"]] = rescued.get(e["reason"], 0) + 1
+    by_reason = {k: n - rescued.get(k, 0) for k, n in by_reason.items()}
     out = []
     # then_command: after a yes (the key / the consent recorded) it fetches this run's missing reports and updates
     # the report (free fetch, update at most $0.05); after a no nothing more is needed

@@ -45,11 +45,12 @@ carries `agent_hint_en`.
 | `dry_run` | the run was a dry run | run it for real |
 | `l1_not_sent` | budget ran out / provider failed | rerun with the same filters (cached answers free) |
 | `l1_rejected` | step 1 judged it unrelated / unclear / adjacent below the threshold | add to should_pass (read and reported, not listed) or a pin (human's yes) |
+| `l1_rescued_unverified` | step 1 missed it, but its thin or one-sided profile made step 2 read it anyway (ledger `l1.rs`), and that gave no evidence to list it: the annual report said nothing or said no, only the profile was stored, or the read did not complete | no annual report stored (read on the profile or not read): download its annual report (as for `l2_unverified`) then rerun from the run; an annual report stored but not read: rerun from the run; then a pin (human's yes). No should_pass: step 2 reads it already |
 | `l2_not_sent` | beyond `--l2-max` | raise `--l2-max` from the run (priced) |
 | `l2_failed` | step 2 did not complete | rerun from the run |
 | `l2_contradicted` | the text says it does not do this | a pin (human's yes) |
 | `l2_unverified` | step 2 found no explicit evidence | download its annual report (`sync-cninfo/edinet/dart/bse --codes CODE`, `sync-mops --mode annual --codes CODE`, only when the key / consent exists) then rerun from the run; or better seed terms; or a pin. A market without such a command is a gap (no price shown) |
-| `ranked_below_cut` | passed both steps, ranked below `--max-out` | nothing needed; `--max-out N` from the run |
+| `ranked_below_cut` | passed both steps (or missed step 1 and was verified on its annual report), ranked below `--max-out` | nothing needed; `--max-out N` from the run |
 | `excluded_by_user` | the human said no (card or `sieve pin`) | `answer --undo N` / `sieve unpin` (human's yes) |
 | `in_output` | it is in the list (rank, marks, ST warning) | none |
 | `forced_extra` | a sieve company outside the filters, read and reported | none (explains why it is not listed; a pinned company that only lacks a profile is ranked and gets `in_output` / `excluded_by_user`) |
@@ -110,7 +111,7 @@ Written into every run's output directory (dry, partial and budget-exhausted run
 ST list). Then one line per universe company: `k` company key, `id` security id, `n` name, `m` market cap in whole
 USD, `s` stage (`null_mcap | below_min_mcap | below_min_volume | other_country | shell | no_description | l1_sent |
 l1_loaded | l1_not_sent`), `r` shells rules, `kept`, `f` marks, `e` evidence (pattern id + offsets, never text), `l1`
-{lab, p: [core, adjacent, unrelated, insufficient], ok, src}, `l2` {lab, st, pp, ev, src}, `x` the filter a forced
+{lab, p: [core, adjacent, unrelated, insufficient], ok, src, rs (a layer-1 miss read by layer 2 anyway)}, `l2` {lab, st, pp, ev, src}, `x` the filter a forced
 sieve company failed. About 0.6-1 MB per run at the full universe.
 
 **Personal use only.** The ledger is a near-complete copy of the universe (names and whole-USD market caps from the

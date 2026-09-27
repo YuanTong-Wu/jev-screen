@@ -147,9 +147,11 @@ Other questions come only if something changes: the estimate goes over your cap,
 sentence changes its meaning, or your Jev provider reports no credit. Optional questions may come with the result, only
 when they help your idea (just say no if you like; the result stays):
 
-- **Fill missing company profiles.** When many companies of your idea's market have no profile (often the case for
-  China), the AI could not read them. Filling them is free and runs in the background (about 10 minutes for China);
-  then the AI reads only the new ones and re-ranks (a few cents, within your cap). The same page updates.
+- **Fill missing company profiles.** Many Chinese companies have no profile in the free data. For a Chinese idea they
+  are filled by default, free, in the background while you set up the key, so the AI reads them in the first pass
+  (say no if you do not want it). Only if that fill failed or timed out (not after TradingView refused: then nothing is
+  sent for 24 hours) are you asked afterwards; then the AI reads only the new ones and re-ranks (a few cents, within your cap), and your AI
+  checks the companies that come in before the list is shown again.
 
 - **An SEC contact for US annual reports** (only when a US company is in the top 10). The SEC asks everyone who downloads filings to include a name and email
   with each request. There is no account; they go only to sec.gov, and a separate address is fine. If you decline,

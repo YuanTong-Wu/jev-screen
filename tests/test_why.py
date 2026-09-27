@@ -62,7 +62,7 @@ class WhyCase(StoreCase):
 
 class TestStops(WhyCase):
     def test_one_company_per_stop(self):
-        want = {"NYSE:ROBO": "in_output", "NASDAQ:BANK": "l1_rejected", "LSE:GEAR": "l1_rejected",
+        want = {"NYSE:ROBO": "in_output", "NASDAQ:BANK": "l1_rejected", "LSE:GEAR": "l1_rescued_unverified",
                 "TSE:6000": "l2_unverified", "NASDAQ:ROB2": "ranked_below_cut", "NYSE:SMAL": "below_min_mcap",
                 "NYSE:NODS": "no_description", "NASDAQ:FXAC": "shell", "NYSE:KPAC": "excluded_by_user",
                 "NYSE:TINY": "forced_extra", "NYSE:PFDX": "not_in_universe", "Nonexistent Widgets": "not_found"}
@@ -401,6 +401,90 @@ class TestPinnedWithoutProfile(StoreCase):
         self.assertTrue(any("没有公司简介" in f["zh"] for f in exp["facts"]))
         md = (self.home / "screens" / "a" / "report.md").read_text(encoding="utf-8")
         self.assertNotIn("你关心的公司（在这次筛选条件以外）", md)
+
+
+class TestRescuedMisses(StoreCase):
+    """An L1 miss read by step 2 anyway (screen.l1_rescued) and not listed: the plain answer says what step 2 had,
+    and the evidence route (its annual report) comes before the pin."""
+
+    def rescue(self, **kw):
+        import test_screen
+        with mock.patch.object(test_screen, "l1_label", test_screen.l1_label_rescue):
+            return self.run_screen(reads=1, **kw)
+
+    def shenling(self, res):
+        exp = why.run(self.cfg, ["SZSE:301018"], run_ref=res["run_id"])["results"][0]
+        self.assertIn(exp["stop"], why.STAGE_IDS)
+        self.assertTrue(exp["plain_zh"] and exp["plain_en"])
+        return exp
+
+    def test_its_annual_report_was_read_and_says_nothing_about_it(self):
+        from test_screen import SHENLING_AR, seed_shenling
+        seed_shenling(self.cfg, self.home)
+        (self.home / "docs" / "shenling.txt").write_text(SHENLING_AR.replace("人形机器人关节热管理", "储能温控").replace(
+            "人形机器人业务", "储能业务"), encoding="utf-8")
+        res = self.rescue()
+        _h, lines = screen.read_ledger(self.home / "out")
+        ln = next(x for x in lines if x["id"] == "SZSE:301018")
+        self.assertEqual((ln["l1"].get("rs"), ln["l2"]["lab"], ln["l2"]["ev"]), (True, "insufficient", "annual_report"))
+        exp = self.shenling(res)
+        self.assertEqual(exp["stop"], "l1_rescued_unverified")
+        self.assertNotIn("只读了它的简介", exp["plain_zh"])          # step 2 read its annual report
+        self.assertIn("照读了年报原文", exp["plain_zh"])
+        self.assertIn("read its annual report anyway", exp["plain_en"])
+        self.assertEqual([c["code"] for c in exp["changes"]], ["pin_yes"])
+
+    def test_read_on_its_profile_only_offers_the_annual_report(self):
+        from test_screen import seed_shenling
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        exp = self.shenling(self.rescue())
+        self.assertEqual(exp["stop"], "l1_rescued_unverified")
+        self.assertIn("没有它的年报原文", exp["plain_zh"])
+        self.assertEqual([c["code"] for c in exp["changes"]], ["sync_one", "pin_yes"])
+        sync = exp["changes"][0]
+        self.assertEqual(sync["steps"][0]["argv"], ["jevscreen", "sync-cninfo", "--codes", "301018"])
+        self.assertEqual(sync["steps"][1]["argv"][:3], ["jevscreen", "screen", "--from-run"])
+
+    def test_skipped_for_budget_offers_the_rerun(self):
+        from test_screen import seed_shenling
+        seed_shenling(self.cfg, self.home)
+        res = self.rescue(budget_usd=0.01)
+        _h, lines = screen.read_ledger(self.home / "out")
+        ln = next(x for x in lines if x["id"] == "SZSE:301018")
+        self.assertEqual((ln["l1"].get("rs"), ln["l2"]["st"]), (True, "skipped_budget"))
+        exp = self.shenling(res)
+        self.assertEqual(exp["stop"], "l1_rescued_unverified")
+        self.assertIn("没读成", exp["plain_zh"])
+        l2 = next(s for s in exp["stages"] if s["id"] == "l2")
+        self.assertIn("预算用完没读", l2["text_zh"])                   # the skip, never "-" or "read"
+        self.assertNotIn("照读了", l2["text_zh"])
+        self.assertEqual([c["code"] for c in exp["changes"]], ["rerun_from_run", "pin_yes"])
+        self.assertGreater(exp["changes"][1]["cost_usd"], 0)           # the pinned company is read then: not free
+
+    def test_skipped_for_budget_with_no_annual_report_offers_the_report_not_a_bare_rerun(self):
+        from test_screen import seed_shenling
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        res = self.rescue(budget_usd=0.01)
+        _h, lines = screen.read_ledger(self.home / "out")
+        ln = next(x for x in lines if x["id"] == "SZSE:301018")
+        self.assertEqual((ln["l1"].get("rs"), ln["l2"]["st"], ln["l2"]["ev"]), (True, "skipped_budget", "profile"))
+        exp = self.shenling(res)
+        self.assertEqual(exp["stop"], "l1_rescued_unverified")
+        self.assertIn("没读成", exp["plain_zh"])
+        self.assertIn("没有它的年报原文", exp["plain_zh"])
+        # a rerun alone would read the same profile, which cannot list it: its annual report first, then the rerun
+        self.assertEqual([c["code"] for c in exp["changes"]], ["sync_one", "pin_yes"])
+        self.assertEqual(exp["changes"][0]["steps"][0]["argv"], ["jevscreen", "sync-cninfo", "--codes", "301018"])
+
+    def test_listed_rescue_below_the_cut_did_not_pass_both_steps(self):
+        from test_screen import seed_shenling
+        seed_shenling(self.cfg, self.home)
+        exp = self.shenling(self.rescue(max_out=1))
+        self.assertEqual(exp["stop"], "ranked_below_cut")
+        self.assertNotIn("通过了两步", exp["plain_zh"])
+        self.assertNotIn("passed both steps", exp["plain_en"])
+        self.assertIn("第一步没通过", exp["plain_zh"])
+        self.assertIn("名单只显示前 1", exp["plain_zh"])
 
 
 class TestRunsAndFiles(WhyCase):

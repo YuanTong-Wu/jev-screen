@@ -53,7 +53,7 @@ QUOTE_CHARS = 300
 CNY_PER_USD = 7.2            # fixed, labelled rate for the ≈ ¥ figure next to USD
 CRAWL_REQ_PER_S = 1.96       # measured effective profile-crawl rate (minutes estimate of the China gap fill)
 BADGE_ORDER = ("no_mention", "profile_only", "stale", "edge", "read_once", "backfill", "scope_no_target",
-               "scope_unchecked", "agent_thin")
+               "scope_unchecked", "agent_thin", "l1_rescued")
 TOP_TABLE = 10
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
        "base-uri 'none'; form-action 'none'")
@@ -76,6 +76,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "status_other": "未完成",
         "funnel": "从 {universe} 家公司（市值 ≥ {floor}）中，{described} 家有简介、被 AI 读过；{l1} 家初读通过，"
                   "{listed} 家经年报或简介核对后入选。",
+        "funnel_rescued": "入选的公司里有 {n} 家初读没通过（简介太薄或偏题），是年报写明了才入选的。",
         "rank_note": "排序＝与你的想法吻合的程度（证据越直接越靠前，同等时按市值）。不看估值和财务，不是买入建议。",
         "banner": "仅供你个人研究：本页含只限个人使用的 TradingView / Yahoo 数据和年报原文摘录。请勿转发、截图公开或上传。",
         "legend_title": "怎么读这一页",
@@ -106,7 +107,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "badge_edge": "边缘：多读几次可能变", "badge_read_once": "只读了一次", "badge_backfill": "递补，未经核对",
         "badge_no_mention": "边缘：摘录没提到你的想法", "badge_scope_no_target": "摘录没提到具体对象（按你的范围回答排后）",
         "badge_scope_unchecked": "范围回答未检查（预算不够）", "badge_agent_thin": "证据太少，你的 AI 也判断不了",
-        "badge_user": "你的判断",
+        "badge_user": "你的判断", "badge_unchecked": "未核对", "badge_l1_rescued": "简介里没写，年报里写了",
         "cards_title": "帮系统判断几家（可选，约 3–5 分钟）",
         "cards_intro": "每张点一个按钮，不想答就跳过。答完把下面那行复制给你的 AI；应用后会重新排序（约 $0.01–0.03，不再下载）。",
         "card_rank": "现排第 {rank}", "card_not_listed": "未入选", "card_why": "为什么问",
@@ -122,6 +123,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "st_other": "未核对",
         "excluded_title": "你排除的（{n} 家）",
         "removed_title": "按你的范围回答和你的 AI 的判断移出的（{n} 家）",
+        "removed_title_agent": "你的 AI 核对后移出的（{n} 家）",
         "why_scope": "按你的范围回答：{kind}（AI 读摘录后的推断，把握 {p}）",
         "why_scope_agent": "按你的范围回答：{kind}（你的 AI 判为这一类）",
         "why_default": "按你的原话：{kind}（AI 读摘录后的推断，把握 {p}）",
@@ -131,6 +133,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "gap_no_description_other": "{n} 家没有任何简介，这次没读（不是“不相关”）：{by}。",
         "gap_us_profile": "美股 {k} 家只用简介核对。想用年报原文核对，可以在下载时按 SEC 规则附上一个名字和邮箱（可选，"
                           "不用注册账号，只发给 sec.gov）：{cmd}。",
+        "gap_us_profile_no": "美股 {k} 家只用简介核对（你选择了不提供 SEC 联系方式）。",
         "gap_jp_profile": "日本 {k} 家只用简介核对（这台电脑没有日本年报数据包）。",
         "gap_ondemand": "这次临时补了 {n} 家的年报原文（{src}）。",
         "footer": "运行 {run} · jev-screen {ver} · 仅供个人研究",
@@ -155,6 +158,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "status_other": "not finished",
         "funnel": "Of {universe} companies (market cap ≥ {floor}), {described} have a profile the AI read; {l1} passed "
                   "the first read and {listed} were confirmed from an annual report or profile.",
+        "funnel_rescued": "{n} of the listed companies did not pass the first read (a thin or one-sided profile) and "
+                          "were listed because their annual report says it.",
         "rank_note": "Rank = how well the company fits your idea (more direct evidence first, then market cap). It "
                      "ignores valuation and financials and is not a recommendation to buy.",
         "banner": "For your personal research only: this page contains personal-use-only TradingView / Yahoo data "
@@ -192,7 +197,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "mcap": "Market cap", "badges": "Marks", "what": "What it does",
         "badge_profile_only": "Profile only (weaker)", "badge_stale": "Filing older than 3 years",
         "badge_edge": "Borderline: may change on re-reading", "badge_read_once": "Read once",
-        "badge_backfill": "Filled in, not checked", "badge_user": "Your call",
+        "badge_backfill": "Filled in, not checked", "badge_user": "Your call", "badge_unchecked": "not yet checked",
+        "badge_l1_rescued": "Found in the annual report (the profile did not say it)",
         "badge_no_mention": "Borderline: the excerpt does not mention your idea",
         "badge_scope_no_target": "The excerpt does not name the target (moved down by your scope answer)",
         "badge_scope_unchecked": "Scope answer not checked (budget)",
@@ -214,6 +220,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "st_insufficient": "the filing/profile does not say enough", "st_other": "not checked",
         "excluded_title": "You excluded ({n})",
         "removed_title": "Removed by your scope answers and your AI ({n})",
+        "removed_title_agent": "Removed after your AI's check ({n})",
         "why_scope": "your scope answer: {kind} (the AI's inference from the excerpt, {p} sure)",
         "why_scope_agent": "your scope answer: {kind} (your AI judged it this kind)",
         "why_default": "your own words: {kind} (the AI's inference from the excerpt, {p} sure)",
@@ -225,6 +232,8 @@ STRINGS: dict[str, dict[str, str]] = {
                                     "relevant\"): {by}.",
         "gap_us_profile": "{k} US {companies_were} checked from profiles only. To check {them} against annual reports, "
                           "you can give the SEC a contact name and e-mail, sent with each download (optional, no account): {cmd}.",
+        "gap_us_profile_no": "{k} US {companies_were} checked from profiles only (you chose not to give the SEC a "
+                             "contact).",
         "gap_jp_profile": "{k} Japanese {companies_were} checked from profiles only (no Japanese filing pack on this "
                           "computer).",
         "gap_ondemand": "Annual-report text was fetched on demand for {n} companies ({src}).",
@@ -345,6 +354,8 @@ def _badges(r: dict[str, Any], today: dt.date | None, no_mention: bool = False) 
         out.append("scope_unchecked")
     if r.get("agent_thin"):
         out.append("agent_thin")
+    if r.get("l1_rescued"):
+        out.append("l1_rescued")               # the profile missed it; its annual report says it (screen.l1_rescued)
     return [b for b in BADGE_ORDER if b in out]
 
 
@@ -716,20 +727,25 @@ def _gap_lines(result: dict[str, Any], country_of: dict[str, str], extra: dict[s
         by_en = ", ".join(f"{'other' if k == '?' else k} {v}" for k, v in top)
         cmd = f"jevscreen crawl-descriptions --countries CN --min-mcap {floor:.0e}".replace("e+0", "e")
         m = max(1, math.ceil(cn / CRAWL_REQ_PER_S / 60)) if cn else 0
-        if cn:
+        if cn and not extra.get("crawl_hidden"):     # not after the human's no to the fill, nor in a cooldown
             out.append({"id": "no_description", "count": len(nod), "cn": cn, "minutes": m, "command": cmd,
                         "text_zh": STRINGS["zh"]["gap_no_description"].format(n=len(nod), by=by_zh, cmd=cmd, m=m),
                         "text_en": STRINGS["en"]["gap_no_description"].format(n=len(nod), by=by_en, cmd=cmd, m=m,
                                                                                  **_en_count(len(nod)))})
         else:
-            out.append({"id": "no_description", "count": len(nod), "cn": 0, "minutes": None, "command": None,
+            out.append({"id": "no_description", "count": len(nod), "cn": cn, "minutes": None, "command": None,
                         "text_zh": STRINGS["zh"]["gap_no_description_other"].format(n=len(nod), by=by_zh),
                         "text_en": STRINGS["en"]["gap_no_description_other"].format(n=len(nod), by=by_en,
                                                                                        **_en_count(len(nod)))})
     prof = gaps.get("l2_profile_only") or []
     us = [g for g in prof if country(g.get("security_id")) == "United States"
           or str(g.get("security_id") or "").split(":", 1)[0] in ("NASDAQ", "NYSE", "AMEX", "NYSEARCA")]
-    if us and not extra.get("has_sec_key"):
+    if us and not extra.get("has_sec_key") and extra.get("sec_declined"):
+        # the human said no to the SEC contact: the gap is stated, never pushed again
+        out.append({"id": "us_profile_only", "count": len(us), "command": None, "declined": True,
+                    "text_zh": STRINGS["zh"]["gap_us_profile_no"].format(k=len(us)),
+                    "text_en": STRINGS["en"]["gap_us_profile_no"].format(k=len(us), **_en_count(len(us)))})
+    elif us and not extra.get("has_sec_key"):
         cmd = "jevscreen keys set sec-email"
         out.append({"id": "us_profile_only", "count": len(us), "command": cmd,
                     "text_zh": STRINGS["zh"]["gap_us_profile"].format(k=len(us), cmd=cmd),
@@ -781,6 +797,13 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
     rows = [_row(r, _first_sentence(descriptions.get(r.get("company_key") or "")), today, terms,
                  local_names.get(r.get("security_id") or ""), l2_pieces.get(r.get("company_key") or ""), lang)
             for r in rows_in]
+    # companies that entered after a fill / re-rank and your AI has not checked yet (review.json 'unchecked'):
+    # marked 未核对 / not yet checked until it has
+    unchecked = set(extra.get("unchecked") or [])
+    for r_in, row in zip(rows_in, rows):
+        if r_in.get("company_key") in unchecked and not row["user"]:
+            row["unchecked"] = True
+            row["badges"] = ["unchecked"] + [b for b in row["badges"] if b != "unchecked"]
     unv = [{"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
             "name_zh": local_names.get(r.get("security_id") or ""),
             "country": r.get("country"), "country_zh": COUNTRY_ZH.get(r.get("country") or ""),
@@ -817,10 +840,13 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
         "seconds": seconds, "totals": bool(totals), "change": change_of(result, lin),
         "funnel": {"universe": f.get("universe"), "described": f.get("described"), "l1": f.get("l1_pass"),
                    "listed": len(result.get("rows") or []), "floor": params.get("min_mcap_usd"),
+                   "rescued": sum(1 for r in result.get("rows") or [] if r.get("l1_rescued")),
                    "floor_text": _floor_text(params.get("min_mcap_usd"), lang)},
         "rows": rows, "unverified": unv, "unverified_total": len(result.get("unverified") or []),
         "unverified_groups": _unverified_groups(result.get("unverified") or []),
-        "excluded": exc, "removed": removed, "cards": cards, "chips": chip_text, "idea_terms": idea_words_shown(result, lang), "top_n": TOP_TABLE,
+        "excluded": exc, "removed": removed,
+        # a scope answer of the human removed some: the title names both; else only your AI's check removed them
+        "removed_by_answers": any(x.get("by_answer") for x in removed), "cards": cards, "chips": chip_text, "idea_terms": idea_words_shown(result, lang), "top_n": TOP_TABLE,
         "gaps": _gap_lines(result, country_of or {}, extra),
         "strings": {lang: STRINGS[lang]}, "idea_key": _idea_key(idea),
         # the one page's upper parts: prerequisites + progress (jevscreen.pagestatus; set by page_data / write),
@@ -845,6 +871,7 @@ def _removed(result: dict[str, Any], local_names: dict[str, str], lang: str) -> 
         p = r.get("scope_p")
         out.append({"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
                     "name_zh": local_names.get(r.get("security_id") or ""), "kind": "scope",
+                    "by_answer": r.get("scope_source") != "idea_wording",
                     "why": S[key].format(kind=kind, p=f"{float(p):.0%}" if p is not None else "?")})
     for r in result.get("excluded_by_agent") or []:
         why = r.get(f"agent_why_{lang}") or ""
@@ -852,6 +879,12 @@ def _removed(result: dict[str, Any], local_names: dict[str, str], lang: str) -> 
                     "name_zh": local_names.get(r.get("security_id") or ""), "kind": "agent",
                     "why": S["why_agent"].format(why=why) if why else S["why_agent0"]})
     return out
+
+
+def removed_title_key(data: dict[str, Any]) -> str:
+    """The removed section's title: 'by your scope answers and your AI' only when a scope answer of the human removed
+    one of them; otherwise (no scope question was asked or answered) 'removed after your AI's check'."""
+    return "removed_title" if data.get("removed_by_answers") else "removed_title_agent"
 
 
 def _idea_key(idea: str | None) -> str | None:
@@ -954,6 +987,8 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
     f = data.get("funnel") or {}
     out.append(S["funnel"].format(universe=f.get("universe"), floor=_floor_text(f.get("floor"), lang),
                                   described=f.get("described"), l1=f.get("l1"), listed=f.get("listed")))
+    if f.get("rescued"):
+        out.append(S["funnel_rescued"].format(n=f["rescued"]))
     out.append(S["rank_note"])
     out.append("")
     rows = data.get("rows") or []
@@ -1000,7 +1035,7 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
     removed = data.get("removed") or []
     if removed:
         out.append("")
-        out.append(S["removed_title"].format(n=len(removed)))
+        out.append(S[removed_title_key(data)].format(n=len(removed)))
         for x in removed:
             out.append(f"  {display_name(x, lang)} {x.get('ticker') or ''} — {x.get('why')}")
     groups = data.get("unverified_groups") or []
@@ -1230,7 +1265,7 @@ function topTable(m){var rows=(D.rows||[]).slice(0,D.top_n||10);if(!rows.length)
   a.onclick=function(){var d=document.getElementById('r'+r.rank);if(d&&d.tagName&&String(d.tagName).toLowerCase()==='details'){d.open=true;OPEN['r'+r.rank]=1;save();}};
   var c0=E('td');c0.appendChild(a);tr.appendChild(c0);
   var c1=E('td');c1.appendChild(E('div','name',nm(r)));if(sub(r))c1.appendChild(E('div','small muted',sub(r)));c1.appendChild(E('div','small muted',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));tr.appendChild(c1);
-  tr.appendChild(E('td',null,S('verdict_'+(r.verdict||'partial'))+(r.edge?' · '+S('filter_edge'):'')+(agentShort(r)?' · '+agentShort(r):'')));
+  tr.appendChild(E('td',null,S('verdict_'+(r.verdict||'partial'))+(r.edge?' · '+S('filter_edge'):'')+(r.unchecked?' · '+S('badge_unchecked'):'')+(agentShort(r)?' · '+agentShort(r):'')));
   var ev=evCell(r);tr.appendChild(E('td',ev[1],ev[0]));t.appendChild(tr);});
  var w=E('div','tablewrap');w.appendChild(t);m.appendChild(w);}
 function agentLine(r){var a=r.agent;if(!a||['yes','no','unsure'].indexOf(a.v)<0)return null;var d=E('div','small');
@@ -1262,6 +1297,7 @@ function secResults(m){var box=E('section','results');m.appendChild(box);
  box.appendChild(E('div','small muted',fmt(S(D.totals?'meta_total':'meta'),{date:D.date_text||D.date,status:st,cost:money(D.cost_usd),
   cny:(L==='zh'&&D.cost_cny!==null&&D.cost_cny!==undefined)?fmt(S(D.cost_usd>0&&D.cost_cny<0.005?'cny_tiny':'cny'),{y:D.cost_cny.toFixed(2)}):'',time:dur(D.seconds)}).replace(/^ · /,'')));
  var f=D.funnel||{};box.appendChild(E('p',null,fmt(S('funnel'),{universe:f.universe,floor:f.floor_text||'?',described:f.described,l1:f.l1,listed:f.listed})));
+ if(f.rescued)box.appendChild(E('p',null,fmt(S('funnel_rescued'),{n:f.rescued})));
  box.appendChild(E('div','banner',S('banner')));
  topTable(box);
  box.appendChild(E('p','small muted',S('rank_note')));
@@ -1278,7 +1314,7 @@ function secResults(m){var box=E('section','results');m.appendChild(box);
   groups.forEach(function(gr){var p=E('p','small');p.appendChild(tag('gap'));p.appendChild(T(fmt(S('unverified_group'),{n:gr.n,why:S(gr.key)})));ud.appendChild(p);
    var us=byKey[gr.key]||[];if(us.length)ud.appendChild(E('div','small muted names',us.map(function(u){return nmFull(u)+(u.ticker?' '+u.ticker:'');}).join(L==='zh'?'、':', ')+(us.length<gr.n?' …':'')));});
   box.appendChild(ud);}
- if((D.removed||[]).length){var rd=fold('removed','unv',false);rd.appendChild(E('summary',null,fmt(S('removed_title'),{n:D.removed.length})));
+ if((D.removed||[]).length){var rd=fold('removed','unv',false);rd.appendChild(E('summary',null,fmt(S(D.removed_by_answers?'removed_title':'removed_title_agent'),{n:D.removed.length})));
   D.removed.forEach(function(x){var p=E('div','small');p.appendChild(tag('inference'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')+' — '+x.why));rd.appendChild(p);});box.appendChild(rd);}
  if((D.excluded||[]).length){box.appendChild(E('h2',null,fmt(S('excluded_title'),{n:D.excluded.length})));
   D.excluded.forEach(function(x){var p=E('div','small');p.appendChild(tag('user'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')));box.appendChild(p);});}
@@ -1471,7 +1507,8 @@ def _store_lookups(cfg, result: dict[str, Any], deck: dict[str, Any] | None = No
     listed = (list(result.get("rows") or [])[:MAX_ROWS] + list(result.get("unverified") or [])[:MAX_UNVERIFIED]
               + list(result.get("excluded_by_user") or []))
     keys = [r.get("company_key") for r in listed if r.get("company_key")]
-    shown = [r.get("security_id") for r in listed + list((deck or {}).get("cards") or [])[:MAX_CARDS]
+    removed = list(result.get("excluded_by_scope") or []) + list(result.get("excluded_by_agent") or [])
+    shown = [r.get("security_id") for r in listed + removed + list((deck or {}).get("cards") or [])[:MAX_CARDS]
              if r.get("security_id")]
     sids = [g.get("security_id") for part in ("no_description", "l2_profile_only")
             for g in (result.get("gaps") or {}).get(part) or [] if g.get("security_id")]
@@ -1639,11 +1676,21 @@ def page_data(cfg, result: dict[str, Any], deck: dict[str, Any] | None, *, lang:
                    "answers": int(((result.get("calibration") or {}).get("answers")) or 0)}
     ex = dict(extra or {})
     ex.setdefault("has_sec_key", bool(cfg.sec_user_agent()))
+    if "sec_declined" not in ex:
+        from . import quickstart
+        ex["sec_declined"] = quickstart.sec_declined(cfg)
+    if "crawl_hidden" not in ex:
+        from . import quickstart
+        ex["crawl_hidden"] = quickstart.crawl_hidden(cfg, result.get("idea"))
     ex.setdefault("ondemand", ((result.get("layers") or {}).get("fetch")))   # the on-demand fetch, if one ran
     if "totals" not in ex and result.get("idea"):
         with contextlib.suppress(Exception):   # the idea's cumulative cost and time (quickstart.idea_totals)
             from . import quickstart
             ex["totals"] = quickstart.idea_totals(cfg, result["idea"], wait_s=5.0)
+    if "unchecked" not in ex and result.get("output_dir"):
+        with contextlib.suppress(Exception):     # companies your AI must still check (review.json)
+            from . import review
+            ex["unchecked"] = review.load_review(result["output_dir"]).get("unchecked") or []
     if "questions" not in ex and result.get("output_dir"):
         with contextlib.suppress(Exception):     # the scope-question slot of this version (review.json)
             from . import review_cli
@@ -1794,6 +1841,8 @@ def top_rows(data: dict[str, Any] | None, n: int = 10) -> list[dict[str, Any]]:
                     "agent": (r.get("agent") or {}).get("v"), "agent_state": (r.get("agent") or {}).get("state"),
                     f"agent_why_{lang}": (r.get("agent") or {}).get("why"),
                     "scope_demoted": bool(r.get("scope_demoted")),
+                    # entered after a fill / re-rank and your AI has not checked it yet (say so: 未核对)
+                    "unchecked": bool(r.get("unchecked")),
                     # the decide tokens that override your AI / the evidence for this row (the human's call)
                     "overrides": {"keep": f"keep={r.get('security_id')}", "drop": f"drop={r.get('security_id')}"}
                     if r.get("security_id") else None})

@@ -57,7 +57,7 @@ def _budget(text: str) -> float:
 
 def add_screen_flags(sc: argparse.ArgumentParser) -> None:
     sc.add_argument("--fetch-docs", choices=("auto", "off"), default=None,
-                    help="after the report is written, fetch missing annual reports of first-round companies from the "
+                    help="after the report is written, fetch missing annual reports of the companies layer 2 reads from the "
                          "official sites (free) and update the same report (default auto; off with --from-run or "
                          "--dry-run)")
     sc.add_argument("--fetch-time", type=_seconds, default=120.0, metavar="SECONDS",
@@ -67,7 +67,7 @@ def add_screen_flags(sc: argparse.ArgumentParser) -> None:
 
 
 def add_parsers(sub: Any) -> None:
-    fd = sub.add_parser("fetch-docs", help="fetch missing annual reports of a screen run's first-round companies "
+    fd = sub.add_parser("fetch-docs", help="fetch missing annual reports of the companies a screen run's layer 2 read "
                         "(free) and update its report (at most $0.05)")
     fd.add_argument("target", nargs="?", default="latest", metavar="RUN_ID|latest")
     fd.add_argument("--time", type=_seconds, default=300.0, metavar="SECONDS",

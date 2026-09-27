@@ -256,7 +256,9 @@ calls it before any request or file read in `refresh-universe` (`tradingview_sca
 
 ## `jevscreen why TARGET ... [--run RUN_ID|OUT_DIR|latest] [--idea TEXT | --key HEX] [--checks] [--json]`
 
-Free and read-only. Why each target is (not) in the run's result: `stop` (a stable id), `plain_zh` / `plain_en`,
+Free and read-only. Why each target is (not) in the run's result (`results[]`; the top level also carries `plain_zh`
+/ `plain_en` and, for one target, `who_zh` / `who_en`: `who_zh` uses the official Chinese short name when the store
+has one): `stop` (a stable id), `plain_zh` / `plain_en`,
 `stages`, `facts` / `inferences` / `gaps`, and `changes[]` with complete commands (`argv`, `command`), `cost_usd`,
 `seconds` and `ask_human`. Full schema and the stop table: [WHY.md](WHY.md). Exit 0 explained (also
 `partial_files_only`), 1 unknown run / `choose_run` / `no_runs` / a target `not_found` or `ambiguous` (with
@@ -437,6 +439,9 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
      "answer_words": {"yes": ["yes", "ok", "可以", "同意", "好", …], "no": ["no", "不要", "不同意", "不行", …]},
      "record_answer_commands": ["jevscreen consent set gray-sources yes --lang zh",
                                 "jevscreen consent set gray-sources no --lang zh"]},
+    // before the English sentence exists (idea_en pending) approve_budget is already listed, with "idea_en": null,
+    // "waits_for": "idea_en" and a question without the sentence: write idea_en first, then ask the item as it
+    // comes back (with the sentence) in the same one human round
     {"id": "approve_budget", "ask_human": true, "kind": "first",   // first | over | topup | uncertain
      "question_zh": "…", "question_en": "…", "idea_en": "…", "estimate_usd": null, "reserved_usd": null,
      "remaining_usd": null, "rerun_with": "--approve-budget 1",
@@ -513,8 +518,10 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
                                             // null: nothing to check
            "edge": false,                   // borderline (may change on re-reading, or a gap)
            "user": false,                   // the human answered this company on a card
-           "verdict_from_user": false}],    // listed only because of that answer: say "your call", not
+           "verdict_from_user": false,      // listed only because of that answer: say "your call", not
                                             // "annual report" (up to 10 rows)
+           "unchecked": false}],            // entered after a fill / re-rank and your AI has not checked it yet:
+                                            // say 未核对 / "not yet checked" (the chat line already does)
   "translation_pending": 37,        // texts on the page in another language than the page's, not translated yet
   "translation": {"lang": "zh", "pending": 37, "translated": 0, "batch_max": 60,   // null: nothing to translate
                   "file": "/…/translate/scr-…-zh.json",
@@ -549,19 +556,45 @@ keeps the approval (noted in `idea_en_changes` and `text_<lang>`, nobody is aske
 company name dropped or replaced included) comes back as `reprice_idea_en` with `old_refused: true`. The refusal
 fields come back on every answer of the front, also when it returns a finished result unchanged.
 
-The optional profile fill: after a result, when the idea's market (the one country it was narrowed to, else China
-for a Chinese idea) has >= 30% of its companies at the floor without any profile, or >= 3 of its 100 largest, and
-the re-rank fits what is left of the approval, `pending` holds one `fill_descriptions` item (optional; the status
+The default profile fill (`fill_default`: `{market, state: planned | running | done | skipped | blocked | failed |
+timeout | stopped | opted_out, reason, added, missing, minutes, opt_out_with: "--fill-descriptions no", text_zh,
+text_en}`, null for an idea without a market, also once it was narrowed to other markets after the fill started: that
+fill is then stopped and not waited for; `stopped`: the fill was interrupted from outside, e.g. a shutdown): China
+only (a Chinese idea, or one narrowed to CN; another single market keeps the
+fallback question below): when China >= 30% of its companies at the floor without any profile, or >= 3 of its 100 largest, the worker starts
+`crawl-descriptions` for that market at the floor right after the free profile download, as a detached child (the
+same consent, 24 h cooldown, rate budget and journal as the plain command), while the human answers; the first paid
+read waits for it (at most max(20 min, 3 x its estimate); the page shows it as one progress bar) and reads the new
+profiles with everything else, so no re-rank and no question follow. `added` counts the profiles it brought in at
+the floor it started with (`text_<lang>` says they were read in the first pass only when that read covered its market
+and floor). A new floor or market merged while the first read waits is estimated again before any paid read (the
+`over` question comes back when it no longer fits). `--fill-descriptions no` before or while it runs
+opts out (a running fill is stopped); a later `--fill-descriptions yes` brings it back (before the first read the
+default fill is decided again; after a result with missing China profiles the fill and its re-rank start as after a
+yes to the question below). An idea without a market whose first read passes >= 40% (and >= 3) A-shares
+gets the China fill right after that read, and only the new companies are read and ranked in before the first
+result (`when: "after_l1"`; also when the worker was stopped in that wait and resumed).
+
+The fallback question: after a result, only when the default fill did not run to its end (failed, timed out,
+stopped, not possible) or did not cover the result (a floor lowered after it started), not after a block (its 24 h
+cooldown holds the question back) and not after an opt-out; or for an idea narrowed to another single market (HK,
+TW, JP, KR, IN), which has no default fill. With the same thresholds, and when the re-rank fits what is left of the
+approval, `pending` holds one `fill_descriptions` item (optional; the status
 stays `done`, exit 0). A yes (`--fill-descriptions yes`) starts the worker: `crawl-descriptions` for that market at
 the run's floor (consent, cooldown and rate budget of the plain command), then `screen --from-run <newest run>
 --l1-new` (only the newly described companies are read by L1; everyone else keeps its answer at $0), the annual
 reports of new profile-only layer-2 companies, and the same stable page. Meanwhile the status is `running` with the
-first result's fields. The question names up to 5 missing companies in the industries of the result's layer-1
-passes (banks and insurers only when the passes are financial; else the larger non-financial ones), with the
-exchange short name when a CNINFO stock list is stored. A yes given while another worker holds the lock is kept:
+first result's fields. The question names up to 5 missing companies that carry the idea's own words in their
+name (English or the exchange short name) or industry, largest first (`names_basis: "idea_words"`); else those in the
+industries of the result's layer-1 passes (banks and insurers only when the passes are financial; else the larger
+non-financial ones), with the exchange short name when a CNINFO stock list is stored. The companies the fill brings
+into the list go to your AI (a follow-up deck, blocking when one is in the top 10) and are marked 未核对 / not yet
+checked until it has read them. A yes given while another worker holds the lock is kept:
 the status is `store_busy` with `poll_command`, and `--status` starts the fill once the lock is free. A block, no
 new profile, a busy database, a failed re-rank or a re-rank the budget could not finish keeps the result, and
 `text_<lang>` says what came in and why nothing changed. A no (`--fill-descriptions no`) is never asked again.
+`next_steps` offers the plain China `crawl-descriptions` only when no fill question is open, the human did not opt
+out of the default fill, and no 24 h crawl cooldown runs (a block).
 
 `jevscreen answer` on the cards of an older version (a page tab opened before a fill, an update pass or other
 answers) applies the answers to the newest version screened from it, so the companies added since are kept; the
@@ -619,7 +652,13 @@ After the first result the human answers no calibration cards. Instead:
    (`[{sid, kind, criterion_en}]`), `instructions_en`, `answer_schema`, `record_command`, `skip_command`,
    `licence_note`. Part A (<= 25: the top 10, the side-V rows of the provisional scope splits, <= 3 below-cut / gap
    rows) blocks; part B (ranks 11..max_out, strong rows removed by scope, below-cut, gap; <= 45) never blocks
-   (`agent_review.part_b`); follow-up parts `F<n>` come after a decide brings unread companies into the list.
+   (`agent_review.part_b`); follow-up parts `F<n>` come whenever a new version (your judge, a decide, a profile
+   fill) brings companies your AI has not read into the list. One with a company in the top 10 blocks like part A:
+   `agent_review` becomes `{state: pending, part: "F<n>", deck_id, deck_path, items, record_command, skip_command,
+   blocking: true}`, the status is `needs_agent` again and `text_<lang>` says new companies are being checked; `judge`
+   and `decide` return it as `review_pending`. Review it the same way before relaying. Until your AI has checked them,
+   those companies carry `unchecked: true` in `top` and 未核对 / "not yet checked" on the page (review.json
+   `unchecked`).
 
    The answers file (`jevscreen.agent_answers/1`):
 
@@ -653,9 +692,12 @@ After the first result the human answers no calibration cards. Instead:
    defaults, answered}`, `escalations`, `agent_summary` `{read, annual, profile, removed: [<= 5 {security_id, name,
    chip_words_zh, chip_words_en}], removed_total, text_zh, text_en}`, `agent_review` `{state: pending | done |
    skipped | timed_out | none, deck_id, deck_path, part_b}`, `next_action_en`, and `agent_optional` (the optional
-   `facets` request before the screen). The first response whose `ask_now` is not empty fixes the chat round: the same
-   `ask_now` comes back on every status until a `decide` or a new version, then every new item goes to `later`
-   (a response without questions, e.g. a timed-out review, uses no round). A scope question:
+   `facets` request before the screen). The first response whose `ask_now` is not empty fixes the chat round: each of
+   its questions comes back in `ask_now` on every status, also across new versions (part B, a fill, a decide), until
+   the human answers it; every new item goes to `later` (a response without questions, e.g. a timed-out review, uses
+   no round). A fetch question the human already settled (the SEC contact set or `consent set sec-email-ask no`
+   recorded, the Taiwan consent recorded, an OpenDART key set) is dropped. After a no to the SEC contact, the gap line
+   and `next_steps` no longer offer `keys set sec-email`. A scope question:
 
 ```jsonc
 {"id": "scope_question", "sid": "s1", "ask_human": true, "optional": true,

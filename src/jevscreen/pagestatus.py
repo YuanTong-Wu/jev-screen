@@ -80,6 +80,7 @@ T: dict[str, dict[str, str]] = {
         "ready_wait": "上面几项都好了就开始",
         "opt_sec_ok": "美国 SEC 联系名字和邮箱：已设置（美股用年报原文核对）",
         "opt_sec": "可选：美国 SEC 联系名字和邮箱（美股改用年报原文核对，不用注册账号）",
+        "opt_sec_no": "美国 SEC 联系方式：你选择了不提供（美股只用简介核对）",
         "opt_edinet_ok": "日本 EDINET 的 key：已设置", "opt_edinet": "可选：日本 EDINET 的 key（日本年报原文）",
         "opt_dart_ok": "韩国 OpenDART 的 key：已设置", "opt_dart": "可选：韩国 OpenDART 的 key（韩国年报原文）",
         "opt_mops_ok": "台湾年报下载（公开资讯观测站）：已开启",
@@ -98,7 +99,8 @@ T: dict[str, dict[str, str]] = {
         "it_universe": "股票清单（TradingView）", "it_desc": "公司简介（FinanceDatabase）", "it_pack": "开放数据包",
         "it_l1": "AI 初读公司简介", "it_l2": "AI 用年报/简介核对", "it_fetch": "补抓年报原文",
         "it_fill": "补公司简介（TradingView）",
-        "n_companies": "{n} 家公司", "n_desc": "{n} 家有简介", "n_of": "{done} / {total}",
+        "n_companies": "{n} 家公司", "n_desc": "{n} 家有简介", "n_of": "{done} / {total}", "n_filled": "补到 {n} 家",
+        "it_fill_default": "补缺简介的公司（TradingView，免费）",
         "mb_of": "{done} / {total} MB", "mb_run": "下载中…", "running": "进行中…", "waiting": "等待开始",
         "skipped": "跳过", "done": "完成", "stopped": "停下了（见上面红框）",
         "eta": "还要约 {m} 分钟", "eta_lt1": "还要不到 1 分钟",
@@ -166,6 +168,7 @@ T: dict[str, dict[str, str]] = {
         "ready_wait": "Starts as soon as everything above is ready",
         "opt_sec_ok": "US SEC contact name and e-mail: set (US companies are checked against annual reports)",
         "opt_sec": "Optional: a US SEC contact name and e-mail (check US companies against annual reports; no account)",
+        "opt_sec_no": "US SEC contact: you chose not to give one (US companies are checked from profiles only)",
         "opt_edinet_ok": "Japan EDINET key: set", "opt_edinet": "Optional: a Japan EDINET key (Japanese annual reports)",
         "opt_dart_ok": "Korea OpenDART key: set", "opt_dart": "Optional: a Korea OpenDART key (Korean annual reports)",
         "opt_mops_ok": "Taiwan annual reports (MOPS): on",
@@ -188,6 +191,7 @@ T: dict[str, dict[str, str]] = {
                                                                                         "profiles",
         "it_fetch": "Fetching annual reports", "it_fill": "Filling company profiles (TradingView)",
         "n_companies": "{n} companies", "n_desc": "{n} with a profile", "n_of": "{done} / {total}",
+        "n_filled": "{n} filled", "it_fill_default": "Filling missing profiles (TradingView, free)",
         "mb_of": "{done} / {total} MB", "mb_run": "downloading…", "running": "running…", "waiting": "waiting",
         "skipped": "skipped", "done": "done", "stopped": "stopped (see the red box above)",
         "eta": "about {m} min left", "eta_lt1": "under a minute left",
@@ -467,7 +471,9 @@ def _optional(cfg, lang: str) -> list[dict[str, Any]]:
     S = T[lang]
     out = []
     has = {n: bool(keys.presence(cfg, n).get("configured")) for n in ("sec-email", "edinet", "opendart")}
-    out.append(_check("opt_sec", "ok" if has["sec-email"] else "opt", S["opt_sec_ok" if has["sec-email"] else "opt_sec"]))
+    from . import quickstart
+    sec_key = "opt_sec_ok" if has["sec-email"] else "opt_sec_no" if quickstart.sec_declined(cfg) else "opt_sec"
+    out.append(_check("opt_sec", "ok" if has["sec-email"] else "opt", S[sec_key]))
     out.append(_check("opt_edinet", "ok" if has["edinet"] else "opt",
                       S["opt_edinet_ok" if has["edinet"] else "opt_edinet"]))
     out.append(_check("opt_opendart", "ok" if has["opendart"] else "opt",
@@ -497,6 +503,21 @@ def _stage_eta(st: dict[str, Any], now: dt.datetime) -> float | None:
         return None if not (isinstance(done, int) and isinstance(total, int) and total and done >= total) else 0.0
     rate = (done - d0) / max(1.0, (now - t0).total_seconds())
     return (total - done) / rate if rate > 0 else None
+
+
+def _with_fill_file(cfg, job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The job as the page shows it: a default fill the job still calls running while its child already wrote its
+    ending (the worker settles it later, e.g. after the key) shows as ended, and the human's opt-out as skipped."""
+    fdf = (job or {}).get("fill_default") or {}
+    if fdf.get("state") != "running":
+        return job
+    from . import quickstart
+    if job.get("fill_pref") == "no":
+        return {**job, "fill_default": {**fdf, "state": "opted_out"}}
+    st = quickstart.read_fill_state(cfg, job.get("idea_key") or "")
+    if st.get("state") == "finished" and st.get("pid") == fdf.get("pid"):
+        return {**job, "fill_default": {**fdf, "state": "done" if st.get("exit") == 0 else "failed", "added": None}}
+    return job
 
 
 def _progress(job: dict[str, Any] | None, lang: str, now: dt.datetime) -> dict[str, Any] | None:
@@ -547,6 +568,21 @@ def _progress(job: dict[str, Any] | None, lang: str, now: dt.datetime) -> dict[s
         items.append(_bar("descriptions", S["it_desc"], "fail", text=S["stopped"]))
     else:
         items.append(_bar("descriptions", S["it_desc"], "wait", text=S["waiting"]))
+    # the default fill of the idea's market (free, in the background, before the first read)
+    fdf = job.get("fill_default") or {}
+    if fdf.get("state") == "running":
+        done_f, tot_f = fdf.get("done"), fdf.get("total")
+        items.append(_bar("fill_default", S["it_fill_default"], "run", done=done_f, total=tot_f,
+                          text=S["n_of"].format(done=f"{int(done_f or 0):,}", total=f"{int(tot_f or 0):,}")
+                          if tot_f and done_f else S["running"]))
+    elif fdf.get("state") == "done":
+        items.append(_bar("fill_default", S["it_fill_default"], "ok",
+                          text=S["n_filled"].format(n=f"{int(fdf['added']):,}") if fdf.get("added") is not None
+                          else S["done"]))
+    elif fdf.get("state") == "opted_out":
+        items.append(_bar("fill_default", S["it_fill_default"], "wait", text=S["skipped"]))
+    elif fdf.get("state") in ("blocked", "failed", "timeout", "stopped"):
+        items.append(_bar("fill_default", S["it_fill_default"], "fail", text=S["skipped"]))
     # the AI's reads and the annual reports fetched on demand
     screen_done = _done(job, "screen")
     for sid, label in (("l1", "it_l1"), ("l2", "it_l2"), ("fetch", "it_fetch")):
@@ -777,7 +813,7 @@ def build(cfg, *, lang: str, job: dict[str, Any] | None = None, result: dict[str
     return {"lang": lang, "phase": phase, "phase_words": words, "refresh": bool(refresh),
             "checks": checks, "optional": _optional(cfg, lang), "all_ok": all_ok,
             "ok_line": (S["all_ok"].format(p=shown) if shown else S["all_ok_nokey"]) if all_ok else None,
-            "progress": _progress(job, lang, now) if show_progress else None,
+            "progress": _progress(_with_fill_file(cfg, job), lang, now) if show_progress else None,
             "alerts": alerts, "stale": stale}
 
 

@@ -101,9 +101,10 @@ class TestBandEstimate(StoreCase):
     here), not by the 28% share; the dry-run output says which basis it used."""
 
     def test_real_band_size_from_the_base_run(self):
-        base = self.run_screen(reads=3, jev_factory=band_factory(self.log), out_dir=self.home / "base")
+        base = self.run_screen(reads=3, jev_factory=band_factory(self.log), out_dir=self.home / "base",
+                               l1_rescue=0)           # GearCo's rescued L1 miss: test_screen.TestL1Rescue
         self.assertEqual(base["layers"]["l2"]["band"]["items"], 2)
-        dry = self.run_screen(from_run=base["run_id"], dry_run=True, out_dir=self.home / "dry")
+        dry = self.run_screen(from_run=base["run_id"], dry_run=True, out_dir=self.home / "dry", l1_rescue=0)
         est = dry["layers"]["l2"]["estimate"]
         self.assertEqual(dry["layers"]["l2"]["inputs"], 3)
         self.assertEqual(est["band_reads"]["items"], 2)

@@ -19,13 +19,24 @@ What the human will be asked, in **one** message (the same list as the README, s
 
 Other questions come only if something changes: the estimate exceeds the cap, the budget runs out, the English
 sentence changes its meaning, or the Jev provider reports no credit. Optional questions may come with the result, each
-only when it helps this idea and labelled optional: filling missing company profiles of the idea's market (free,
-about 10 minutes for China, then a re-rank of a few cents), an SEC contact name and email (only when a US company is
+only when it helps this idea and labelled optional: filling missing company profiles of the idea's market (when the
+default China fill below failed or timed out, not after a block, or for an idea narrowed to another single market), an
+SEC contact name and email (only when a US company is
 in the top 10) and Taiwan annual reports from MOPS (only when a Taiwan company is in the top 10). Before the install the human may also meet two system steps: on a Mac, the first `git` can open a
 box offering the command line developer tools (they click Install, a few minutes); and when neither `uv` nor a
 Python >= 3.10 exists, they run one command that installs uv (Step 1 below).
 
-After the result, at most 3 optional questions in one message: filling missing profiles, at most 2 questions about
+Missing company profiles of the idea's market are filled **by default**: for a Chinese idea (or one narrowed to China,
+`--countries CN`) the worker starts the free, polite China profile fill right after the free downloads, in the background while
+the human sets up the key, and the first AI read covers those companies (`fill_default` in the JSON; `intro_<lang>`
+says so in one sentence). If the human says they do not want it, rerun `next_command` plus `--fill-descriptions no`
+(a running fill is stopped; if they change their mind, `--fill-descriptions yes` brings it back). An English idea
+whose first read passes mostly A-shares gets the same fill, and its companies ranked in, before the first result. No
+question is asked for this.
+
+After the result, at most 3 optional questions in one message: filling missing profiles (optional: when the default
+China fill failed, timed out or did not cover a floor lowered later, not after a block since a 24 h cooldown applies,
+or for an idea narrowed to another single market), at most 2 questions about
 the idea's boundary (kinds of company, never single companies), and the companies your review could not decide.
 Everything else waits on the page. They are never asked again in chat.
 
@@ -126,6 +137,11 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
   After relaying, if `agent_review.part_b` is pending, review it the same way. It never blocks. Tell the human only
   if it changed the top 10.
 
+  Whenever a new version brings companies you have not read into the top 10 (after your judge, the human's
+  `decide`, or a profile fill), `agent_review` comes back once more (part `F1`, `F2` …, status `needs_agent`; `judge`
+  and `decide` also return it as `review_pending`): review those few the same way before you relay anything. Until
+  you have, they are marked 未核对 / "not yet checked" (`unchecked: true` in `top`, and on the page).
+
   Never answer the human's scope questions or escalations yourself. Never turn an escalation into a pin without the
   human's answer. Put all of the human's answers into ONE `decide` command (`jevscreen decide "s1=no c3=yes"
   --run <run_id> --via chat --json`; keep=/drop=/clear=TICKER override your own calls when the human says so).
@@ -136,7 +152,9 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
     sent to Jev: the active provider, and the company in between if any); run only the one command of
     `record_answer_commands` that matches their answer (`answer_words` lists the clear yes / no replies, step 5).
     Never answer it yourself.
-  - `approve_budget`: ask `question_<lang>` word for word (it shows the English idea and the dollar cap). After an
+  - `approve_budget`: ask `question_<lang>` word for word (it shows the English idea and the dollar cap). It is
+    listed from the very first JSON, also while `idea_en` is still yours to write (`waits_for: "idea_en"`): write
+    the sentence first, then ask the item as it comes back, in the same one message as the other items. After an
     explicit yes, rerun `next_command` plus the item's `rerun_with` (e.g. `--approve-budget 1`). A number above $1
     needs their explicit yes to that number. The number is the **total** cap for this idea, not an extra amount.
     With `kind: "over"` the question also offers narrower `alternatives` (each fits the cap): when the human picks
@@ -199,8 +217,8 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
   - `ask_now` (at most 3, all optional, in this order: the profile fill, at most 2 scope questions, at most 2
     companies your review could not decide, the annual-report fetch questions): ask each `question_<lang>` word for
     word **in the same message**, as `text_<lang>` labels them (问题 1 / Q1, apart from the numbered top rows),
-    labelled optional. `ask_now` stays the same on every `--status` until the human answers (`decide`) or a new
-    version comes, so a second status never loses it. Everything else is in `later` (JSON) and never asked in chat;
+    labelled optional. Each `ask_now` question stays in `ask_now` on every `--status`, also across new versions,
+    until the human answers it, so a second status or a new version never loses it. Everything else is in `later` (JSON) and never asked in chat;
     the page's question box shows the open scope questions and up to 3 companies your review could not decide. The human's answers to scope questions and companies go into ONE `record_command`
     (`jevscreen decide "<tokens>" --run <run_id> --via chat --json`, tokens from each item's `tokens`: `s1=yes|no|?`,
     `c3=yes|no|?`); it answers in seconds with `diff_<lang>` (what changed, in plain words), free. A line the human
@@ -475,7 +493,8 @@ human. `"ok": true` is enough; warnings never block; after two failed attempts r
 Never put a company name in idea_en. Details: [docs/SIEVE.md](docs/SIEVE.md).
 
 **Annual reports fetched during the screen.** After the first report is written, `screen` fetches the newest annual
-report of first-round companies that have none stored (free, official sites, at most 2 minutes) and updates the same
+report of the companies layer 2 read that have none stored (first-round passes first; free, official sites, at most
+2 minutes) and updates the same
 report (at most $0.05, inside the budget you agreed). So:
 
 - (a) Run `screen` in the background or with a timeout of at least 10 minutes. Never kill it because it looks idle:

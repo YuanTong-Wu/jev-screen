@@ -30,9 +30,9 @@ FROM_RUN_SECONDS = 60
 QUOTE_MAX_CHARS = 200
 MISSING_TERMS_MAX = 5
 STAGE_IDS = ("not_found", "ambiguous", "not_in_universe", "null_mcap", "below_min_mcap", "below_min_volume",
-             "other_country", "shell", "no_description", "dry_run", "l1_not_sent", "l1_rejected", "l2_not_sent",
-             "l2_failed", "l2_contradicted", "l2_unverified", "ranked_below_cut", "excluded_by_user", "scope_removed",
-             "agent_removed", "in_output",
+             "other_country", "shell", "no_description", "dry_run", "l1_not_sent", "l1_rejected",
+             "l1_rescued_unverified", "l2_not_sent", "l2_failed", "l2_contradicted", "l2_unverified",
+             "ranked_below_cut", "excluded_by_user", "scope_removed", "agent_removed", "in_output",
              "forced_extra", "pre_ledger")
 # exchange -> (sync command, key it needs or None, seconds, extra flags); per-company syncs only (never sync-sec: it
 # has no --codes). sync-mops needs --mode annual: its default 'basic' stores the 主要經營業務 profile, not the report
@@ -454,6 +454,19 @@ def _shell_stage(ctx: RunCtx, ln: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"id": "shells", "ok": True, "text_zh": "排除壳公司：没有命中", "text_en": "shells filter: no hit"}]
 
 
+def _zh_name(ctx: RunCtx, security_id: str | None) -> str | None:
+    """The official Chinese short name (CNINFO 简称 / MOPS 公司簡稱) for the Chinese text, when the store has one."""
+    con = getattr(ctx, "con", None)
+    if con is None or not security_id:
+        return None
+    from . import page, quickstart
+    try:
+        got = quickstart._local_names(con, [security_id]).get(security_id)
+        return got or page._tw_names(con, [security_id]).get(security_id)
+    except Exception:  # noqa: BLE001 - the English name stands in
+        return None
+
+
 def explain(ctx: RunCtx, match, *, show_text: bool = False) -> dict[str, Any]:
     """The explanation of one resolved target (see the module docstring for the shape)."""
     res = ctx.result
@@ -480,7 +493,8 @@ def explain(ctx: RunCtx, match, *, show_text: bool = False) -> dict[str, Any]:
     name = (match.name or (ln or {}).get("n")
             or ((ctx.index.lines.get(match.security_id) or {}).get("name") if ctx.index is not None else None)
             or match.security_id)
-    who_zh, who_en = f"{name}（{match.security_id}）", f"{name} ({match.security_id})"
+    name_zh = _zh_name(ctx, match.security_id) or name
+    who_zh, who_en = f"{name_zh}（{match.security_id}）", f"{name} ({match.security_id})"
     out["who_zh"], out["who_en"] = who_zh, who_en
     if match.matched_line:
         out["facts"].append({"zh": f"你说的 {match.matched_line} 不是主要上市线；筛选用的是 {match.security_id}",
@@ -919,6 +933,15 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
         return _excluded(ctx, out, row, match)
     if where in ("excluded_by_scope", "excluded_by_agent"):
         return _removed_by_review(ctx, out, row, match, where)
+    rs = bool((ln.get("l1") or {}).get("rs"))
+    if not st1["ok"] and rs and (l2.get("lab") or pool.get("l2_label")) in ("explicit", "partial") \
+            and (l2.get("ev") or pool.get("l2_evidence")) == "annual_report":
+        lab2 = l2.get("lab") or pool.get("l2_label")      # rescued and verified: listed unless below the cut
+        out["stages"].append({"id": "l2", "ok": True,
+                              "text_zh": f"第二步：简介太薄或偏题，照读了年报原文，判为「{LABEL_ZH.get(lab2, lab2)}」",
+                              "text_en": f"step 2: thin or one-sided profile, the annual report was read anyway: "
+                                         f"\"{_lab_en(lab2)}\""})
+        return _below_cut(ctx, out, match, rescued=True)
     if not st1["ok"]:
         words = _idea_words(ctx)
         text = _l1_text(ctx, k)
@@ -927,6 +950,8 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
             if missing:
                 out["facts"].append({"zh": f"简介里没出现：{'、'.join(missing)}", "en": f"not in the profile: "
                                                                                  f"{', '.join(missing)}"})
+        if rs:
+            return _rescued_unlisted(ctx, out, match, l2, pool)
         lab = l1_lab = (ln.get("l1") or {}).get("lab")
         plain_zh = {"unrelated": "模型只读了它的简介，认为和你的想法关系不大，所以第一步就没通过。",
                     "insufficient": "模型读了它的简介，觉得说不清楚，所以第一步没通过。",
@@ -1010,6 +1035,56 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
     return _below_cut(ctx, out, match)
 
 
+def _rescued_unlisted(ctx: RunCtx, out: dict[str, Any], match, l2: dict[str, Any], pool: dict[str, Any]
+                      ) -> dict[str, Any]:
+    """An L1 miss read by step 2 anyway (screen.l1_rescued: a thin or one-sided profile) and not listed: what step 2
+    had (its annual report, only the profile, or no answer) and the route to evidence (a rerun, its annual report)
+    before the pin. A should_pass check would add nothing: step 2 reads it already."""
+    _, l2u = units(ctx.result)
+    lab2 = l2.get("lab") or pool.get("l2_label")
+    ev2 = l2.get("ev") or pool.get("l2_evidence")
+    st2 = l2.get("st") or ("ok" if pool.get("l2_label") else pool.get("l2_status")) or "not_run"
+    head_zh = "第一步只读了简介，没通过；因为简介太薄或偏题，"
+    head_en = "Step 1 read only its profile and did not pass it; the profile was thin or one-sided, so "
+    if st2 != "ok":
+        no_doc = ev2 == "profile"        # a rerun alone would read the same profile, which cannot list it
+        _set(out, "l1_rescued_unverified", head_zh + "第二步要照读它，但没读成（预算用完或服务出错）"
+             + ("；本地也没有它的年报原文，只凭简介不能进名单" if no_doc else ""),
+             head_en + "step 2 was to read it anyway, but that read did not complete (budget or provider)"
+             + ("; no annual report of it is stored either, and the profile alone cannot list it" if no_doc else ""))
+        out["stages"].append({"id": "l2", "ok": False, "text_zh": f"第二步：因为简介太薄或偏题本该照读，但{_lab_zh(st2)}",
+                              "text_en": f"step 2: to be read anyway (thin or one-sided profile), but {_lab_en(st2)}"})
+        if no_doc:
+            out["changes"] += _sync_change(ctx, match, l2u)
+        else:
+            out["changes"].append(_change("rerun_from_run", "从这次运行再跑一次（第一步免费复用）",
+                                          "Run again from this run (step 1 reused for free)",
+                                          [_from_run(ctx, cost=l2u)], "第二步会补读它", "Step 2 reads it"))
+        out["changes"].append(_pin_change(ctx, match, "yes"))
+        return out
+    profile = ev2 != "annual_report"
+    out["stages"].append({"id": "l2", "ok": False,
+                          "text_zh": f"第二步：因为简介太薄或偏题，照读了{EVIDENCE_ZH.get(ev2, '资料')}：{_lab_zh(lab2)}"
+                                     + ("（只有简介，不能凭它进名单）" if profile else ""),
+                          "text_en": f"step 2: read anyway (thin or one-sided profile), "
+                                     f"{EVIDENCE_EN.get(ev2, 'text')}: {_lab_en(lab2)}"
+                                     + (" (profile only: not enough to list it)" if profile else "")})
+    if profile:
+        _set(out, "l1_rescued_unverified", head_zh + "第二步本该读它的年报，但本地没有它的年报原文，只读了简介，不能凭简介进名单",
+             head_en + "step 2 was to read its annual report, but none is stored: it read the profile again, which "
+                       "cannot list it")
+        out["changes"] += _sync_change(ctx, match, l2u)
+    else:
+        no = lab2 == "contradicted"
+        _set(out, "l1_rescued_unverified", head_zh + "第二步照读了年报原文，"
+             + ("年报说它不做（或已经不做）这件事" if no else "也没找到明确的证据") + "，所以没进名单",
+             head_en + "step 2 read its annual report anyway and "
+             + ("found that it does not (or no longer) do this" if no else "found no explicit evidence there")
+             + ", so it is not listed")
+    out["changes"].append(_pin_change(ctx, match, "yes"))
+    return out
+
+
 def _removed_by_review(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], match, where: str) -> dict[str, Any]:
     """A company a scope answer (or the idea's own words) or the user's AI removed (scope design §8.4): the
     answer, the inference behind it, the AI's words and the one decide token that brings it back."""
@@ -1071,7 +1146,8 @@ def _quote(inp: dict[str, Any], row: dict[str, Any] | None) -> dict[str, Any] | 
 def _pin_change(ctx: RunCtx, match, want: str) -> dict[str, Any]:
     _, l2u = units(ctx.result)
     k = match.company_key
-    read = bool((ctx.lines.get(k) or {}).get("l2")) or _pool_row(ctx, k) is not None
+    l2, pool = (ctx.lines.get(k) or {}).get("l2"), _pool_row(ctx, k)
+    read = l2.get("st") == "ok" if l2 else bool((pool or {}).get("l2_label"))   # skipped: the from-run reads it
     return _change("pin_yes" if want == "yes" else "pin_no", "只有你本人同意，才能把它钉进名单（这是你的判断，不是证据）",
                    "Only with your own yes can it be pinned into the list (your judgement, not evidence)",
                    [_step(["jevscreen", "sieve", "pin", match.security_id, want, "--run", ctx.ref.run_id],
@@ -1124,7 +1200,7 @@ def _l2_not_sent(ctx: RunCtx, out: dict[str, Any], match) -> dict[str, Any]:
     return out
 
 
-def _below_cut(ctx: RunCtx, out: dict[str, Any], match) -> dict[str, Any]:
+def _below_cut(ctx: RunCtx, out: dict[str, Any], match, *, rescued: bool = False) -> dict[str, Any]:
     from . import calib
     max_out = int(ctx.params.get("max_out") or 40)
     rank = None
@@ -1139,8 +1215,14 @@ def _below_cut(ctx: RunCtx, out: dict[str, Any], match) -> dict[str, Any]:
                                                facets=ctx.result.get("facets"), fsha=ctx.params.get("facets_sha"),
                                                agent=review.agent_verdicts(ctx.cfg, ctx.result.get("idea") or ""))
         rank = next((i for i, e in enumerate(v2, 1) if e["company_key"] == match.company_key), None)
-    _set(out, "ranked_below_cut", f"它通过了两步，但排第 {rank or '?'}，名单只显示前 {max_out}",
-         f"It passed both steps but ranks #{rank or '?'}; the list shows the top {max_out}")
+    if rescued:              # an L1 miss verified on its annual report (screen.l1_rescued)
+        _set(out, "ranked_below_cut", f"第一步没通过，但因为简介太薄或偏题，第二步照读了年报原文，找到了证据；它排第 {rank or '?'}，"
+                                      f"名单只显示前 {max_out}",
+             f"It missed step 1, but its profile was thin or one-sided, so step 2 read its annual report and found "
+             f"the evidence there; it ranks #{rank or '?'} and the list shows the top {max_out}")
+    else:
+        _set(out, "ranked_below_cut", f"它通过了两步，但排第 {rank or '?'}，名单只显示前 {max_out}",
+             f"It passed both steps but ranks #{rank or '?'}; the list shows the top {max_out}")
     out["stages"].append({"id": "rank", "ok": False, "text_zh": f"名单：第 {rank or '?'}（前 {max_out} 才显示）",
                           "text_en": f"list: #{rank or '?'} (top {max_out} shown)"})
     if rank:
@@ -1161,6 +1243,10 @@ def _in_output(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any]) -> dict[st
                           "text_en": f"list: #{row['rank']}, step 2 \"{_lab_en(lab)}\"",
                           "data": {"rank": row["rank"], "l2_label": lab, "verdict_source": vs,
                                    "backfill": row.get("backfill"), "edge": row.get("l2_edge")}})
+    if row.get("l1_rescued"):
+        out["facts"].append({"zh": "第一步只读了简介，没通过；因为简介太薄或偏题，第二步照读了年报原文，在年报里找到了证据",
+                             "en": "step 1 read only the profile and did not pass it; the profile was thin or "
+                                   "one-sided, so step 2 read the annual report anyway and found the evidence there"})
     if row.get("backfill"):
         out["facts"].append({"zh": "递补，未经确认：别人被你排除后它才进前面", "en": "backfill: moved up after your exclusions"})
     if row.get("l2_edge"):
@@ -1331,6 +1417,14 @@ def _run(cfg, con, targets, run_ref, idea, key, checks, show_text) -> dict[str, 
         notes_en.append("The sieve changed after this run: the explanation reflects the run; changes apply next run")
     if notes_zh:
         out["note_zh"], out["note_en"] = "；".join(notes_zh), " ".join(n + "." for n in notes_en)[:-1]
+    # the plain sentence at the top level (one company: its own; several: one line each, named)
+    if len(results) == 1:
+        r = results[0]
+        out["plain_zh"], out["plain_en"] = r.get("plain_zh"), r.get("plain_en")
+        out["who_zh"], out["who_en"] = r.get("who_zh"), r.get("who_en")
+    elif results:
+        out["plain_zh"] = "\n".join(f"{r.get('who_zh') or r['target']}：{r.get('plain_zh') or ''}" for r in results)
+        out["plain_en"] = "\n".join(f"{r.get('who_en') or r['target']}: {r.get('plain_en') or ''}" for r in results)
     if not results:
         out["status"] = "no_targets"
     return out

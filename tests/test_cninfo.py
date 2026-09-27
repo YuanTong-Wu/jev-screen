@@ -237,10 +237,22 @@ class TestSelection(unittest.TestCase):
 # =========================================================================== PDF extraction
 
 
+def _preferred_backend() -> str:
+    """PyMuPDF when installed (optional, AGPL: pip install pymupdf), else pypdf (the [pdf] extra)."""
+    try:
+        import fitz  # noqa: F401
+    except ImportError:
+        return "pypdf"
+    return "pymupdf"
+
+
+PDF_BACKEND = _preferred_backend()
+
+
 class TestPdfExtraction(unittest.TestCase):
     def test_summary_fixture(self):
         text, note, backend = fixture_section("summary")
-        self.assertEqual((note, backend), ("ok:end=accounting_data", "pymupdf"))
+        self.assertEqual((note, backend), ("ok:end=accounting_data", PDF_BACKEND))
         self.assertTrue(text.startswith("2、报告期主要业务或产品简介\n公司示例维护协同结构"), text[:80])
         self.assertIn("身份认证", text)
         self.assertIn("（3）安全芯片", text)
@@ -491,7 +503,7 @@ class TestSync(SyncBase):
         text = tp.read_text()
         self.assertTrue(text.startswith("2、报告期主要业务或产品简介"))
         self.assertEqual((doc[14], doc[15]), (store.sha256(text.encode()), len(text)))
-        self.assertEqual((doc[16], doc[17]), (cninfo.EXTRACTOR_VERSION + "/pymupdf", "ok:end=accounting_data"))
+        self.assertEqual((doc[16], doc[17]), (cninfo.EXTRACTOR_VERSION + "/" + PDF_BACKEND, "ok:end=accounting_data"))
         self.assertTrue(self.q("SELECT count(*) FROM snapshots WHERE snapshot_id = ? AND source_id = ?",
                                [doc[18], cninfo.SOURCE_ID])[0][0])
         desc = self.q("SELECT text, lang, source_url, match_method FROM descriptions WHERE security_id = 'SZSE:309386' "

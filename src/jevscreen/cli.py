@@ -68,7 +68,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import agent_cli, ondemand_cli, quickstart_cli
+from . import agent_cli, eval_cli, ondemand_cli, quickstart_cli
 from . import review_cli, why_cli
 
 EXIT_OK, EXIT_ERROR, EXIT_BLOCKED, EXIT_LOCKED, EXIT_BUSY, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -370,6 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
     ondemand_cli.add_parsers(sub)   # fetch-docs
     add_pack_parser(sub)
     quickstart_cli.add_parsers(sub)   # quickstart, page
+    eval_cli.add_parsers(sub)    # eval check / score / run (the open evaluation set)
     return p
 
 
@@ -2009,6 +2010,7 @@ COMMANDS.update(why_cli.COMMANDS)
 COMMANDS.update(review_cli.COMMANDS)
 COMMANDS.update(ondemand_cli.COMMANDS)
 COMMANDS.update(quickstart_cli.COMMANDS)
+COMMANDS.update(eval_cli.COMMANDS)
 
 
 # ---------------------------------------------------------------------------------------------------- open data pack

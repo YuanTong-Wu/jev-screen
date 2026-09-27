@@ -43,7 +43,8 @@ def pool_inputs(cfg, result: dict[str, Any]) -> tuple[list[dict[str, Any]], dict
     with store.session(cfg, read_only=True, wait_s=10.0) as con:
         pool = calib.load_pool(con, result["run_id"], result.get("params"))
         sids = sorted({p.get("security_id") for p in pool if p.get("security_id")}
-                      | {r.get("security_id") for w in ("rows", "unverified") for r in result.get(w) or []
+                      | {r.get("security_id") for w in ("rows", "unverified", "excluded_by_agent", "excluded_by_scope")
+                         for r in result.get(w) or []
                          if r.get("security_id")})
         names = quickstart._local_names(con, sids)
     return pool, calib.load_inputs(result["output_dir"]), names
@@ -128,6 +129,7 @@ def prepare(cfg, result: dict[str, Any], *, lang: str | None = None) -> dict[str
                           "defaults": defaults_of(result, sieve, names), "relayed": False}
     if deck["items"]:
         path = review.write_deck(deck, result["output_dir"])
+        rv = presented(rv, deck)
         rv["agent_review"] = {"state": "pending", "part": "A", "deck_id": deck["deck_id"], "deck_path": str(path),
                               "items": len(deck["items"]), "created_at": review.now_iso(),
                               "record_command": deck["record_command"], "skip_command": deck["skip_command"]}
@@ -359,13 +361,14 @@ def _removed_why(r: dict[str, Any], lang: str, sieve: dict[str, Any] | None,
     return (words.get(r.get("agent_chip") or "") or {}).get(lang) or r.get(f"agent_why_{lang}") or ""
 
 
-def _removed_names(rows: list[dict[str, Any]], lang: str, sieve: dict[str, Any] | None, n: int = 5) -> str:
+def _removed_names(rows: list[dict[str, Any]], lang: str, sieve: dict[str, Any] | None, n: int = 5,
+                   names: dict[str, str] | None = None) -> str:
     from . import quickstart, review
     words = review.chip_words(sieve)
     parts = []
     for r in rows[:n]:
-        name = (r.get("name_zh") if lang == "zh" else None) or quickstart.plain_name(r.get("name")) \
-            or r.get("security_id")
+        zh = r.get("name_zh") or (names or {}).get(r.get("security_id") or "")
+        name = (zh if lang == "zh" else None) or quickstart.plain_name(r.get("name")) or r.get("security_id")
         why = _removed_why(r, lang, sieve, words)
         parts.append(f"{name}（{why}）" if lang == "zh" else f"{name} ({why})")
     if not parts:
@@ -374,21 +377,25 @@ def _removed_names(rows: list[dict[str, Any]], lang: str, sieve: dict[str, Any] 
     return ("——" + "、".join(parts) + more) if lang == "zh" else (": " + ", ".join(parts) + more)
 
 
-def agent_summary(res: dict[str, Any], deck: dict[str, Any] | None, answered: int, sieve: dict[str, Any] | None
-                  ) -> dict[str, Any]:
+def agent_summary(res: dict[str, Any], deck: dict[str, Any] | None, answered: int, sieve: dict[str, Any] | None,
+                  names: dict[str, str] | None = None) -> dict[str, Any]:
+    """What your AI's check did, in both languages; `names`: security_id -> the official Chinese short name (the
+    Chinese text names the removed companies by it)."""
     items = (deck or {}).get("items") or []
     a = sum(1 for it in items if (it.get("evidence") or {}).get("kind") == "annual_report")
     removed = list(res.get("excluded_by_agent") or []) + [r for r in res.get("excluded_by_scope") or []
                                                          if r.get("scope_by") == "agent"]
+    names = names or {}
     out = {"read": answered, "annual": a, "profile": max(0, answered - a),
-           "removed": [{"security_id": r.get("security_id"), "name": r.get("name"), "name_zh": r.get("name_zh"),
+           "removed": [{"security_id": r.get("security_id"), "name": r.get("name"),
+                        "name_zh": r.get("name_zh") or names.get(r.get("security_id") or ""),
                         "chip_words_zh": _removed_why(r, "zh", sieve), "chip_words_en": _removed_why(r, "en", sieve)}
                        for r in removed[:5]],
            "removed_total": len(removed)}
     for lang in ("zh", "en"):
         T = TEXT[lang]
         out[f"text_{lang}"] = (T["applied"].format(n=answered, a=a, b=max(0, answered - a), x=len(removed),
-                                                   names=_removed_names(removed, lang, sieve))
+                                                   names=_removed_names(removed, lang, sieve, names=names))
                                if removed else T["applied0"].format(n=answered, a=a, b=max(0, answered - a)))
     return out
 
@@ -474,8 +481,13 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
                                            else "skipped"}}
             review.save_review(out_dir, rv0)
         from . import quickstart
+        blocking = part == "A" or (rv0.get("agent_review") or {}).get("deck_id") == deck_id
+        if blocking and part != "A":
+            rv0 = {**rv0, "agent_review": {**(rv0.get("agent_review") or {}), "state": "done" if not skip
+                                           else "skipped"}}
+            review.save_review(out_dir, rv0)
         quickstart.write_inbox(cfg, quickstart.idea_key(idea), {"reapply": True, "agent_review_state": (
-            "skipped" if skip else "done") if part == "A" else None})
+            "skipped" if skip else "done") if blocking else None})
         out.update(queued=True, text_zh=TEXT["zh"]["queued"], text_en=TEXT["en"]["queued"])
         return EXIT_OK, out
     try:
@@ -524,7 +536,7 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
         else:
             rv = {**rv, "defaults": defaults_of(res, sieve, names)}
             rv["escalations"] = escalations_of(cfg, res, sieve, rv)
-        summ = agent_summary(res, deck, answered, sieve) if not skip else {
+        summ = agent_summary(res, deck, answered, sieve, names=names) if not skip else {
             "text_zh": TEXT["zh"]["skipped"], "text_en": TEXT["en"]["skipped"], "removed": [], "removed_total": 0}
         rv["agent_summary"] = summ
         part_b = None
@@ -534,11 +546,22 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
                                        human_lang=lang, removed_so_far=summ.get("removed_total") or 0)
             if deck_b["items"] and not skip:
                 pb = review.write_deck(deck_b, res["output_dir"])
+                rv = presented(rv, deck_b, blocking=False)
                 part_b = {"deck_id": deck_b["deck_id"], "deck_path": str(pb), "items": len(deck_b["items"]),
                           "record_command": deck_b["record_command"], "blocking": False, "state": "pending"}
             rv["agent_review"]["part_b"] = part_b
-        elif (rv.get("agent_review") or {}).get("part_b"):
+        elif part == "B" and (rv.get("agent_review") or {}).get("part_b"):
             rv["agent_review"] = {**rv["agent_review"], "part_b": {**rv["agent_review"]["part_b"], "state": "done"}}
+        elif (rv.get("agent_review") or {}).get("deck_id") == deck_id:
+            # the blocking follow-up deck of companies new to the list: checked (or skipped)
+            rv["agent_review"] = {**rv["agent_review"], "state": "skipped" if skip else "done",
+                                  "answered": answered, "done_at": review.now_iso()}
+        if not skip:
+            rv["ai_reviews"] = True
+            pend_b = (rv.get("agent_review") or {}).get("part_b") or {}
+            rv = check_new(cfg, res, rv, sieve=sieve, agent=agent, lang=lang, names=names,
+                           base_rows=base_res.get("rows") or [], active=True,
+                           exclude=_deck_keys(pend_b.get("deck_path")) if pend_b.get("state") == "pending" else None)
         page_path, adopted = publish(cfg, res, rv, open_page=part == "A", same=skip)
     except store.StoreLocked:
         raise
@@ -552,6 +575,14 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
                text_en=" ".join(x for x in (summ["text_en"], paid_text(res, "en")) if x),
                next_command_en="jevscreen quickstart --status --key "
                                f"{screen_key(idea)} --json (relay text_<lang>, top and ask_now in one message)")
+    ar = rv.get("agent_review") or {}
+    if ar.get("state") == "pending" and ar.get("deck_id") != deck_id:
+        # companies new to the top 10 that your AI has not read: checked before anything is relayed
+        out["review_pending"] = {k: ar.get(k) for k in ("deck_id", "deck_path", "items", "record_command",
+                                                        "skip_command", "part")}
+        out["next_command_en"] = (f"Review the new deck first ({ar.get('items')} companies new to the top 10, "
+                                  f"deck_path {ar.get('deck_path')}) the same way and run its record_command; then "
+                                  f"jevscreen quickstart --status --key {screen_key(idea)} --json")
     return EXIT_OK, out
 
 
@@ -748,6 +779,14 @@ def decide(cfg, text: str, run: str, *, via: str = "chat") -> tuple[int, dict[st
                              dropped_kinds={k for k, a in kinds.items() if a == "no"})
         if followup:
             rv.setdefault("followups", []).append(followup)
+            rv = presented(rv, _deck_of_path(followup.get("deck_path")), blocking=False)
+        # companies your answers brought into the list that your AI has not read: checked by it (blocking when one
+        # is in the top 10), marked 未核对 until then
+        pend_b = (rv.get("agent_review") or {}).get("part_b") or {}
+        held = _deck_keys((followup or {}).get("deck_path")) | (
+            _deck_keys(pend_b.get("deck_path")) if pend_b.get("state") == "pending" else set())
+        rv = check_new(cfg, res, rv, sieve=saved, agent=agent, lang=lang, names=names,
+                       base_rows=base_res.get("rows") or [], active=ai_reviews(rv), exclude=held)
         rv["decided"] = (rv.get("decided") or []) + [{"tokens": raw, "via": via, "at": review.now_iso(),
                                                       "run_id": res["run_id"]}]
         page_path, adopted = publish(cfg, res, rv)
@@ -761,6 +800,13 @@ def decide(cfg, text: str, run: str, *, via: str = "chat") -> tuple[int, dict[st
                version_of_job=adopted, diff_zh=diff["zh"], diff_en=diff["en"],
                text_zh="\n".join(x for x in (diff["zh"], paid_text(res, "zh")) if x),
                text_en="\n".join(x for x in (diff["en"], paid_text(res, "en")) if x), followup=followup, later=later)
+    ar = rv.get("agent_review") or {}
+    if ar.get("state") == "pending" and ar.get("blocking"):
+        out["review_pending"] = {k: ar.get(k) for k in ("deck_id", "deck_path", "items", "record_command",
+                                                        "skip_command", "part")}
+        out["next_command_en"] = (f"Your AI checks the {ar.get('items')} companies new to the top 10 first (deck_path "
+                                  f"{ar.get('deck_path')}, the same way as part A; run its record_command), then "
+                                  f"jevscreen quickstart --status --key {screen_key(idea)} --json")
     return EXIT_OK, out
 
 
@@ -802,6 +848,109 @@ def _set_state(doc: dict[str, Any], ck: str, state: str) -> dict[str, Any]:
         if v.get("company_key") == ck:
             v["state"], v["escalation"] = state, None
     return d
+
+
+def presented(rv: dict[str, Any], deck: dict[str, Any] | None, *, blocking: bool = True) -> dict[str, Any]:
+    """rv with the companies of `deck` recorded (company_key -> the evidence sha): a blocking deck (part A, a blocking
+    follow-up) in rv['presented'] - your AI had to go through it before the list was relayed, so a company it left
+    unanswered is not asked again for the same evidence; a non-blocking one (part B, a follow-up below the top 10) in
+    rv['offered'] - not asked again below the top 10, but not counted as checked."""
+    field = "presented" if blocking else "offered"
+    got = dict(rv.get(field) or {})
+    for it in (deck or {}).get("items") or []:
+        got[it["company_key"]] = it.get("evidence_sha")
+    return {**rv, field: got}
+
+
+def unchecked_of(res: dict[str, Any], sieve: dict[str, Any] | None, agent: dict[str, Any],
+                 inputs: dict[str, Any] | None, base_rows: list[dict[str, Any]] | None,
+                 shown: dict[str, Any] | None = None) -> list[str]:
+    """The listed companies your AI has not checked (no verdict on the same evidence, never shown to it with this
+    evidence, no human decision) that must be: every such company in the relayed top RELAYED_TOP, and every such
+    company that entered the list with this version (not listed in `base_rows`, the version before the fill /
+    re-rank). In rank order."""
+    from . import review
+    decided = review._decided(sieve)
+    shown = shown or {}
+    base = None if base_rows is None else {r.get("company_key") for r in base_rows if r.get("rank") is not None}
+    out = []
+    for r in sorted((r for r in res.get("rows") or [] if r.get("rank") is not None), key=lambda r: r["rank"]):
+        ck = r.get("company_key")
+        if not ck or ck in decided or r.get("security_id") in decided \
+                or r.get("verdict_source") in ("user", "evidence+user"):
+            continue
+        sha = ((inputs or {}).get(ck) or {}).get("evidence_sha") or r.get("evidence_sha")
+        v = agent.get(ck) or {}
+        if (v.get("evidence_sha") and v["evidence_sha"] == sha) or (ck in shown and shown[ck] == sha):
+            continue
+        if r["rank"] <= RELAYED_TOP or (base is not None and ck not in base):
+            out.append(ck)
+    return out
+
+
+def check_new(cfg, res: dict[str, Any], rv: dict[str, Any], *, sieve: dict[str, Any], agent: dict[str, Any],
+              lang: str, names: dict[str, str], base_rows: list[dict[str, Any]] | None,
+              active: bool, exclude: set[str] | None = None) -> dict[str, Any]:
+    """A new version after a fill / re-rank: rv['unchecked'] = the companies your AI must still check (unchecked_of;
+    the page and the chat mark them 未核对 / not yet checked until a verdict exists). When your AI reviews this idea
+    (`active`: its part A was answered) they go to it as a BLOCKING follow-up deck F<n> (the same judge flow): rv's
+    agent_review becomes that deck, pending, so the list is not relayed before it is checked. `exclude`: companies
+    ranked below the top 10 that a pending deck (part B) already holds. Returns rv."""
+    from . import review
+    pool, inputs, _n = pool_inputs(cfg, res)
+    keys = unchecked_of(res, sieve, agent, inputs, base_rows, rv.get("presented"))
+    rv = {**rv, "unchecked": keys}
+    if not keys or not active:
+        return rv
+    rank = {r.get("company_key"): r.get("rank") for r in res.get("rows") or []}
+    top = [k for k in keys if (rank.get(k) or 10 ** 6) <= RELAYED_TOP]
+    offered = rv.get("offered") or {}
+    send = top + [k for k in keys if k not in top and k not in (exclude or set()) and k not in offered]
+    if not send:
+        return rv
+    n = 1 + len(rv.get("followups") or [])
+    deck = review.build_deck(res, inputs, sieve, agent, part=f"{FOLLOWUP_PREFIX}{n}", pool=pool, names_zh=names,
+                             human_lang=lang, followup_keys=send)
+    if not deck["items"]:
+        return rv
+    blocking = any(it["company_key"] in top for it in deck["items"])
+    deck["blocking"] = blocking
+    p = review.write_deck(deck, res["output_dir"])
+    rv = presented(rv, deck, blocking=blocking)
+    fu = {"deck_id": deck["deck_id"], "deck_path": str(p), "items": len(deck["items"]), "blocking": blocking,
+          "record_command": deck["record_command"], "skip_command": deck["skip_command"]}
+    rv["followups"] = list(rv.get("followups") or []) + [fu]
+    if not blocking:
+        return rv                   # below the top 10 only: your AI checks it after relaying (like part B)
+    part_b = (rv.get("agent_review") or {}).get("part_b")
+    rv["agent_review"] = {"state": "pending", "part": deck["part"], "deck_id": deck["deck_id"], "deck_path": str(p),
+                          "items": len(deck["items"]), "created_at": review.now_iso(), "blocking": True,
+                          "record_command": deck["record_command"], "skip_command": deck["skip_command"],
+                          "part_b": part_b, "new_companies": len(deck["items"])}
+    return rv
+
+
+def _deck_of_path(path: str | None) -> dict[str, Any] | None:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8")) if path else None
+    except (OSError, ValueError):
+        return None
+
+
+def _deck_keys(path: str | None) -> set[str]:
+    """The company keys of a written deck ({} when it cannot be read)."""
+    if not path:
+        return set()
+    try:
+        return {it["company_key"] for it in json.loads(Path(path).read_text(encoding="utf-8")).get("items") or []}
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+
+
+def ai_reviews(rv: dict[str, Any] | None) -> bool:
+    """Your AI answered this idea's review with a file (part A or later; rv['ai_reviews'], carried to every later
+    version), so companies new to the list go to it too. A skipped or timed-out review only marks them."""
+    return bool((rv or {}).get("ai_reviews"))
 
 
 def _followup(cfg, res: dict[str, Any], sieve: dict[str, Any], agent: dict[str, Any], rv: dict[str, Any],

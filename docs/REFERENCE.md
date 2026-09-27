@@ -122,6 +122,7 @@ The main flags of each command; `jevscreen <command> --help` lists them all.
 | `jevscreen sieve check PATH\|IDEA` / `sieve show IDEA\|PATH [--json]` | Check or show an idea's calibration file (free); rules in docs/DATA_RULES.md "Calibration (sieve)" |
 | `jevscreen sieve new\|set\|add\|remove\|pin\|unpin\|list ... --json` | The fields the human's AI writes in a sieve (idea_en, seed terms, facets, should_pass / should_fail checks; pins only on the human's yes); free, no Jev: [SIEVE.md](SIEVE.md) |
 | `jevscreen why TARGET ... [--run RUN_ID\|OUT_DIR\|latest] [--json]` | Why a company (ticker, code or name) is or is not in a run's result, and what would change it (free, read-only): [WHY.md](WHY.md) |
+| `jevscreen eval check\|score RUN --idea ID\|run --budget-each USD --budget-total USD [--ideas a,b]` | The open evaluation set: check the labelled ideas, score a finished run against one (free), or screen every idea and score them (paid; `--budget-each` and `--budget-total` required, the total is what the human approves): [EVAL.md](EVAL.md) |
 | `jevscreen pack build\|pull\|fetch-open` | Open data pack: see [Open data pack](#open-data-pack) |
 | `jevscreen doctor` / `keys` / `consent` | Agent-first setup: see [Using jev-screen with your AI](#using-jev-screen-with-your-ai) |
 
@@ -177,6 +178,15 @@ processes cannot even open it read-only. So jev-screen never keeps a connection 
    as a gap, not screened.
 2. **Jev layer 1** (`fit`): does the description show that the company's current business is `core`, `adjacent`,
    `unrelated` or `insufficient` for the idea? Pass: `core`, or `adjacent` with p(core) + p(adjacent) >= 0.6.
+   A profile can be thin, cut off or one-sided (an air-conditioning maker whose energy-storage cooling is only in
+   its annual report), so up to 20 misses with p(core) + p(adjacent) >= 0.3 (plus p(insufficient) when the profile
+   is thin: under 400 characters, under 150 when it is mostly Chinese / Japanese / Korean, or cut off mid-sentence)
+   are read by layer 2 anyway (`layers.l2.l1_rescued`, the row's `l1_rescued`, the ledger's `l1.rs`): those with a
+   stored annual report first, then those the `--from-run` base run rescued, then by that sum and market cap. They
+   are listed only when layer 2 finds explicit / partial evidence in an official annual report, never on the profile
+   layer 1 already rejected (read on a profile, they get no extra band or facet reads); the on-demand fetch gets
+   their missing reports after those of the layer-1 passes. A sieve check or pin among them is still treated as
+   one: fetched first, with its band and facet reads.
 3. **Jev layer 2** (`evidence`, only the top `--l2-max` passes by p(core), then market cap): up to three
    deterministic excerpts from the company's latest **official annual report** in `documents`, whichever source
    has it: SEC 10-K Item 1 / 20-F Item 4 (`sync-sec`), CNINFO 年度报告 or 年度报告摘要 (`sync-cninfo`), EDINET
@@ -323,8 +333,11 @@ never do (read or echo your keys, spend more than $1 without your yes, work arou
    (downloads, the AI's reads, the money spent), then a ranked list where every company carries its evidence
    (annual-report quote with a link, or the profile), labelled fact / inference / gap / your call. It is one page
    per idea (`data/pages/<key>.html`): every later version (a profile fill, answers your AI applied) updates it.
-4. When many companies of your idea's market have no profile, the agent asks once whether to fill them (optional,
-   free, in the background; then a re-rank of a few cents within your cap).
+4. When many companies of your idea's market have no profile (a Chinese idea: China), they are filled by default,
+   free, in the background right after the free downloads, and the first AI read covers them (`--fill-descriptions
+   no` opts out). Only when that fill failed or timed out (never after a block: 24 h cooldown) is the human asked
+   afterwards (optional; then a re-rank of a few cents
+   within your cap, and your AI checks the companies that come in).
 
 The commands behind it:
 

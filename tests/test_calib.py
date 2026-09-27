@@ -491,7 +491,7 @@ class TestPinsAndRerank(StoreCase):
         self.assertNotIn("sieve_hint", self.run_screen(reads=1, out_dir=self.home / "o3"))    # default: no lookup
 
     def test_deck_on_a_real_run(self):
-        res = self.run_screen(reads=1)
+        res = self.run_screen(reads=1, l1_rescue=0)      # GearCo's rescued L1 miss: test_screen.TestL1Rescue
         inputs = calib.load_inputs(self.home / "out")
         self.assertEqual(set(inputs), {"isin:US0000000001", "isin:US0000000007", "isin:JP0000000002"})
         with store.session(self.cfg, read_only=True) as con:

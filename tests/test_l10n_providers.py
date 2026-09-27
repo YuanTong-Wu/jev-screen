@@ -20,7 +20,8 @@ from test_jev_providers import FAKE_OR, FAKE_TS, FAKE_VC, Base  # noqa: E402
 
 HAN = re.compile(r"[一-鿿（），。：；『』「」]")
 ZH_OK = {"TypeSafe", "OpenRouter", "Vercel", "AI", "Gateway", "Jev", "key", "HTTP", "API", "Keys", "Create",
-         "credits", "TradingView", "Yahoo", "SEC", "BSE", "Mac"}
+         "credits", "TradingView", "Yahoo", "SEC", "BSE", "Mac",
+         "Ctrl", "Alt", "T"}      # the Linux terminal shortcut (Ctrl+Alt+T) is a key name, not an English word
 FAKE = {"openrouter": FAKE_OR, "typesafe": FAKE_TS, "vercel": FAKE_VC}
 
 

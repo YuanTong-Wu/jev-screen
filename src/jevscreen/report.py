@@ -162,13 +162,19 @@ def _result_table(rows: list[dict], ranked: bool, lang: str = "en") -> str:
                                      "L1", "p_core", "L2", "L2 read", "score", "evidence", "filing", "tiers"],
         [([r["rank"]] if ranked else []) + [
             r["security_id"], r["name"], r["region"], money(r["market_cap_usd"]), money(r["revenue_ttm_usd"]),
-            _cagr(r), r["l1_label"], num(r["l1_p_core"]), _l2_cell(r),
+            _cagr(r), _l1_cell(r), num(r["l1_p_core"]), _l2_cell(r),
             _evidence_cell(r, lang), num(r["score"]),
             (r["evidence_excerpt"] or "") + (f" ({r['evidence_url']})" if r["evidence_url"] else ""),
             (" ".join(x for x in (_src(r.get("filing_source")), r.get("filing_form"), r.get("filing_date"),
                                   f"({r['doc_lang']})" if r.get("doc_lang") else None) if x)
              + (" (old)" if r.get("l2_doc_stale") else "")) or None,
             " / ".join(t for t in (r["l1_input_tier"], r["l2_input_tier"]) if t)] for r in rows])
+
+
+def _l1_cell(r: dict) -> str | None:
+    """The L1 label; a row L1 missed but the annual report rescued (screen.l1_rescued) says so."""
+    lab = r.get("l1_label")
+    return f"{lab} (rescued)" if lab and r.get("l1_rescued") else lab
 
 
 def _marks(r: dict) -> list[str]:
@@ -699,7 +705,7 @@ def format_console(result: dict[str, Any], top_n: int = 20) -> str:
         lines.append(_text_table(
             ["#", "security", "name", "mcap", "L1", "p_core", "L2", "read", "score"],
             [[str(r["rank"]), r["security_id"], (r["name"] or "")[:32], money(r["market_cap_usd"]),
-              r["l1_label"] or "-", num(r["l1_p_core"]),
+              _l1_cell(r) or "-", num(r["l1_p_core"]),
               " ".join([r["l2_label"] or "-"] + [m for m in _marks(r) if m in (USER_ONLY_ZH, BELOW_CUT_ZH,
                                                                                "递补，未经确认", "边缘", "仅简介",
                                                                                *FLAG_ZH.values())

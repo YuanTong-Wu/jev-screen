@@ -806,8 +806,8 @@ class TestScreenCli(CliCase):
             code, out, _ = self.main(["screen", "humanoid robots", "--dry-run"])
         self.assertEqual(code, 0)
         line = next(x for x in out.splitlines() if x.startswith("total estimate:"))
-        self.assertTrue(line.endswith("(+ up to 2 min, free, fetching annual reports for first-round companies with "
-                                      "none stored)"))
+        self.assertTrue(line.endswith("(+ up to 2 min, free, fetching annual reports for the companies step 2 reads "
+                                      "with none stored)"))
         self.assertIn("No SEC contact email: US companies will read the profile only", out)
         self.assertIn("No PDF reader installed", out)
         self.assertNotRegex(line, r"\d+ compan")
@@ -1354,7 +1354,7 @@ class TestAtomicOutputs(ScreenCase):
 
 class TestNoviceText(Home):
     def test_text_details(self):
-        self.assertEqual(ondemand.dry_run_suffix("zh"), "（另加最多 2 分钟，免费补抓年报：只抓通过第一轮、本地没有年报原文的公司）")
+        self.assertEqual(ondemand.dry_run_suffix("zh"), "（另加最多 2 分钟，免费补抓年报：只抓第二步要读、本地没有年报原文的公司）")
         self.assertIn("1 more company now read", ondemand.end_line(1, 0.0, 0, "en"))
         self.assertIn("2 more companies now read", ondemand.end_line(2, 0.0, 0, "en"))
         self.assertEqual([ondemand.lang_of(x) for x in ("半導体製造装置", "人形机器人", "半導體製造設備", "半导体制造设备",

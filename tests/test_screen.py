@@ -302,7 +302,7 @@ class StoreCase(unittest.TestCase):
 
 class TestScreenFlow(StoreCase):
     def test_funnel_ranking_and_outputs(self):
-        res = self.run_screen()
+        res = self.run_screen(l1_rescue=0)         # GearCo's rescued L1 miss: TestL1Rescue
         self.assertEqual(res["status"], "ok")
         f = res["funnel"]
         # TINY is below 2e8; NODS has no description.
@@ -412,13 +412,13 @@ class TestScreenFlow(StoreCase):
         self.assertEqual(run[0][0], "budget_exhausted")
 
     def test_l2_max_and_no_budget_for_l2(self):
-        res = self.run_screen(l2_max=1)
+        res = self.run_screen(l2_max=1, l1_rescue=0)
         self.assertEqual(res["status"], "partial")
         self.assertEqual(res["funnel"]["l2_sent"], 1)
         self.assertEqual(len(res["gaps"]["l2_not_sent_l2_max"]), 2)
         self.assertEqual(res["rows"][0]["security_id"], "NYSE:ROBO")
         self.log.clear()
-        res = self.run_screen(budget_usd=0.01, out_dir=self.home / "out2")
+        res = self.run_screen(budget_usd=0.01, out_dir=self.home / "out2", l1_rescue=0)
         self.assertEqual(res["status"], "partial")
         self.assertEqual(len(self.log), 1)                # L2 client never built: nothing left
         self.assertEqual(len(res["gaps"]["l2_skipped_budget"]), 3)
@@ -1032,7 +1032,7 @@ class TestOfficialSources(StoreCase):
         self.assertEqual(screen.fiscal_year_of({"filing_date": "2026-06-25"}), 2026)
 
     def test_screen_reads_cjk_documents_with_language_keywords(self):
-        res = self.run_screen(idea="人形机器人")
+        res = self.run_screen(idea="人形机器人", l1_rescue=0)
         self.assertEqual(self.kw.calls, ["人形机器人"])
         l2 = {it.item_id: it.text for it in self.log[1].classified[0][0]}
         cn, ja, ko = l2["isin:CNE000000009"], l2["isin:JP0000000002"], l2["isin:KR7090000008"]
@@ -1408,6 +1408,7 @@ def golden_snapshot(official: bool, **extra) -> dict:
         if official:
             seed_official(cfg, home)
         log: list = []
+        extra.setdefault("l1_rescue", 0)     # the golden predates l1_rescued (P0-2): GearCo's L1 miss is not read
         res = screen.screen(cfg, "人形机器人" if official else "humanoid robots", jev_factory=make_factory(log),
                             out_dir=home / "out", keywords_fn=FakeKeywords(), **extra)
         with open(home / "out" / "results.csv", encoding="utf-8") as fh:
@@ -1490,7 +1491,7 @@ class TestRepeatedReads(StoreCase):
         res1 = self.run_band(reads=1, out_dir=self.home / "r1")
         self.assertEqual([r["security_id"] for r in res1["rows"]], ["NYSE:ROBO"])      # Robo Two insufficient
         self.log.clear()
-        res = self.run_band(reads=3)
+        res = self.run_band(reads=3, l1_rescue=0)
         l2 = self.log[1]
         self.assertEqual([r for r, _ in l2.reads_seen], [0, 1, 2])
         for read, ids in l2.reads_seen[1:]:
@@ -1526,7 +1527,7 @@ class TestRepeatedReads(StoreCase):
         self.assertEqual((csv_rows["NASDAQ:ROB2"]["l2_reads"], csv_rows["NASDAQ:ROB2"]["l2_edge"]), ("3", "False"))
         # a rerun of the same configuration asks for exactly the same reads (cached in real Jev)
         self.log.clear()
-        self.run_band(reads=3, out_dir=self.home / "again")
+        self.run_band(reads=3, out_dir=self.home / "again", l1_rescue=0)
         self.assertEqual(self.log[1].reads_seen, l2.reads_seen)
 
     def test_band_order_changes_per_read_and_is_deterministic(self):
@@ -1615,6 +1616,264 @@ class TestRepeatedReads(StoreCase):
                 self.run_screen(**kw)
 
 
+# P0-2 (novice simulation #2): 申菱 301018's TradingView profile spoke only of air conditioning and was cut off; L1
+# said unrelated 60% / adjacent 36% / core 2% and the annual report, where the energy-storage business is, was never
+# read. The rescued L1 misses are read by L2 on their annual report.
+SHENLING_PROFILE = "Shenling Environmental makes precision air conditioning units for data centres, rail transit and"
+SHENLING_AR = """第三节 管理层讨论与分析
+
+一、报告期内公司从事的主要业务
+
+公司主要从事人工环境调控设备的研发、生产和销售，产品用于数据中心、轨道交通和工业厂房。
+
+报告期内，公司人形机器人关节热管理产品实现批量供货，人形机器人业务收入同比增长。
+"""
+
+
+def l1_label_rescue(text: str, _base=l1_label) -> tuple[str, dict[str, float]]:
+    if "air conditioning" in text.lower():
+        return "unrelated", {"core": 0.02, "adjacent": 0.36, "unrelated": 0.60, "insufficient": 0.02}
+    return _base(text)
+
+
+def seed_shenling(cfg: config.Config, home: Path, *, with_doc: bool = True) -> None:
+    docs = home / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "shenling.txt").write_text(SHENLING_AR, encoding="utf-8")
+    with store.session(cfg) as con:
+        snap = lambda src: store.record_snapshot(  # noqa: E731
+            con, source_id=src, kind="t", request=None, raw_path=None, raw_sha256=None, raw_bytes=None, rows=None,
+            duration_s=None)
+        scan, prof, cn = snap("tradingview_scanner"), snap("tradingview_profile"), snap("cninfo_annual_report")
+        store.upsert_many(con, "securities", SEC_COLS, [
+            ("SZSE:301018", "SZSE", "301018", "Shenling", "CNE100004HY4", "China", "stock", "common", True,
+             "isin:CNE100004HY4", scan, True)])
+        store.upsert_many(con, "market_daily", ("security_id", "as_of", "market_cap_usd", "avg_volume_10d",
+                                                "snapshot_id"), [("SZSE:301018", D, 1.5e9, 1e6, scan)])
+        store.upsert_many(con, "descriptions", ("security_id", "source_id", "company_key", "text", "snapshot_id"),
+                          [("SZSE:301018", "tradingview_profile", "isin:CNE100004HY4", SHENLING_PROFILE, prof)])
+        if with_doc:
+            store.upsert_many(con, "documents", (
+                "doc_id", "security_id", "company_key", "source_id", "cik", "form", "section", "filing_date",
+                "report_date", "url", "text_path", "text_chars", "extract_note", "snapshot_id"), [
+                ("cninfo_annual_report:9900301018:f25:business", "SZSE:301018", "isin:CNE100004HY4",
+                 "cninfo_annual_report", "9900301018", "年度报告", "business", dt.date(2026, 4, 20),
+                 dt.date(2025, 12, 31), "http://www.cninfo.com.cn/shenling.pdf", str(docs / "shenling.txt"), 200,
+                 None, cn)])
+
+
+class TestL1Rescue(StoreCase):
+    def run_rescue(self, **kw):
+        with mock.patch.object(sys.modules[__name__], "l1_label", l1_label_rescue):
+            return self.run_screen(**kw)
+
+    def test_a_thin_profile_l1_miss_is_listed_on_its_annual_report(self):
+        seed_shenling(self.cfg, self.home)
+        res = self.run_rescue()
+        rows = {r["security_id"]: r for r in res["rows"]}
+        self.assertIn("SZSE:301018", rows)
+        sl = rows["SZSE:301018"]
+        self.assertEqual((sl["l1_label"], sl["l2_label"], sl["l2_evidence"], sl["l1_rescued"]),
+                         ("unrelated", "explicit", "annual_report", True))
+        self.assertNotIn("l1_rescued", rows["NYSE:ROBO"])
+        self.assertIn("unrelated (rescued)", (self.home / "out" / "report.md").read_text(encoding="utf-8"))
+        from jevscreen import page
+        self.assertIn("l1_rescued", page._badges(sl, None))
+        self.assertNotIn("l1_rescued", page._badges(rows["NYSE:ROBO"], None))
+        # GearCo (gearbox, core + adjacent 0.40) is read too, on its profile only: never listed, never 'unverified'
+        self.assertEqual(res["layers"]["l2"]["l1_rescued"], {"read": 2, "listed": 1})
+        self.assertNotIn("LSE:GEAR", [r["security_id"] for r in res["rows"] + res["unverified"]])
+        self.assertIn("LSE:GEAR", [g["security_id"] for g in res["gaps"]["l2_profile_only"]])
+        _h, lines = screen.read_ledger(self.home / "out")
+        by = {ln["id"]: ln for ln in lines}
+        self.assertTrue(by["SZSE:301018"]["l1"]["rs"])
+        self.assertFalse(by["SZSE:301018"]["l1"]["ok"])
+        self.assertNotIn("rs", by["NYSE:ROBO"]["l1"])
+        (pj,) = self.query("SELECT params_json FROM screen_runs WHERE run_id = ?", [res["run_id"]])[0]
+        self.assertEqual(sorted(json.loads(pj)["l1_rescued"]), ["isin:CNE100004HY4", "isin:GB0000000003"])
+
+    def test_the_page_says_how_many_listed_companies_were_rescued(self):
+        from jevscreen import page
+        seed_shenling(self.cfg, self.home)
+        res = self.run_rescue()
+        for lang, needle in (("zh", "有 1 家初读没通过"), ("en", "1 of the listed companies did not pass the first read")):
+            data = page.build_page_data(res, None, lang=lang)
+            self.assertEqual(data["funnel"]["rescued"], 1)
+            self.assertIn(needle, page.render_text(data, lang))
+        self.assertNotIn("初读没通过", page.render_text(page.build_page_data(self.run_rescue(
+            l1_rescue=0, out_dir=self.home / "off"), None, lang="zh"), "zh"))
+
+    def test_without_the_rescue_it_stops_at_l1(self):
+        seed_shenling(self.cfg, self.home)
+        res = self.run_rescue(l1_rescue=0)
+        self.assertNotIn("SZSE:301018", [r["security_id"] for r in res["rows"]])
+        self.assertNotIn("l1_rescued", res["layers"]["l2"])
+
+    def test_profile_only_rescue_goes_to_the_fetch_after_the_passes(self):
+        from jevscreen import ondemand
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        res = self.run_rescue()
+        self.assertNotIn("SZSE:301018", [r["security_id"] for r in res["rows"] + res["unverified"]])
+        self.assertIn("SZSE:301018", [g["security_id"] for g in res["gaps"]["l2_profile_only"]])
+        params = {"l1_rescued": ["isin:CNE100004HY4"]}
+        inp = {"company_key": "isin:CNE100004HY4", "l1_label": "unrelated",
+               "l1_probs": json.dumps({"core": 0.02, "adjacent": 0.36, "unrelated": 0.6})}
+        self.assertFalse(ondemand._is_forced(inp, params))          # after the L1 passes, not before them
+        self.assertTrue(ondemand._is_forced(inp, {}))               # a sieve check that missed L1: first
+
+    def test_a_free_rerank_keeps_the_rescued_company(self):
+        seed_shenling(self.cfg, self.home)
+        res = self.run_rescue()
+        self.assertIn("SZSE:301018", [r["security_id"] for r in res["rows"]])
+        again = self.run_rescue(from_run=res["run_id"], rank_only=True, out_dir=self.home / "rank")
+        self.assertIn("SZSE:301018", [r["security_id"] for r in again["rows"]])     # judge / decide / reapply
+        from jevscreen import calib
+        with store.session(self.cfg, read_only=True) as con:
+            pool = {c["security_id"]: c for c in calib.load_pool(con, res["run_id"], res["params"])}
+        self.assertTrue(pool["SZSE:301018"]["l1_rescued"])
+        self.assertNotIn("l1_rescued", pool["LSE:GEAR"])               # profile only: not listable
+
+    def test_a_check_on_a_rescued_company_keeps_it_listed(self):
+        seed_shenling(self.cfg, self.home)
+        sieve = humanoid_sieve(examples=[{"security_id": "SZSE:301018", "want": "explicit", "source": "sieve",
+                                          "pin": False}])
+        res = self.run_rescue(sieve=sieve, reads=1)
+        self.assertIn("SZSE:301018", [r["security_id"] for r in res["rows"]])
+        self.assertEqual(res["layers"]["l2"]["l1_rescued"]["listed"], 1)
+
+    def test_no_rescue_while_l1_passes_wait_beyond_l2_max(self):
+        seed_shenling(self.cfg, self.home)
+        res = self.run_rescue(l2_max=1)
+        self.assertNotIn("l1_rescued", res["layers"]["l2"])
+        self.assertEqual(res["funnel"]["l2_sent"], 1)
+
+    def test_why_explains_a_listed_rescued_company(self):
+        from jevscreen import why
+        seed_shenling(self.cfg, self.home)
+        res = self.run_rescue()
+        out = why.run(self.cfg, ["SZSE:301018"], run_ref=res["run_id"])["results"][0]
+        text = json.dumps(out, ensure_ascii=False)
+        self.assertIn("年报原文", text)
+        self.assertNotIn("add_should_pass", [c.get("id") for c in out.get("changes") or []])
+
+    def test_the_cap_and_the_order(self):
+        by_key = {f"k{i}": {"security_id": f"X:{i}", "market_cap_usd": 1e9 + i,
+                            "desc": {"plain": "A full profile sentence that ends properly. " * 12}} for i in range(5)}
+        res = {f"k{i}": {"status": "ok", "label": "unrelated",
+                         "probs": {"core": 0.0, "adjacent": 0.25 + 0.05 * i, "unrelated": 0.7, "insufficient": 0.0}}
+               for i in range(5)}
+        got = screen.l1_rescued(res, by_key, set(), adjacent_min=0.6, core_min=0.0, limit=2)
+        self.assertEqual(got, ["k4", "k3"])                             # 0.45, 0.40 (k0 at 0.25 is below 0.30)
+        self.assertEqual(screen.l1_rescued(res, by_key, {"k4"}, adjacent_min=0.6, core_min=0.0), ["k3", "k2", "k1"])
+        # a thin profile adds the model's "cannot tell"
+        r = {"status": "ok", "probs": {"core": 0.0, "adjacent": 0.1, "unrelated": 0.5, "insufficient": 0.4}}
+        self.assertAlmostEqual(screen.l1_rescue_score(r, "Short."), 0.5)
+        self.assertAlmostEqual(screen.l1_rescue_score(r, "A full profile sentence that ends properly. " * 12), 0.1)
+        self.assertTrue(screen.profile_thin("x" * 500 + " and"))             # cut off mid-sentence
+        self.assertTrue(screen.profile_thin("x" * 500 + "…"))
+        self.assertFalse(screen.profile_thin("公司主要从事储能温控设备的研发和销售。" * 30))
+        self.assertIsNone(screen.l1_rescue_score({"status": "failed"}, "x"))
+
+    def test_a_stored_report_outranks_a_kept_profile_only_rescue(self):
+        by_key = {k: {"security_id": f"X:{k}", "market_cap_usd": 1e9, "desc": {"plain": "Short."}}
+                  for k in ("kept", "new")}
+        res = {k: {"status": "ok", "label": "unrelated",
+                   "probs": {"core": 0.0, "adjacent": 0.4, "unrelated": 0.6, "insufficient": 0.0}} for k in by_key}
+        kw = {"adjacent_min": 0.6, "core_min": 0.0, "limit": 1, "keep": ["kept"]}
+        self.assertEqual(screen.l1_rescued(res, by_key, set(), has_doc=["new"], **kw), ["new"])   # new evidence
+        self.assertEqual(screen.l1_rescued(res, by_key, set(), **kw), ["kept"])        # no new evidence: kept
+        self.assertEqual(screen.l1_rescued(res, by_key, set(), has_doc=["new", "kept"], **kw), ["kept"])
+
+    def test_a_later_version_reads_a_rescued_miss_whose_report_arrived(self):
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        base = self.run_rescue(l1_rescue=1, out_dir=self.home / "base")
+        self.assertEqual(base["params"]["l1_rescued"], ["isin:GB0000000003"])       # GearCo: profile only
+        seed_shenling(self.cfg, self.home)                                           # Shenling's report arrives
+        res = self.run_rescue(from_run=base["run_id"], l1_rescue=1)
+        self.assertEqual(res["params"]["l1_rescued"], ["isin:CNE100004HY4"])
+        self.assertIn("SZSE:301018", [r["security_id"] for r in res["rows"]])
+
+    def test_from_run_and_the_update_pass_inherit_the_rescue_setting(self):
+        seed_shenling(self.cfg, self.home)
+        base = self.run_rescue(l1_rescue=0, out_dir=self.home / "base")
+        for kw in ({}, {"supersedes": base["run_id"], "budget_usd": 0.05}):
+            with self.subTest(**kw):
+                res = self.run_rescue(from_run=base["run_id"], out_dir=self.home / "base", **kw)
+                self.assertEqual(res["params"]["l1_rescue"], 0)
+                self.assertNotIn("l1_rescued", res["layers"]["l2"])
+                self.assertNotIn("SZSE:301018", [r["security_id"] for r in res["rows"]])
+
+    def test_a_check_that_is_also_rescued_is_fetched_first(self):
+        from jevscreen import ondemand
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        sieve = humanoid_sieve(examples=[{"security_id": "SZSE:301018", "want": "explicit", "source": "sieve",
+                                          "pin": False}])
+        res = self.run_rescue(sieve=sieve, reads=1)
+        self.assertIn("isin:CNE100004HY4", res["params"]["l1_rescued"])             # a check, and rescued too
+        pl = ondemand.plan(self.cfg, res["run_id"])
+        self.assertTrue(pl.entries["isin:CNE100004HY4"]["forced"])
+        self.assertEqual(pl.order[0], "isin:CNE100004HY4")
+
+    def test_the_fetch_takes_rescued_misses_after_the_passes(self):
+        from jevscreen import ondemand
+
+        def l1(text: str, _base=l1_label) -> tuple[str, dict[str, float]]:
+            t = text.lower()
+            if "air conditioning" in t:     # a rescued miss whose p(core) is above a pass's
+                return "unrelated", {"core": 0.25, "adjacent": 0.1, "unrelated": 0.6, "insufficient": 0.05}
+            if "servo" in t:                # an adjacent pass with a low p(core)
+                return "adjacent", {"core": 0.05, "adjacent": 0.6, "unrelated": 0.3, "insufficient": 0.05}
+            return _base(text)
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        with mock.patch.object(sys.modules[__name__], "l1_label", l1):
+            res = self.run_screen()
+        self.assertEqual(sorted(res["params"]["l1_rescued"]), ["isin:CNE100004HY4", "isin:GB0000000003"])
+        pl = ondemand.plan(self.cfg, res["run_id"])
+        self.assertEqual(pl.order, ["isin:JP0000000002", "isin:CNE100004HY4", "isin:GB0000000003"])
+        self.assertEqual([pl.entries[k].get("rescued") for k in pl.order], [False, True, True])
+
+    def test_fetch_texts_and_questions_keep_rescued_misses_apart(self):
+        from jevscreen import ondemand
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        with store.session(self.cfg) as con:         # a US L1 miss with a cut-off profile: rescued, no 10-K stored
+            snap = con.execute("SELECT snapshot_id FROM snapshots WHERE source_id = 'tradingview_profile' LIMIT 1"
+                               ).fetchone()[0]
+            store.upsert_many(con, "securities", SEC_COLS, [
+                ("NYSE:COOL", "NYSE", "COOL", "CoolAir", "US0000000009", "United States", "stock", "common", True,
+                 "isin:US0000000009", snap, True)])
+            store.upsert_many(con, "market_daily", ("security_id", "as_of", "market_cap_usd", "avg_volume_10d",
+                                                    "snapshot_id"), [("NYSE:COOL", D, 2e9, 1e6, snap)])
+            store.upsert_many(con, "descriptions", ("security_id", "source_id", "company_key", "text",
+                                                    "snapshot_id"),
+                              [("NYSE:COOL", "tradingview_profile", "isin:US0000000009",
+                                "CoolAir makes air conditioning units for offices and", snap)])
+        res = self.run_rescue()
+        self.assertIn("isin:US0000000009", res["params"]["l1_rescued"])
+        pl = ondemand.plan(self.cfg, res["run_id"])
+        self.assertEqual(pl.skip_counts().get("no_key_sec"), 1)                    # only CoolAir needs the SEC
+        self.assertEqual(ondemand.questions_for(pl, pl.skip_counts()), [])          # it missed step 1: not asked
+        zh, en = ondemand.start_line(pl, "zh", 120), ondemand.start_line(pl, "en", 120)
+        self.assertIn("4 家公司本地没有年报原文（通过第一轮的 1 家", zh)
+        self.assertIn("3 家", zh)
+        self.assertIn("4 companies have no annual-report text stored (1 passed the first round, 3 missed it", en)
+
+    def test_no_band_or_facet_reads_for_a_rescued_miss_read_on_its_profile(self):
+        def l2(text: str, _base=l2_label) -> tuple[str, dict[str, float]]:
+            if "air conditioning" in text.lower():     # the profile reads as related (in the band)
+                return "partial", {"explicit": 0.2, "partial": 0.4, "contradicted": 0.1, "insufficient": 0.3}
+            return _base(text)
+        seed_shenling(self.cfg, self.home, with_doc=False)
+        with mock.patch.object(sys.modules[__name__], "l2_label", l2):
+            res = self.run_rescue(reads=3, facet_scan=True, sieve="none")
+        self.assertIn("isin:CNE100004HY4", res["params"]["l1_rescued"])
+        extra = [it.item_id for c in self.log if c.layer in ("l2", "facet") for items, q in c.classified
+                 if getattr(q, "read", 0) or q.key.startswith("facet_") for it in items]
+        self.assertTrue(res["facets"])                                  # the facet layer ran for the others
+        self.assertNotIn("isin:CNE100004HY4", extra)
+        self.assertNotIn("isin:CNE100004HY4", res["facets"])
+        self.assertIn("SZSE:301018", [g["security_id"] for g in res["gaps"]["l2_profile_only"]])
+
+
 class TestFromRun(StoreCase):
     def base(self, **kw):
         kw.setdefault("jev_factory", band_factory(self.log))
@@ -1672,7 +1931,10 @@ class TestFromRun(StoreCase):
     def test_dry_run_from_run_estimates_the_real_passes(self):
         base = self.base()
         res = self.run_screen(from_run=base["run_id"], dry_run=True, out_dir=self.home / "d")
-        self.assertEqual(res["layers"]["l2"]["inputs"], base["funnel"]["l1_pass"])
+        # the real passes, plus the base run's rescued L1 misses (GearCo: gearbox, core + adjacent 0.4)
+        self.assertEqual(res["layers"]["l2"]["inputs"],
+                         base["funnel"]["l1_pass"] + base["layers"]["l2"]["l1_rescued"]["read"])
+        self.assertEqual(base["layers"]["l2"]["l1_rescued"], {"read": 1, "listed": 0})
         self.assertEqual(res["layers"]["l1"]["estimate"]["est_cost_usd"], 0.0)
 
 

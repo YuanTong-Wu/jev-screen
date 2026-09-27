@@ -72,6 +72,10 @@ L2_VERIFIED = ("explicit", "partial")   # only these are ranked; the rest is 'un
 L2_PROFILE_FACTOR = 0.5      # an explicit/partial label read from a profile (no annual report) weighs half
 PROFILE_CAP_ZH = "仅简介"      # a profile-only L2 label is at most partial (never explicit) and is marked so
 SEC_MAX_AGE_DAYS = 3 * 365 + 1   # older annual-report text is flagged (l2_doc_stale) and listed as a gap
+L1_RESCUE_MIN = 0.30         # an L1 miss with p_core + p_adjacent (+ p_insufficient on a thin profile) >= this ...
+L1_RESCUE_MAX = 20           # ... is read by L2 anyway (at most this many, highest first): L1 saw only a profile
+THIN_PROFILE_CHARS = 400     # a profile shorter than this (or cut off mid-sentence) is thin
+THIN_PROFILE_CHARS_CJK = 150  # same for a Chinese / Japanese / Korean profile (more per character)
 L1_WEIGHT = 2.0              # score += L1_WEIGHT * p_core
 MCAP_TIEBREAK = 0.01         # score += MCAP_TIEBREAK * log10(market cap)
 EV_WEIGHTS: dict[str, float] = {"explicit": 3.0, "partial": 1.5}   # score_ev: mean P(label) x weight (--rank ev)
@@ -863,6 +867,53 @@ def l1_passes(res: dict | None, *, adjacent_min: float = L1_ADJACENT_MIN, core_m
     if label == "adjacent":
         return (probs.get("core") or 0.0) + (probs.get("adjacent") or 0.0) >= adjacent_min
     return False
+
+
+_SENTENCE_END = re.compile(r"[.!?。！？)）\"”'」』]$")
+_CJK_CHAR = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+
+
+def profile_thin(plain: str | None) -> bool:
+    """A profile too short to judge from (< THIN_PROFILE_CHARS, THIN_PROFILE_CHARS_CJK for a mostly CJK one) or cut
+    off (ends with an ellipsis or mid-sentence)."""
+    t = (plain or "").strip()
+    floor = THIN_PROFILE_CHARS_CJK if len(_CJK_CHAR.findall(t)) * 3 > len(t) else THIN_PROFILE_CHARS
+    return len(t) < floor or t.endswith(("…", "...")) or not _SENTENCE_END.search(t)
+
+
+def l1_rescue_score(res: dict | None, plain: str | None) -> float | None:
+    """How much an L1 answer leans towards the idea: p_core + p_adjacent, plus p_insufficient when the profile is
+    thin (the model could not tell from it). None for a failed answer."""
+    if not res or res.get("status") != "ok":
+        return None
+    pr = res.get("probs") or {}
+    s = float(pr.get("core") or 0.0) + float(pr.get("adjacent") or 0.0)
+    if profile_thin(plain):
+        s += float(pr.get("insufficient") or 0.0)
+    return s
+
+
+def l1_rescued(l1_res: dict[str, dict], by_key: dict[str, dict], skip: set[str], *, adjacent_min: float,
+               core_min: float, limit: int = L1_RESCUE_MAX, keep: Iterable[str] = (),
+               has_doc: Iterable[str] = ()) -> list[str]:
+    """P0-2: L1 reads only a profile, and a thin or one-sided profile (an air-conditioning maker whose energy-storage
+    cooling is only in its annual report) must not end a company there. The L1 misses whose l1_rescue_score is
+    >= L1_RESCUE_MIN are read by L2 anyway (its official annual-report text when stored; else the on-demand fetch
+    gets it), at most `limit`, in this order: a stored annual report first (`has_doc`: listable in this run), then
+    within each group the `keep` names (the base run's rescued: a from_run drops one only for a candidate that has a
+    stored report while it has none), then score and market cap. They are ranked only on annual-report evidence
+    (never on the same profile L1 rejected)."""
+    keep, has_doc = set(keep), set(has_doc)
+    cand = []
+    for k, r in l1_res.items():
+        c = by_key.get(k)
+        if c is None or k in skip or l1_passes(r, adjacent_min=adjacent_min, core_min=core_min):
+            continue
+        s = l1_rescue_score(r, (c.get("desc") or {}).get("plain"))
+        if s is not None and s >= L1_RESCUE_MIN:
+            cand.append((k not in has_doc, k not in keep, -s, -(c.get("market_cap_usd") or 0.0), c["security_id"],
+                         k))
+    return [k for *_x, k in sorted(cand)[:max(0, limit)]]
 
 
 def p_core_of(res: dict | None) -> float | None:
@@ -1785,7 +1836,7 @@ SCREEN_DEFAULTS: dict[str, Any] = {
     "min_mcap_usd": 2e8, "min_avg_volume": None, "countries": None, "max_out": 40, "budget_usd": 3.0, "l2_max": 600,
     "keywords": None, "l1_adjacent_min": L1_ADJACENT_MIN, "l1_core_min": L1_CORE_MIN, "keywords_zh": None,
     "keywords_ja": None, "keywords_ko": None, "translate": True, "reads": L2_READS_DEFAULT, "rank": "label",
-    "shells": "drop"}
+    "shells": "drop", "l1_rescue": L1_RESCUE_MAX}
 
 
 def resolve_from_run(from_run: str | os.PathLike | None) -> str | None:
@@ -1965,7 +2016,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
            rank: str = UNSET, shells: str = UNSET, supersedes: str | None = None,
            fetch_info: dict[str, Any] | None = None, idea_en: str | None = UNSET,
            progress: Callable | None = None, l1_new: bool = False, facet_scan: Any = "auto",
-           rank_only: bool = False, change_kind: str | None = None) -> dict[str, Any]:
+           rank_only: bool = False, change_kind: str | None = None,
+           l1_rescue: int = UNSET) -> dict[str, Any]:
     """Run one screen. Returns the result dict that is also written to results.json.
 
     result['status']: ok | partial (some L2 skipped/failed, band reads skipped, fundamentals unreadable) |
@@ -1989,6 +2041,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     l1_new=True (requires from_run; the incremental re-rank after a description fill): the described companies that
     have no L1 answer in the base run (newly described) are read by L1 now, everyone else keeps the base run's L1
     answer ($0, never re-read or re-priced); L2 then reads the passes as usual (unchanged inputs are Jev cache hits).
+    l1_rescue: at most this many L1 misses are read by L2 anyway (l1_rescued; default L1_RESCUE_MAX, 0 turns it off);
+    a from_run inherits it like the other SCREEN_DEFAULTS.
     sieve: None / 'none' | 'auto' | a path | a dict (resolve_sieve): its rules extend the L2 criteria
     (build_l2_question), its keywords extend / down-weight the excerpt terms, its pins apply in the ranking step
     (pin_and_rank) and its pinned / checked companies are always read by L2 (l2_forced), even when L1 missed them.
@@ -2033,7 +2087,7 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
              "max_out": max_out, "budget_usd": budget_usd, "l2_max": l2_max, "keywords": keywords,
              "l1_adjacent_min": l1_adjacent_min, "l1_core_min": l1_core_min, "keywords_zh": keywords_zh,
              "keywords_ja": keywords_ja, "keywords_ko": keywords_ko, "translate": translate, "reads": reads,
-             "rank": rank, "shells": UNSET if shells is None else shells}
+             "rank": rank, "shells": UNSET if shells is None else shells, "l1_rescue": l1_rescue}
     base = None
     from_run = resolve_from_run(from_run)
     if supersedes is not None and supersedes != from_run:
@@ -2064,6 +2118,7 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     l1_adjacent_min, l1_core_min = eff["l1_adjacent_min"], eff["l1_core_min"]
     keywords_zh, keywords_ja, keywords_ko = eff["keywords_zh"], eff["keywords_ja"], eff["keywords_ko"]
     translate, reads, rank, shells_mode = eff["translate"], eff["reads"], eff["rank"], eff["shells"]
+    l1_rescue = eff["l1_rescue"]
     _check_params(min_mcap_usd, min_avg_volume, max_out, budget_usd, l2_max, reads, read_offset, rank)
     if shells_mode not in _shells.MODES:
         raise ValueError(f"shells must be one of {', '.join(_shells.MODES)} (got {shells_mode!r})")
@@ -2093,7 +2148,7 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
               "sieve_path": (str(sv_path) if sv_path else "<inline>" if sv is not None else None),
               "sieve_version": (sv or {}).get("version"), "sieve_sha256": _sieve_sha(sv, sv_path),
               "shells": shells_mode, "shells_version": _shells.SHELLS_VERSION, "facet_scan": facet_on,
-              "facets_sha": fsha}
+              "facets_sha": fsha, "l1_rescue": l1_rescue}
     if supersedes is not None:
         # the update pass runs on a small cap; a later from_run of this run inherits the user's own budget
         params.update(budget_usd=inherited.get("budget_usd", SCREEN_DEFAULTS["budget_usd"]),
@@ -2200,7 +2255,7 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
                               l1_adjacent_min=l1_adjacent_min, l1_core_min=l1_core_min,
                               retry_uncertain=retry_uncertain, clients=clients, reads=reads, read_offset=read_offset,
                               rank=rank, base=base, sieve=sv, sieve_path=sv_path, sieve_hint=sieve_hint, pre=pre,
-                              supersedes=supersedes, fetch_info=fetch_info, l1_new=l1_new,
+                              supersedes=supersedes, fetch_info=fetch_info, l1_new=l1_new, l1_rescue=l1_rescue,
                               progress=progress, fquestions=fquestions, base_facets=base_facets, agent=agent,
                               facet_on=facet_on, fsha=fsha)
     except BaseException as e:
@@ -2312,7 +2367,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                    l1_adjacent_min, l1_core_min, retry_uncertain, clients, kinfo=None, reads=1, read_offset=0,
                    rank="label", base=None, sieve=None, sieve_path=None, sieve_hint=None, pre=None,
                    supersedes=None, fetch_info=None, progress=None, l1_new=False, fquestions=None,
-                   base_facets=None, agent=None, facet_on=False, fsha=None) -> dict[str, Any]:
+                   base_facets=None, agent=None, facet_on=False, fsha=None,
+                   l1_rescue=L1_RESCUE_MAX) -> dict[str, Any]:
     _, Item = _jev_types()
     from . import scope as _scope
     fquestions = fquestions or {}
@@ -2396,6 +2452,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     l2_sel: list[dict] = []
     l2_overflow: list[dict] = []
     forced_keys: list[str] = []
+    rescued_keys: list[str] = []
+    unlistable: set[str] = set()
     band: dict[str, Any] | None = None
     dry_budget: dict[str, Any] | None = None
     sp_info: dict[str, dict[str, Any]] = {}
@@ -2453,6 +2511,16 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         hypo = l1_passes_sorted()[:max(0, l2_max)] if base is not None else \
             sorted(described, key=lambda c: -(c["market_cap_usd"] or 0))[:max(0, l2_max)]
         hypo += [c for c in forced_cs if c not in hypo]
+        # + the rescued L1 misses (l1_rescued): the base run's real ones, else an upper bound of l1_rescue
+        hk = {c["company_key"] for c in hypo}
+        if base is not None:
+            hypo += [by_key[k] for k in l1_rescued(l1_res, by_key, hk, adjacent_min=l1_adjacent_min,
+                                                   core_min=l1_core_min, limit=l1_rescue,
+                                                   keep=(base.get("params") or {}).get("l1_rescued") or (),
+                                                   has_doc={k for k in by_key if docs.get(k)})]
+        else:
+            hypo += sorted((c for c in described if c["company_key"] not in hk),
+                           key=lambda c: -(c["market_cap_usd"] or 0))[:max(0, l1_rescue)]
         hypo_items = []
         for c in hypo:
             inp = _l2_input(c, docs.get(c["company_key"]), terms_by_lang, today, weak_by_lang)
@@ -2531,12 +2599,24 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         sel_keys = {c["company_key"] for c in l2_sel}
         forced_keys = [c["company_key"] for c in forced_cs if c["company_key"] not in sel_keys]
         l2_overflow = [c for c in l2_overflow if c["company_key"] not in forced_keys]
-        for c in l2_sel + [by_key[k] for k in forced_keys]:
+        # L1 misses read anyway (sieve checks among them too: they are read already, and listable when rescued);
+        # never while L1 passes wait beyond l2_max
+        rescued_keys = l1_rescued(l1_res, by_key, {c["company_key"] for c in passes}, adjacent_min=l1_adjacent_min,
+                                  core_min=l1_core_min, limit=min(l1_rescue, max(0, l2_max - len(l2_sel))),
+                                  keep=((base or {}).get("params") or {}).get("l1_rescued") or (),
+                                  has_doc={k for k in by_key if docs.get(k)})
+        if rescued_keys:
+            params["l1_rescued"] = list(rescued_keys)     # results.json: calib.load_pool / rank_only list them too
+            if forced_keys:        # ondemand._is_forced: a sieve check that is also rescued is still fetched first
+                params["l2_forced"] = list(forced_keys)
+        for c in l2_sel + [by_key[k] for k in forced_keys + [x for x in rescued_keys if x not in forced_keys]]:
             inp = _l2_input(c, docs.get(c["company_key"]), terms_by_lang, today, weak_by_lang)
             if fetch_info is not None:
                 inp["doc_fetch"] = _doc_fetch(c["company_key"], inp, fetch_info)
             l2_inputs[c["company_key"]] = inp
             l2_items.append(l2_item(c, inp))
+        # a rescued L1 miss read on its profile is never listed (rescued_ok): one read, no band or facet reads
+        unlistable = {k for k in rescued_keys if k not in forced_keys and l2_inputs[k].get("evidence") == "profile"}
         l1_spent, _ = _client_stats(l1_client)
         remaining = budget_usd - l1_spent
         layers["l2"]["budget_usd"] = round(max(0.0, remaining), 6)
@@ -2561,7 +2641,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                         errors.append(f"l2: {err}")
                     l2_res = {r["item_id"]: r for r in res}
         if extra_idx and l2_res:
-            band = _l2_band_reads(clients["l2"] if base_err is None else None, l2_items, l2_res, q2, reads,
+            band = _l2_band_reads(clients["l2"] if base_err is None else None,
+                                  [it for it in l2_items if it.item_id not in unlistable], l2_res, q2, reads,
                                   read_offset)
             if band["error"]:
                 errors.append(f"l2 band reads: {band['error']}")
@@ -2622,7 +2703,7 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     if not dry_run and facet_on and fquestions:
         tf = time.monotonic()
         verified_keys = [k for k, r in l2_res.items() if r.get("status") == "ok" and r.get("label") in L2_VERIFIED
-                         and k in l2_inputs and k in by_key]
+                         and k in l2_inputs and k in by_key and k not in unlistable]
         verified_keys.sort(key=lambda k: (-score_of(l2_res[k]["label"], p_core_of(l1_res.get(k)),
                                                     by_key[k]["market_cap_usd"], l2_inputs[k].get("evidence")),
                                           -(by_key[k]["market_cap_usd"] or 0), by_key[k]["security_id"]))
@@ -2661,6 +2742,11 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     pass_keys = {c["company_key"] for c in passes}
     cands = passes + [by_key[k] for k in forced_keys if k not in pass_keys and _pin_of(pins, by_key[k])
                       and by_key[k].get("extra_stage") in (None, "no_description")]
+    # rescued L1 misses: ranked only when L2 verified them on annual-report text (listed, never 'unverified')
+    rescued_ok = [k for k in rescued_keys if (l2_res.get(k) or {}).get("status") == "ok"
+                  and (l2_res.get(k) or {}).get("label") in L2_VERIFIED
+                  and (l2_inputs.get(k) or {}).get("evidence") == "annual_report"]
+    cands += [by_key[k] for k in rescued_ok if by_key[k] not in cands]
     for c in extras:
         if _pin_of(pins, c) and c.get("extra_stage") != "no_description":
             notes.append(f"校准：{c['name'] or c['security_id']} 在这次筛选条件以外（{STAGE_ZH.get(c['extra_stage'])}）："
@@ -2690,6 +2776,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                  "l2_evidence": evidence, "score": score,
                  "evidence_sha": (inp or {}).get("evidence_sha") if l2_ok else None,
                  "_x": (c, r1, r2, inp if l2_ok else None, l2_status, agg, k in forced_keys)}
+        if k in rescued_ok and k not in pass_keys:
+            entry["l1_rescued"] = True
         if l2_label in L2_VERIFIED:
             verified.append(entry)
         elif l2_label == "contradicted" and not _pin_of(pins, c):
@@ -2755,7 +2843,7 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
             "l2_should_pass": sp_info.get(c["company_key"]),
             "doc_fetch": (l2_inputs.get(c["company_key"]) or {}).get("doc_fetch"),
         }
-        for k in ("user_note", "user_chip", "below_cut", "user_pin_via", "user_pin_at") + SCOPE_ROW_KEYS:
+        for k in ("user_note", "user_chip", "below_cut", "user_pin_via", "user_pin_at", "l1_rescued") + SCOPE_ROW_KEYS:
             if e.get(k) is not None:
                 row[k] = e[k]
         fl = (hits.get(c["company_key"]) or {}).get("flags")
@@ -2791,9 +2879,11 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                 notes.append(f"{layer.upper()} ledger: {le}")
     layers["l1"]["inputs"] = len(l1_items)
     if not dry_run:
-        layers["l2"]["inputs"] = len(l2_sel) + len(forced_keys)
+        layers["l2"]["inputs"] = len(l2_sel) + len(set(forced_keys) | set(rescued_keys))
         if forced_keys:
             layers["l2"]["forced"] = len(forced_keys)
+        if rescued_keys:
+            layers["l2"]["l1_rescued"] = {"read": len(rescued_keys), "listed": len(rescued_ok)}
     layers["l2"]["sec_inputs"] = sum(1 for i in l2_inputs.values() if i["evidence"] == "annual_report")
     layers["l2"]["profile_inputs"] = sum(1 for i in l2_inputs.values() if i["evidence"] == "profile")
     layers["l2"]["keyword_excerpts"] = sum(1 for i in l2_inputs.values() if i.get("keyword_hit"))
@@ -2932,8 +3022,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     l2_lines = None if dry_run else [_l2_input_line(by_key[it.item_id], l2_inputs[it.item_id]) for it in l2_items]
     ledger = None
     if pre.get("all_rows") is not None:
-        ledger = _ledger(result, pre, by_key, l1_res, l2_res, l2_agg, l2_inputs, base,
-                         adjacent_min=l1_adjacent_min, core_min=l1_core_min)
+        ledger = _ledger(result, {**pre, "rescued": set(rescued_keys)}, by_key, l1_res, l2_res, l2_agg,
+                         l2_inputs, base, adjacent_min=l1_adjacent_min, core_min=l1_core_min)
     written = True
     if supersedes is not None:
         written = supersede_allowed(status, (base or {}).get("status"))
@@ -2948,6 +3038,12 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                         "cost_usd=?, note=?" + ("" if written else ", output_dir=NULL") + " WHERE run_id=?",
                         [finished, status, funnel["l1_sent"], funnel["l1_pass"], funnel["l2_sent"], funnel["output"],
                          cost, "; ".join(errors + warnings + notes)[:2000] or None, run_id])
+            if rescued_keys:        # the on-demand fetch orders them after the L1 passes (ondemand.plan)
+                row = con.execute("SELECT params_json FROM screen_runs WHERE run_id = ?", [run_id]).fetchone()
+                pj = json.loads((row or [None])[0] or "{}")
+                pj.update({k: params[k] for k in ("l1_rescued", "l2_forced") if k in params})
+                con.execute("UPDATE screen_runs SET params_json = ? WHERE run_id = ?",
+                            [json.dumps(pj, ensure_ascii=False, sort_keys=True), run_id])
         _db_write(cfg, fin, notes, "screen_runs finish")
     return result
 
@@ -3020,10 +3116,12 @@ def _ledger(result: dict[str, Any], pre: dict[str, Any], by_key: dict[str, dict]
     | l1_loaded (answer taken from the --from-run base) | l1_not_sent (dry run, budget, failure); m: market cap in whole
     USD; r: the shells rules that matched (with 'kept': protected | keep when it was not dropped); f: marks; e: the
     evidence (pattern id + character offsets, never text); l1: {lab, p: [core, adjacent, unrelated, insufficient],
-    ok (passes), src, st}; l2: {lab, st, pp (mean P(explicit)+P(partial)), ev, src}; x: the filter a forced sieve
+    ok (passes), src, st, rs (an L1 miss read by L2 anyway: l1_rescued)}; l2: {lab, st, pp (mean
+    P(explicit)+P(partial)), ev, src}; x: the filter a forced sieve
     company failed (read by L2 anyway)."""
     from . import keywords
     hits, stage, drops = pre.get("hits") or {}, pre.get("stage") or {}, pre.get("drops") or set()
+    rescued = pre.get("rescued") or set()
     extras = {c["company_key"]: c["extra_stage"] for c in pre.get("extras") or []}
     p = result["params"]
     as_of = next((r["market_as_of"] for r in pre["all_rows"] if r.get("market_as_of") is not None), None)
@@ -3051,6 +3149,8 @@ def _ledger(result: dict[str, Any], pre: dict[str, Any], by_key: dict[str, dict]
                             "src": "+".join((by_key.get(k) or {}).get("desc", {}).get("sources") or []) or None}
                 if x.get("status") != "ok":
                     ln["l1"]["st"] = x.get("status")
+                if k in rescued:
+                    ln["l1"]["rs"] = True         # an L1 miss read by L2 anyway (l1_rescued)
         ln["s"] = st
         h = hits.get(k)
         if h:

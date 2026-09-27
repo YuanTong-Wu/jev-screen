@@ -871,6 +871,8 @@ def _merge_candidates(result: dict[str, Any], pool: Iterable[dict[str, Any]] | N
 
 
 def _l1_pass(c: dict[str, Any]) -> bool:
+    if c.get("l1_rescued"):          # an L1 miss screen listed on annual-report evidence (screen.l1_rescued)
+        return True
     if c.get("l1_pass") is not None:
         return bool(c["l1_pass"])
     return not c.get("l2_forced")
@@ -1210,6 +1212,7 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
         descs.setdefault(ck, []).append((src, text, bool(own)))
     adj_min = params.get("l1_adjacent_min", screen.L1_ADJACENT_MIN)
     core_min = params.get("l1_core_min", screen.L1_CORE_MIN)
+    rescued = set(params.get("l1_rescued") or ())
     out = []
     for ck in keys:
         r2, r1 = l2[ck], l1.get(ck)
@@ -1234,6 +1237,8 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
             "l2_edge": (screen.L2_EDGE[0] <= p_pos < screen.L2_EDGE[1]) if (ok and p_pos is not None) else None,
             "l2_read_detail": r2["reads"], "evidence_url": r2["evidence_url"], "l2_input_tier": r2["input_tier"],
             "l1_description": (desc or {}).get("plain"), "l1_input_tier": (desc or {}).get("tier")})
+        if ck in rescued and ok and r2["label"] in screen.L2_VERIFIED and r2["input_source"] != "profile":
+            out[-1]["l1_rescued"] = True     # listable as screen lists it (annual-report evidence only)
     return out
 
 

@@ -106,6 +106,8 @@ FILL_MIN_SHARE = 0.30        # the fill question: >= 30% of the idea's market ha
 FILL_TOP, FILL_MIN_TOP = 100, 3      # ... or >= 3 of its 100 largest companies have none
 FILL_NAMES = 5               # the largest missing companies named in the question
 FILL_ITEM_USD = 0.00005      # re-rank estimate per newly described company (L1 ~$0.000033 + a share of L2 reads)
+FILL_JOIN_MIN_S = 20 * 60      # the default fill: the first read waits at most max(this, 3 x its estimate) for it
+AUTO_CN_SHARE, AUTO_CN_MIN = 0.40, 3     # an English idea whose first-read passes are >= 40% (and >= 3) A-shares
 FILL_MARKET_WORDS = {"CN": ("中国", "Chinese"), "HK": ("香港", "Hong Kong"), "TW": ("台湾", "Taiwanese"),
                      "JP": ("日本", "Japanese"), "KR": ("韩国", "Korean"), "IN": ("印度", "Indian")}
 EXPECTED_RANGE = (0.2, 0.4)
@@ -139,6 +141,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "need_dk": "需要你决定{n}件事，并设置一个 key：", "need_d": "需要你决定{n}件事：", "need_k": "还需要你设置一个 key：",
         "budget_q": "我会这样理解你的想法（发给 AI 的英文）：'{idea_en}'。这次最多花 ${x}（约 ¥{y}）可以吗？预计约 ${est}。"
                     "如果中途中断，重试可能多花不到 1 美分。开始前会先用约 $0.0001 试一下 key 能不能付费。",
+        "budget_q_early": "这次最多花 ${x}（约 ¥{y}）可以吗？预计约 ${est}。发给 AI 的英文句子写好后会一起给你看。"
+                          "开始前会先用约 $0.0001 试一下 key 能不能付费。",
         "budget_topup_q": "预算用完了：结果页先给出已核对的部分。继续需要再同意约 ${more}，也就是把总上限提高到 ${total}。可以吗？",
         "over_q": "预计要预留 ${r}，超过你同意的 ${x}。可以缩小范围：{alts}；或者明确同意一个更高的上限，比如 ${r_up}。",
         "uncertain_q": "上次中断时有 {n} 条请求结果不明，重发约 ${c}（超过 1 美分）。同意把总上限提高到 ${total} 吗？",
@@ -180,7 +184,12 @@ STRINGS: dict[str, dict[str, str]] = {
                   "{names}。要补吗？补简介免费、在后台跑，约 {m} 分钟；补完只让 AI 初读新补的这些公司并重新排序，"
                   "约 ${est}（从你已同意的 ${x} 里扣，剩 ${rem}）。说“不用”也行，不影响现在这份结果。",
         "fill_names_related": "，其中和入选公司同一行业的有 {names}",
+        "fill_names_idea_words": "，其中和你的想法相关的有 {names}",
         "fill_names_largest": "，其中市值较大的有 {names}",
+        "fill_default_note": "你的想法以{market}公司为主：缺简介的{market}公司会在后台顺便免费补上（在你准备 key 的时候进行，"
+                             "约 5–10 分钟），AI 初读时一起读。不想补就说一声。",
+        "fill_default_done": "后台已免费补了 {k} 家{market}公司的简介，这次 AI 初读已经一起读了。",
+        "fill_default_failed": "后台补{market}公司简介没有完成，这次结果没有包括它们（可以在下面的问题里再补）。",
         "fill_running": "[补简介] 正在后台补{market}公司的简介（约 {n} 家，约 {m} 分钟，免费）…",
         "fill_ok": "[补简介] 补到 {k} 家公司的简介，{s} 秒",
         "fill_screen": "[补简介] AI 初读新补的 {n} 家公司并重新排序…",
@@ -208,10 +217,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "ev_annual_report": "年报原文", "ev_profile": "只有简介",
         "ev_gap_annual_report": "年报摘录未提到（缺口）", "ev_gap_profile": "简介摘录未提到（缺口）",
         "ev_user": "按你的判断（AI 没从原文确认）", "mark_user": "，你的判断", "mark_edge": "，边缘",
+        "mark_unchecked": "，未核对",
         "next_idea": "换一个想法：直接告诉你的 AI（约 4 分钟，约 $0.25，不用再下载）",
         "review_wait": "结果出来了，我正在逐家核对年报和简介的摘录（约 2–4 分钟），核对完再给你看名单。",
         "review_page_line": "页面上「帮 AI 把范围定准」里点答案，把生成的那行发给我就行（免费，几秒更新）。",
         "review_timeout": "你的 AI 没有完成核对，先给你系统的名单。",
+        "review_wait_new": "名单有变化：有 {n} 家新进入名单、我还没核对过，我先逐家核对它们的摘录（约 1–2 分钟），核对完再给你看名单。",
         "ask_label": "问题 {i}：",
         "ask_optional": "（可选）",
         "next_gap_cn": "补中国公司简介：约 {n} 家，约 {m} 分钟，可后台",
@@ -263,6 +274,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "budget_q": "I will put your idea to the AI as: '{idea_en}'. OK to spend up to ${x} on it? Expected about ${est}. "
                     "If the run is interrupted, retrying may cost under 1 cent extra. First, a tiny paid request (about "
                     "$0.0001) checks that the key can pay.",
+        "budget_q_early": "OK to spend up to ${x} on this idea? Expected about ${est}. You will see the English "
+                          "sentence sent to the AI with this question. First, a tiny paid request (about $0.0001) "
+                          "checks that the key can pay.",
         "budget_topup_q": "The budget ran out: the page shows what was checked so far. Continuing needs about ${more} more, "
                           "i.e. a total cap of ${total}. OK?",
         "over_q": "This needs a reservation of ${r}, above the ${x} you approved. Narrow it: {alts}; or explicitly approve "
@@ -319,7 +333,15 @@ STRINGS: dict[str, dict[str, str]] = {
                   "and re-ranks, about ${est} (out of the ${x} you approved; ${rem} left). 'No' is fine too; the "
                   "current result stays as it is.",
         "fill_names_related": "; those in the same industries as the listed companies include {names}",
+        "fill_names_idea_words": "; those that match your idea include {names}",
         "fill_names_largest": "; larger ones include {names}",
+        "fill_default_note": "Your idea points at {market} companies: missing {market} company profiles are filled for free "
+                             "in the background (while you set up the key, about 5-10 minutes) and read with the "
+                             "rest. Say so if you do not want that.",
+        "fill_default_done": "{k} missing {market} company profiles were filled for free in the background and read "
+                             "in this first pass.",
+        "fill_default_failed": "The background fill of {market} company profiles did not finish, so this result does "
+                               "not include them (the question below can fill them).",
         "fill_running": "[Fill profiles] Filling {market} company profiles in the background (about {n} companies, about "
                         "{m} min, free)…",
         "fill_ok": "[Fill profiles] Got profiles for {k} companies, {s} s",
@@ -356,16 +378,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "ev_gap_annual_report": "the filing excerpt does not mention it (gap)",
         "ev_gap_profile": "the profile excerpt does not mention it (gap)",
         "ev_user": "your call (the AI did not confirm it from the text)", "mark_user": ", your call",
-        "mark_edge": ", borderline",
+        "mark_edge": ", borderline", "mark_unchecked": ", not yet checked",
         "next_idea": "Try another idea: just tell your AI (about 4 min, about $0.25, no downloads)",
         "review_wait": "The list is ready; I'm checking the annual-report and profile excerpts company by company "
                        "(about 2-4 minutes) before I show it to you.",
         "review_page_line": "On the page, pick your answers under \"Help the AI get the scope right\" and send me the "
                             "line it builds (free; updates in seconds).",
         "review_timeout": "Your AI did not finish checking the excerpts; here is the system's list for now.",
+        "review_wait_new": "The list changed: {n} companies new to it have not been checked yet. I'm checking their "
+                           "excerpts first (about 1-2 minutes), then I'll show you the list.",
         "ask_label": "Q{i}. ",
         "ask_optional": " (optional)",
-        "next_gap_cn": "Fill Chinese company profiles: about {n} companies, about {m} min, can run in the background",
+        "next_gap_cn": "Fill Chinese company profiles: about {n} {companies}, about {m} min, can run in the background",
         "next_gap_sec": "Check US companies against annual reports: give the SEC a contact name and e-mail, sent with "
                         "each download (optional, no account)",
         "budget_exhausted": "The budget ran out: the page shows the {n} companies checked so far. Continuing needs about "
@@ -940,10 +964,54 @@ def apply_flags(cfg, job: dict[str, Any], flags: dict[str, Any]) -> list[str]:
     fd = flags.get("fill_descriptions")
     if fd in ("yes", "no") and job.get("fill_offer") and not (job.get("fill") or {}).get("answer"):
         job["fill"] = {"answer": fd, "at": iso(now_utc()), "offer": job["fill_offer"]}
+    elif fd in ("yes", "no"):
+        was = job.get("fill_pref")
+        job["fill_pref"] = fd            # the default fill: 'no' is the opt-out (a running fill is stopped)
+        f = job.get("fill_default") or {}
+        if fd == "no" and f.get("state") == "running":
+            stop_fill(cfg, job["idea_key"], f.get("pid"))    # it flushes what it has; the worker records the end
+        elif fd == "yes" and was == "no":
+            _yes_after_opt_out(job, f)
     if flags.get("new_run") and job.get("state") in ("done", "failed"):
         reset_steps(job, "estimate", "screen", "fetch", "finish")
         job.update(result=None, state="new", failure=None)
     return problems
+
+
+def _yes_after_opt_out(job: dict[str, Any], f: dict[str, Any]) -> None:
+    """--fill-descriptions yes after the human's no to the default fill: before the first read the default fill is
+    decided again (it runs before that read); after a result with missing China profiles the fill and its re-rank
+    start as after a yes to the fill question (the front starts the worker); else a note says nothing is filled."""
+    if not step_done(job, "screen"):
+        if f.get("state") == "opted_out" or f.get("reason") == "opted_out":
+            job["fill_default"] = None
+        return
+    if job.get("state") != "done" or (job.get("fill") or {}).get("answer"):
+        return
+    g = next((x for x in (job.get("result") or {}).get("gaps") or [] if x.get("id") == "no_description"
+              and x.get("cn")), None)
+    if g is None:
+        note = "--fill-descriptions yes: no Chinese company of this result lacks a profile; nothing to fill"
+        job["notes"] = [n for n in job.get("notes") or [] if n != note] + [note]
+        return
+    job["fill"] = {"answer": "yes", "at": iso(now_utc()),
+                   "offer": {"country": "CN", "missing": g["cn"], "minutes": g.get("minutes"),
+                             "floor_usd": job.get("min_mcap_usd")}}
+
+
+def fill_in_scope(job: dict[str, Any]) -> bool:
+    """Whether the default fill's market is still one this idea screens (an 'over' alternative or another
+    --countries may have narrowed it to other markets after the fill started). Matched as the screen matches its
+    --countries (CN, China and the region China all cover China)."""
+    from . import screen
+    cs = [str(c) for c in job.get("countries") or [] if str(c).strip()]
+    if not cs:
+        return True
+    market = (job.get("fill_default") or {}).get("market") or "CN"
+    try:
+        return screen.country_matcher(cs)(screen.ISO2_COUNTRY.get(market, market), None)
+    except ValueError:          # a token only the store's names know (a typo fails the screen itself): kept
+        return True
 
 
 def take_facets(job: dict[str, Any], raw: Any) -> None:
@@ -1237,6 +1305,8 @@ def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[s
         b = budget_item(cfg, job, spent)
         if b is not None:
             items.append(b)
+    elif not job.get("reprice") and _held_approval(job) is None:
+        items.append(budget_item_early(job))   # listed from the first JSON: the agent asks ONE round
     k = key_state(cfg)
     canary = job.get("canary") or {}
     rejected = canary.get("status") in (401, 403) and canary.get("fingerprint") == k["fingerprint"]
@@ -1271,7 +1341,8 @@ def agent_review_item(job: dict[str, Any]) -> dict[str, Any] | None:
     ar = job.get("agent_review") or {}
     if ar.get("state") != "pending":
         return None
-    return {"id": "agent_review", "ask_agent": True, "blocking": True, "deck_id": ar.get("deck_id"),
+    return {"id": "agent_review", "ask_agent": True, "blocking": True, "part": ar.get("part") or "A",
+            "deck_id": ar.get("deck_id"),
             "deck_path": ar.get("deck_path"), "items": ar.get("items"), "record_command": ar.get("record_command"),
             "skip_command": ar.get("skip_command"), "instructions_en": REVIEW_INSTRUCTIONS_EN}
 
@@ -1317,6 +1388,13 @@ def fill_market(job: dict[str, Any]) -> str | None:
     return "CN" if c.get("han") and not c.get("kana") and not c.get("hangul") else None
 
 
+def default_fill_market(job: dict[str, Any]) -> str | None:
+    """The market filled by default (no question): China only (a Chinese idea, or one narrowed to CN). Any other
+    single market keeps the optional question after the result."""
+    m = fill_market(job)
+    return m if m == "CN" else None
+
+
 _SHARE_CLASS = re.compile(r"[\s,]+(?:Class\s+[A-Z]|[A-Z]\s+Shares?|\(?[A-Z]-?Shares?\)?)$", re.IGNORECASE)
 
 
@@ -1346,13 +1424,73 @@ def _local_names(con, security_ids: list[str]) -> dict[str, str]:
     return {sid: by_org[org] for sid, org in rows if by_org.get(org)}
 
 
-def fill_examples(con, run_id: str | None, missing: list[tuple]) -> tuple[list[dict[str, Any]], str]:
-    """The missing companies the fill question names (at most FILL_NAMES) and why ('related' | 'largest'): first
+def market_hole(con, market: str, floor: float) -> dict[str, Any]:
+    """The profile hole of one market at the floor: its companies (largest first) and those with no profile at all;
+    'large' when >= FILL_MIN_SHARE of them, or >= FILL_MIN_TOP of its FILL_TOP largest, have none. Rows:
+    (security_id, name, country, exchange, market_cap_usd, described, sector, industry)."""
+    from . import screen
+    rows = con.execute(
+        """SELECT u.security_id, u.name, u.country, u.exchange, u.market_cap_usd, EXISTS (
+               SELECT 1 FROM descriptions d WHERE (d.company_key = u.company_key OR d.security_id =
+               u.security_id) AND d.text IS NOT NULL AND trim(d.text) <> '') AS described,
+               u.sector, u.industry
+           FROM universe u WHERE u.market_cap_usd >= ? ORDER BY u.market_cap_usd DESC, u.security_id""",
+        [floor]).fetchall()
+    keep = screen.country_matcher([market], {r[2] for r in rows if r[2]})
+    mk = [r for r in rows if keep(r[2], r[3])]
+    missing = [r for r in mk if not r[5]]
+    share = len(missing) / len(mk) if mk else 0.0
+    top_missing = sum(1 for r in mk[:FILL_TOP] if not r[5])
+    return {"mk": mk, "missing": missing, "share": share, "top_missing": top_missing,
+            "large": bool(missing) and (share >= FILL_MIN_SHARE or top_missing >= FILL_MIN_TOP)}
+
+
+_WORD = re.compile(r"[A-Za-z][A-Za-z\-]{3,}")
+
+
+def idea_match_words(terms: list[str]) -> list[str]:
+    """The words a missing company's name or industry is matched against for the fill question's examples: the
+    idea's CJK pieces (2+ characters) and its English content words (>= 4 letters, no generic ones such as
+    'suppliers' or 'systems'), a plural 's' dropped ('joints' -> 'joint')."""
+    from . import page
+    out: list[str] = []
+    for t in terms or []:
+        t = str(t)
+        cjk = page._CJK_RUN.findall(t)
+        if cjk:
+            out += [c for c in cjk if len(c) >= 2 and c not in page.GENERIC_CJK]
+            continue
+        for w in _WORD.findall(t):
+            w = w.lower()
+            if w in page.GENERIC_EN:
+                continue
+            out.append(w[:-1] if w.endswith("s") and not w.endswith("ss") and len(w) > 4 else w)
+    return list(dict.fromkeys(out))
+
+
+def fill_examples(con, run_id: str | None, missing: list[tuple],
+                  terms: list[str] | None = None) -> tuple[list[dict[str, Any]], str]:
+    """The missing companies the fill question names (at most FILL_NAMES) and why ('idea_words' | 'related' |
+    'largest'): first those whose name (English or the official Chinese short name) or industry carries the idea's
+    own words (most words first, then market cap: e.g. a thermal-management maker for a liquid-cooling idea); else
     those in the industries of the run's L1 passes (most passes first, then market cap), never a bank or insurer
     unless the passes include finance; else the largest non-financial ones. `missing` rows: (security_id, name,
     country, exchange, market_cap_usd, described, sector, industry), largest first."""
     from collections import Counter
     from . import screen
+    words = idea_match_words(terms or [])
+    if words and missing:
+        zh = _local_names(con, [r[0] for r in missing])
+
+        def hits(r: tuple) -> int:
+            hay = " ".join(str(x or "") for x in (r[1], zh.get(r[0]), r[6], r[7])).lower()
+            return sum(1 for w in words if w in hay)
+        scored = sorted(((hits(r), r) for r in missing), key=lambda t: (-t[0], -(t[1][4] or 0), t[1][0]))
+        picked = [r for n, r in scored if n > 0][:FILL_NAMES]
+        if picked:
+            return [{"name": r[1], "name_en": plain_name(r[1]), "name_zh": zh.get(r[0]) or plain_name(r[1]),
+                     "ticker": r[0].split(":", 1)[-1], "security_id": r[0], "market_cap_usd": r[4],
+                     "industry": r[7]} for r in picked], "idea_words"
     ind: Counter = Counter()
     sectors: set = set()
     if run_id:
@@ -1395,7 +1533,7 @@ def fill_item(cfg, job: dict[str, Any], spent: float | None = None) -> dict[str,
                   for b in big)
     ne = ", ".join(f"{b.get('name_en') or b['name']} ({b['ticker']}, ${float(b['market_cap_usd'] or 0) / 1e9:.1f}B)"
                    for b in big)
-    basis = "related" if o.get("names_basis") == "related" else "largest"
+    basis = o.get("names_basis") if o.get("names_basis") in ("related", "idea_words") else "largest"
     nz = STRINGS["zh"][f"fill_names_{basis}"].format(names=nz) if big else ""
     ne = STRINGS["en"][f"fill_names_{basis}"].format(names=ne) if big else ""
     floor = f"${float(o.get('floor_usd') or job.get('min_mcap_usd') or 0) / 1e9:g}B"
@@ -1403,7 +1541,7 @@ def fill_item(cfg, job: dict[str, Any], spent: float | None = None) -> dict[str,
               est=_usd(o["estimate_usd"]), x=f"{x:g}", rem=_usd(rem), floor=floor)
     return {"id": "fill_descriptions", "ask_human": True, "optional": True, "country": o["country"],
             "missing": o["missing"], "companies": o.get("companies"), "share": o.get("share"),
-            "biggest": big, "minutes": o["minutes"], "estimate_usd": o["estimate_usd"],
+            "biggest": big, "names_basis": basis, "minutes": o["minutes"], "estimate_usd": o["estimate_usd"],
             "question_zh": STRINGS["zh"]["fill_q"].format(market=mz, names=nz, **kw),
             "question_en": STRINGS["en"]["fill_q"].format(market=me, names=ne, **kw),
             "rerun_with": "--fill-descriptions yes", "decline_with": "--fill-descriptions no"}
@@ -1418,6 +1556,22 @@ def fill_waiting(job: dict[str, Any]) -> bool:
 def exhausted(job: dict[str, Any]) -> bool:
     """A finished job whose screen ran out of budget (the page shows what was checked; a top-up continues)."""
     return job.get("state") == "done" and (job.get("result") or {}).get("status") == "budget_exhausted"
+
+
+def budget_item_early(job: dict[str, Any]) -> dict[str, Any]:
+    """The approve_budget item before the English sentence exists (the agent writes idea_en first): listed from the
+    very first JSON so the agent knows the human round has this question too. Its question does not show the
+    English yet (waits_for idea_en); once the agent has rerun with --idea-en it is the ordinary item, and that is the
+    one to ask."""
+    x = DEFAULT_APPROVAL_USD
+    est = f"{EXPECTED_RANGE[0]}–{EXPECTED_RANGE[1]}"
+    return {"id": "approve_budget", "ask_human": True, "kind": "first", "idea_en": None, "waits_for": "idea_en",
+            "question_zh": STRINGS["zh"]["budget_q_early"].format(x=f"{x:g}", y=f"{x * CNY_PER_USD:.0f}", est=est),
+            "question_en": STRINGS["en"]["budget_q_early"].format(x=f"{x:g}", est=est),
+            "instructions_en": "Write idea_en first (pending item idea_en) and rerun: this item then shows the English "
+                               "sentence. Ask it in the same one message as the other human items.",
+            "estimate_usd": None, "reserved_usd": None, "remaining_usd": None,
+            "rerun_with": f"--approve-budget {x:g}", "alternatives": []}
 
 
 def budget_item(cfg, job: dict[str, Any], spent: float | None = None, *,
@@ -1535,6 +1689,8 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
     a = job.get("approval")
     spent = spent_usd(cfg, job) if a else None
     job = newest_view(cfg, job)
+    if (job.get("result") or {}).get("fetch"):
+        job = {**job, "result": {**job["result"], "fetch": open_fetch_questions(cfg, job["result"]["fetch"])}}
     items = pending(cfg, job, spent) if items is None else items
     status = derive_status(cfg, job, items)
     res = job.get("result") or {}
@@ -1560,9 +1716,7 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         "idea_en_changes": job.get("idea_en_changes") or [],
         "timing": {s["id"]: s.get("seconds") for s in job.get("steps") or [] if s.get("seconds") is not None},
         "summary": res.get("summary"), "top": res.get("top") or [],
-        "next_steps": [n for n in res.get("next_steps") or []      # the fill is its own question (fill_descriptions)
-                       if not (job.get("fill_offer") and str(n.get("command") or "").startswith(
-                           "jevscreen crawl-descriptions"))],
+        "next_steps": shown_next_steps(cfg, job, res.get("next_steps") or []),
         "gaps": res.get("gaps") or [], "fetch": res.get("fetch"),
         "translation": res.get("translation"),
         "translation_pending": int((res.get("translation") or {}).get("pending") or 0),
@@ -1584,6 +1738,7 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         out["poll_command"] = status_command(job)
     if status == "budget_exhausted":
         out["next_command"] = front_command(job)       # plus the top-up item's rerun_with after a yes
+    out["fill_default"] = fill_default_view(job)
     fi = facets_item(job)
     out["agent_optional"] = [fi] if fi else []
     if job.get("facets_notes"):
@@ -1604,7 +1759,7 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
     elif rvw["agent_review"] and status in ("done", "partial"):
         out["next_command"] = out.get("next_command") or status_command(job, wait=False)
     for lang in ("zh", "en"):
-        out[f"text_{lang}"] = human_text(job, status, items, lang, rem, totals, view=rvw)
+        out[f"text_{lang}"] = human_text(job, status, items, lang, rem, totals, view=rvw, next_steps=out["next_steps"])
     if job.get("idea_en_problems") and not job.get("idea_en"):
         out["idea_en_problems"] = job["idea_en_problems"]
         last = job.get("idea_en_last_refused") or {}
@@ -1613,6 +1768,21 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         out["rerun_command"] = front_command(job, idea_en=last.get("suggested") or "<sentence>")
     out.update(extra or {})
     return out
+
+
+def shown_next_steps(cfg, job: dict[str, Any], steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The result's next_steps as offered: the China profile crawl is left out while the fill is its own question
+    (fill_descriptions), after the human's no to the default fill, and within the crawl's 24 h cooldown after a block
+    (the command would be refused). The cooldown is read from its marker file only (no store session per status)."""
+    def crawl(n: dict[str, Any]) -> bool:
+        return str(n.get("command") or "").startswith("jevscreen crawl-descriptions")
+    if not any(crawl(n) for n in steps):
+        return list(steps)
+    hide = bool(job.get("fill_offer")) or job.get("fill_pref") == "no"
+    if not hide and cfg is not None:
+        from . import cli, guard
+        hide = guard.recent_block_marker(cfg, "crawl-descriptions", cli.COOLDOWN_HOURS) is not None
+    return [n for n in steps if not (hide and crawl(n))]
 
 
 def review_view(job: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1647,9 +1817,9 @@ def review_view(job: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, A
     fill = [i for i in items if i.get("id") == "fill_descriptions"]
     order = fill + scope_items + esc_now + fetch_qs
     if rv.get("relayed"):
-        # the round already handed to the agent is repeated (a second status, a lost context) until the human
-        # answers or a new version comes; everything else waits in later
-        ids = set(rv.get("relayed_ids") or []) if rv.get("relayed_run") == rv.get("run_id") else set()
+        # the round already handed to the agent is repeated (a second status, a lost context, a new version) until
+        # the human answers each question; everything else waits in later
+        ids = set(rv.get("relayed_ids") or [])
         ask_now = [it for it in order if _qid(it) in ids]
         later = [it for it in order if it not in ask_now] + [e for e in escs if e not in esc_now]
     else:
@@ -1667,7 +1837,26 @@ def review_brief(rv: dict[str, Any], old: dict[str, Any] | None = None) -> dict[
             "answered": rv.get("answered") or {}, "agent_summary": rv.get("agent_summary"),
             "followups": rv.get("followups") or [], "relayed": bool((old or {}).get("relayed")),
             "relayed_run": (old or {}).get("relayed_run"), "relayed_ids": (old or {}).get("relayed_ids") or [],
-            "part_b": (rv.get("agent_review") or {}).get("part_b")}
+            "part_b": (rv.get("agent_review") or {}).get("part_b"), "ai_reviews": bool(rv.get("ai_reviews")),
+            "unchecked": rv.get("unchecked") or [], "presented": rv.get("presented") or {},
+            "offered": rv.get("offered") or {}}
+
+
+def fill_default_view(job: dict[str, Any]) -> dict[str, Any] | None:
+    """The default profile fill of an idea that points at one market (a Chinese idea: China): what happens, its
+    state, and the opt-out (rerun with --fill-descriptions no before it ends). None for any other idea until a fill
+    was started for it (an English idea whose first read passed mostly A-shares)."""
+    fd = job.get("fill_default") or {}
+    market = fd.get("market") if fd.get("state") not in (None, "skipped") else default_fill_market(job)
+    if market is None or (fd.get("state") == "skipped" and fd.get("reason") == "no_market"):
+        return None
+    mz, me = FILL_MARKET_WORDS.get(market, (market, market))
+    state = "opted_out" if job.get("fill_pref") == "no" and fd.get("state") in (None, "running", "skipped") \
+        else fd.get("state") or "planned"
+    return {"market": market, "state": state, "reason": fd.get("reason"), "added": fd.get("added"),
+            "missing": fd.get("missing"), "minutes": fd.get("minutes"), "opt_out_with": "--fill-descriptions no",
+            "text_zh": STRINGS["zh"]["fill_default_note"].format(market=mz),
+            "text_en": STRINGS["en"]["fill_default_note"].format(market=me)}
 
 
 def intro_text(job: dict[str, Any], items: list[dict[str, Any]], lang: str) -> str:
@@ -1684,6 +1873,9 @@ def intro_text(job: dict[str, Any], items: list[dict[str, Any]], lang: str) -> s
               "are": "is" if d == 1 else "are"}
         need = T["need_dk"].format(**kw) if d and k else T["need_d"].format(**kw) if d else T["need_k"] if k else ""
     first = T["intro"] if not job.get("result") else ""
+    fv = fill_default_view(job) if not job.get("result") else None
+    if first and fv and fv["state"] in ("planned", "running"):
+        first += (" " if lang == "en" else "") + fv[f"text_{lang}"]
     return (first + (" " if lang == "en" and first and need else "") + need).strip()
 
 
@@ -1710,13 +1902,19 @@ def top_evidence(T: dict[str, str], r: dict[str, Any]) -> str:
         ev += T["mark_user"]
     if r.get("edge"):
         ev += T["mark_edge"]
+    if r.get("unchecked"):
+        ev += T["mark_unchecked"]
     return ev
 
 
 def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], lang: str,
-               rem: float | None, totals: dict[str, Any] | None = None, view: dict[str, Any] | None = None) -> str:
+               rem: float | None, totals: dict[str, Any] | None = None, view: dict[str, Any] | None = None,
+               next_steps: list[dict[str, Any]] | None = None) -> str:
     T = STRINGS[lang]
     if status == "needs_agent" and any(i.get("id") == "agent_review" for i in items):
+        ar = next(i for i in items if i.get("id") == "agent_review")
+        if str(ar.get("part") or "A") != "A":
+            return T["review_wait_new"].format(n=ar.get("items") or "?")   # companies new to the top 10
         return T["review_wait"]           # the list is not relayed before the user's AI has checked it
     res = job.get("result") or {}
     failure = job.get("failure") or {}
@@ -1744,6 +1942,19 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
         if (res.get("version") or 1) > 1 and res.get(f"change_{lang}"):
             lines.append(T["done_version"].format(v=res["version"], change=res[f"change_{lang}"]))
         lines += fixes
+        fdf = job.get("fill_default") or {}
+        mz = FILL_MARKET_WORDS.get(fdf.get("market") or "", (fdf.get("market"), fdf.get("market")))[
+            0 if lang == "zh" else 1]
+        if fdf.get("when") == "before_l1" and (res.get("version") or 1) <= 1:
+            # 'read in this first pass' holds only when the read covered the fill's market and floor ('added' is
+            # counted at the fill's floor; a floor raised since leaves some of them out: the page bar has the count)
+            if fdf.get("state") == "done" and fdf.get("added") and fill_in_scope(job) and \
+                    float(job.get("min_mcap_usd") or 0) <= float(fdf.get("floor") or job.get("min_mcap_usd") or 0):
+                lines.append(T["fill_default_done"].format(k=fdf["added"], market=mz))
+            elif fdf.get("state") == "blocked" and fdf.get(f"message_{lang}"):
+                lines.append(fdf[f"message_{lang}"])
+            elif fdf.get("state") in ("failed", "timeout", "stopped") and job.get("fill_offer"):
+                lines.append(T["fill_default_failed"].format(market=mz))
         fill = job.get("fill") or {}
         if fill.get("finished_at") and fill.get(f"message_{lang}"):
             lines.append(fill[f"message_{lang}"])
@@ -1774,8 +1985,7 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
                                               country=(lang == "zh" and r.get("country_zh")) or r.get("country")
                                               or "?", one=one,
                                               verdict=r[f"verdict_words_{lang}"], evidence=top_evidence(T, r)))
-        steps = [n for n in res.get("next_steps") or []
-                 if not (job.get("fill_offer") and str(n.get("command") or "").startswith("jevscreen crawl-descriptions"))]
+        steps = next_steps if next_steps is not None else shown_next_steps(None, job, res.get("next_steps") or [])
         for i, ns in enumerate(steps, 1):
             lines.append(f"{'下一步' if lang == 'zh' else 'Next'} {i}{'：' if lang == 'zh' else ': '}{ns[f'text_{lang}']}"
                          + (f"  ({ns['command']})" if ns.get("command") else ""))
@@ -2053,7 +2263,8 @@ def _resumable(cfg, job: dict[str, Any]) -> bool:
         # a yes to the profile fill left in the inbox while another worker held the lock (or recorded but not
         # started): the front merges it and starts the fill; nothing else restarts a finished job here
         fd = read_inbox(cfg, job["idea_key"]).get("fill_descriptions")
-        return (fd == "yes" and bool(job.get("fill_offer")) and not (job.get("fill") or {}).get("answer")) \
+        return (fd == "yes" and (bool(job.get("fill_offer")) or job.get("fill_pref") == "no")   # the late yes too
+                and not (job.get("fill") or {}).get("answer")) \
             or (fill_waiting(job) and consent_current(consent_state(cfg)))
     if job.get("state") not in ("new", "waiting"):
         return False
@@ -2146,6 +2357,8 @@ class Deps:
     pack_pull: Callable | None = None                      # (cfg, repo) -> summary; None = jevscreen.pack
     crawl_client: Callable[[Any], Any] | None = None       # cfg -> the polite crawl client (cli.make_crawl_client)
     crawl_descriptions: Callable | None = None             # (cfg, client, *, countries, min_mcap_usd) -> summary
+    fill_start: Callable | None = None     # (cfg, key, market, floor) -> {'pid'} | {'refused'}: starts the default
+                                           # profile fill (fill_child); None = the detached child process
 
 
 DEPS = Deps()
@@ -2217,6 +2430,154 @@ def _default_fetch_docs(cfg, result, **kw):
 def _default_open(path: Path) -> bool:
     from . import page
     return page.open_page(path)
+
+
+# ------------------------------------------------------------------------------------------------ the default fill
+
+def fill_state_path(cfg, key: str) -> Path:
+    """<home>/quickstart/<key>.fill.json: the default profile fill's own state, written only by its child."""
+    return job_dir(cfg) / f"{key}.fill.json"
+
+
+def read_fill_state(cfg, key: str) -> dict[str, Any]:
+    try:
+        data = json.loads(fill_state_path(cfg, key).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_fill_state(cfg, key: str, data: dict[str, Any]) -> None:
+    p = fill_state_path(cfg, key)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True, default=str), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def fill_child(cfg, key: str, market: str, floor: float, deps: Deps | None = None) -> int:
+    """The default profile fill (its own process: `python -m jevscreen.quickstart --fill KEY MARKET FLOOR`): the
+    polite crawl-descriptions path for one market at the run's floor, under the standard consent, 24 h cooldown,
+    rate-budget lock and runs journal (ops.run_networked), never after a block. It writes only its state file; the
+    worker reads it (Worker.join_fill). SIGTERM / Ctrl-C: the crawl flushes what it has and the state says so."""
+    from . import cli, ops
+    from .sources import tradingview_profiles
+    deps = deps or DEPS
+    started = iso(now_utc())
+    write_fill_state(cfg, key, {"state": "running", "pid": os.getpid(), "market": market, "floor": floor,
+                                "started_at": started})
+    code, summ = 1, {"status": "error"}
+    try:
+        if os.environ.get("JEVSCREEN_TESTING") == "1" and deps.crawl_descriptions is None:
+            code, summ = 1, {"status": "testing_refused"}       # the test suite never crawls for real
+        else:
+            client = (deps.crawl_client or cli.make_crawl_client)(cfg)
+            crawl = deps.crawl_descriptions or tradingview_profiles.crawl
+            code, summ = ops.run_networked(
+                "crawl-descriptions", cfg, lambda: crawl(cfg, client, countries=[market], min_mcap_usd=floor),
+                client=client, consent_source="tradingview_profile")
+    except KeyboardInterrupt:
+        code, summ = 130, {"status": "interrupted"}
+    except Exception as e:  # noqa: BLE001 - reported in the state file; the worker goes on without the fill
+        code, summ = 1, {"status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    finally:
+        write_fill_state(cfg, key, {"state": "finished", "pid": os.getpid(), "market": market, "floor": floor,
+                                    "started_at": started, "finished_at": iso(now_utc()), "exit": code,
+                                    "status": summ.get("status"), "retry_after": summ.get("retry_after"),
+                                    "error": summ.get("error")})
+    return 0
+
+
+def _default_fill_start(cfg, key: str, market: str, floor: float) -> dict[str, Any]:
+    """Start fill_child detached (its own session / process group; output to <home>/quickstart/<key>.fill.log), so
+    the free fill goes on while the worker waits for the human; the worker joins it before the first paid read.
+    Refused in the test suite (JEVSCREEN_TESTING=1): tests pass their own fill_start."""
+    if os.environ.get("JEVSCREEN_TESTING") == "1":
+        return {"refused": "testing"}
+    env = dict(os.environ)
+    env["JEVSCREEN_HOME"] = str(cfg.home)
+    src = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    log = job_dir(cfg) / f"{key}.fill.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        fill_state_path(cfg, key).unlink()
+    fh = open(log, "ab")
+    kw: dict[str, Any] = {"stdout": fh, "stderr": fh, "stdin": subprocess.DEVNULL, "env": env, "close_fds": True}
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0x8) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)
+    else:
+        kw["start_new_session"] = True
+    try:
+        proc = subprocess.Popen([sys.executable, "-m", "jevscreen.quickstart", "--fill", key, market, repr(float(floor))],
+                                **kw)
+    except OSError as e:
+        return {"refused": f"spawn: {type(e).__name__}"}
+    finally:
+        fh.close()
+    return {"pid": proc.pid, "proc": proc}
+
+
+def _pid_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":          # os.kill(pid, 0) would send CTRL_C_EVENT there
+        try:
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True,
+                                 timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            return True
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _terminate(pid: Any) -> None:
+    import signal
+    if isinstance(pid, int) and pid > 0:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+
+
+def _fill_cmdline(pid: int) -> str | None:
+    """The command line of a live process (/proc, else `ps`); None when it cannot be read."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def is_fill_child(cfg, key: str, pid: Any) -> bool:
+    """Whether `pid` is still this idea's own default-fill child: its state file says running with that pid and
+    the process's command line is `... jevscreen.quickstart --fill KEY ...` (a pid the system gave to another
+    process is never signalled). Never on Windows: SIGTERM there is TerminateProcess (no flush), so the fill is
+    left to finish or stop by itself."""
+    if os.name == "nt" or not isinstance(pid, int) or pid <= 0:
+        return False
+    st = read_fill_state(cfg, key)
+    if st.get("state") != "running" or st.get("pid") != pid:
+        return False
+    cmd = _fill_cmdline(pid)
+    return bool(cmd) and "--fill" in cmd and key in cmd
+
+
+def stop_fill(cfg, key: str, pid: Any) -> bool:
+    """SIGTERM this idea's default-fill child (it flushes what it has and writes its ending); only a verified one."""
+    if not is_fill_child(cfg, key, pid):
+        return False
+    _terminate(pid)
+    return True
 
 
 def _pack_repo() -> str | None:
@@ -2598,6 +2959,8 @@ class Worker:
         try:
             if self.d.pack_pull is not None:
                 summ = self.d.pack_pull(self.cfg, repo)
+            elif os.environ.get("JEVSCREEN_TESTING") == "1":
+                summ = {"status": "testing_refused"}     # the test suite never downloads (a real spawned worker too)
             else:
                 from . import guard, pack
                 with guard.budget_lock(self.cfg, "api.github.com", reentrant=True):
@@ -2774,6 +3137,20 @@ class Worker:
         except ValueError as e:
             return self.fail("failed", str(e)[:300], reason="screen_args")
         first = not (self.job["approval"].get("out_dirs") or [])
+        fdf = self.job.get("fill_default") or {}
+        if fdf.get("state") == "running" and fill_in_scope(self.job) and \
+                read_fill_state(self.cfg, self.job["idea_key"]).get("state") != "finished":
+            # the profiles still coming in are read too: their first read is priced in (those already stored are
+            # in the dry run's own count); a fill of a market this read no longer covers is not
+            try:
+                got = max(0, self.described_in(fdf.get("market") or "CN", fdf.get("floor"), wait_s=5.0)
+                          - int(fdf.get("before") or 0))
+            except Exception:  # noqa: BLE001 - a busy store: count what the job knows
+                got = int(fdf.get("done") or 0)
+            extra = round(max(0, int(fdf.get("missing") or 0) - got) * FILL_ITEM_USD, 6)
+            est = {**est, "est_cost_usd": round(float(est.get("est_cost_usd") or 0.0) + extra, 6),
+                   "est_reserved_usd": round(float(est.get("est_reserved_usd") or 0.0) + extra, 6),
+                   "fill_usd": extra}
         with self.mu:
             self.job["estimate"] = {**est, "for": [self.job["idea_en"], self.job["min_mcap_usd"],
                                                    self.job.get("countries")], "alternatives": []}
@@ -2984,7 +3361,7 @@ class Worker:
         companies at the run's floor have no profile at all (the AI never read them), or >= FILL_MIN_TOP of its
         FILL_TOP largest do. Only for a market the idea points at (its countries, or Chinese for a Chinese idea),
         only when the fill can run (consent yes, no crawl cooldown) and its re-rank fits the approval's rest."""
-        from . import ops, screen, store
+        from . import ops, page, store
         market = fill_market(self.job)
         if market is None or not consent_current(consent_state(self.cfg)):
             return None
@@ -2992,22 +3369,13 @@ class Worker:
             return None
         floor = float(self.job["min_mcap_usd"])
         with store.session(self.cfg, read_only=True, wait_s=30.0) as con:
-            rows = con.execute(
-                """SELECT u.security_id, u.name, u.country, u.exchange, u.market_cap_usd, EXISTS (
-                       SELECT 1 FROM descriptions d WHERE (d.company_key = u.company_key OR d.security_id =
-                       u.security_id) AND d.text IS NOT NULL AND trim(d.text) <> '') AS described,
-                       u.sector, u.industry
-                   FROM universe u WHERE u.market_cap_usd >= ? ORDER BY u.market_cap_usd DESC, u.security_id""",
-                [floor]).fetchall()
-            keep = screen.country_matcher([market], {r[2] for r in rows if r[2]})
-            mk = [r for r in rows if keep(r[2], r[3])]
-            missing = [r for r in mk if not r[5]]
+            hole = market_hole(con, market, floor)
+            mk, missing = hole["mk"], hole["missing"]
             if not mk or not missing:
                 return None
-            named, basis = fill_examples(con, res.get("run_id"), missing)
-        share = len(missing) / len(mk)
-        top_missing = sum(1 for r in mk[:FILL_TOP] if not r[5])
-        if share < FILL_MIN_SHARE and top_missing < FILL_MIN_TOP:
+            named, basis = fill_examples(con, res.get("run_id"), missing, terms=page.idea_terms(res))
+        share, top_missing = hole["share"], hole["top_missing"]
+        if not hole["large"]:
             return None
         try:
             rem = self.remaining()
@@ -3018,11 +3386,272 @@ class Worker:
             self.note(f"profile fill not offered: its re-rank (about ${est:.2f}) is above the approval's rest "
                       f"(${rem:.2f})")
             return None
-        from . import page
         minutes = max(1, math.ceil(len(missing) / page.CRAWL_REQ_PER_S / 60))
         return {"country": market, "missing": len(missing), "companies": len(mk), "share": round(share, 3),
                 "top_missing": top_missing, "minutes": minutes, "estimate_usd": est, "floor_usd": floor,
                 "biggest": named, "names_basis": basis}
+
+    # -- the default profile fill (P0: no question; see fill_child, maybe_start_fill, join_fill, after_l1_fill)
+    def maybe_start_fill(self, market: str | None = None, when: str = "before_l1") -> bool:
+        """Right after the free profile download, for an idea that points at one market (a Chinese idea: China):
+        start the free, polite fill of that market's missing profiles in the background (fill_child), so the first
+        read covers them. Decided once per job (job['fill_default']); never after the human's opt-out
+        (--fill-descriptions no), without the gray-sources consent, within a crawl cooldown, or for a small hole.
+        Returns whether a fill was started."""
+        from . import ops, page, store
+        if when == "before_l1" and self.job.get("fill_default"):
+            return False
+        market = market or default_fill_market(self.job)
+
+        def skipped(reason: str) -> bool:
+            with self.mu:
+                self.job["fill_default"] = {"state": "skipped", "reason": reason, "market": market, "when": when,
+                                            "at": iso(now_utc())}
+                self.save()
+            return False
+        if market is None:
+            return skipped("no_market")
+        if self.job.get("fill_pref") == "no":
+            return skipped("opted_out")
+        if not consent_current(consent_state(self.cfg)):
+            return skipped("consent")
+        if ops.cooldown(self.cfg, "crawl-descriptions") is not None:
+            return skipped("cooldown")
+        floor = float(self.job["min_mcap_usd"])
+        try:
+            with store.session(self.cfg, read_only=True, wait_s=WORKER_DB_WAIT_S) as con:
+                hole = market_hole(con, market, floor)
+        except store_locked():
+            return skipped("busy")
+        if not hole["large"]:
+            return skipped("small_hole")
+        try:
+            before = self.described_in(market, floor)
+        except store_locked():
+            return skipped("busy")
+        got = (self.d.fill_start or _default_fill_start)(self.cfg, self.job["idea_key"], market, floor) or {}
+        self._fill_proc = got.pop("proc", None)
+        if got.get("refused"):
+            return skipped(str(got["refused"]))
+        n = len(hole["missing"])
+        with self.mu:
+            # 'floor': before / added are counted at the fill's own floor (the job's may change meanwhile);
+            # 'rank_in': an after_l1 fill is ranked in before the first result (rank_in_fill), also after a resume
+            self.job["fill_default"] = {"state": "running", "reason": None, "market": market, "when": when,
+                                        "missing": n, "total": n, "done": 0, "before": before, "pid": got.get("pid"),
+                                        "floor": floor, "minutes": max(1, math.ceil(n / page.CRAWL_REQ_PER_S / 60)),
+                                        "started_at": iso(now_utc()),
+                                        **({"rank_in": "pending"} if when == "after_l1" else {})}
+            self.save()
+        mz, me = FILL_MARKET_WORDS.get(market, (market, market))
+        self.note(f"default profile fill started: {market}, about {n} companies")
+        return True
+
+    def _fill_alive(self, pid: Any) -> bool:
+        proc = getattr(self, "_fill_proc", None)
+        if proc is not None:
+            return proc.poll() is None
+        if not _pid_alive(pid):
+            return False
+        cmd = _fill_cmdline(pid) if os.name != "nt" else None
+        return cmd is None or ("--fill" in cmd and self.job["idea_key"] in cmd)   # a reused pid is not the fill
+
+    def join_fill(self, wait: bool = True) -> None:
+        """Before the first paid read: wait for a running default fill (the progress shows it), at most
+        max(FILL_JOIN_MIN_S, 3 x its estimate) from its start; then stop it (it flushes what it has). A child that is
+        gone without a word, a block, an error, the human's late opt-out or a scope that no longer covers its market
+        (skipped, reason 'scope': never waited for) ends it too, and the screen goes on. After a failure or a timeout
+        the fill question comes as the fallback after the result; not after a block (its 24 h cooldown holds the
+        question back) nor after an opt-out. wait=False only settles a fill that already ended (a resumed worker
+        past the screen: nothing waits for it any more). Its counts are at the fill's own floor."""
+        from . import store
+        fd = self.job.get("fill_default") or {}
+        if fd.get("state") != "running":
+            return
+        key, market = self.job["idea_key"], fd.get("market") or "CN"
+        floor = fd.get("floor")
+        t0 = parse_iso(fd.get("started_at")) or now_utc()
+        cap = max(FILL_JOIN_MIN_S, 3 * 60 * float(fd.get("minutes") or 1))
+        mz, me = FILL_MARKET_WORDS.get(market, (market, market))
+        last = 0.0
+        outcome: dict[str, Any] = {}
+        stopped = None
+        while True:
+            st = read_fill_state(self.cfg, key)
+            if st.get("state") == "finished":
+                outcome = st
+                break
+            if stopped is None and self.job.get("fill_pref") == "no":
+                stopped = "opted_out"
+            elif stopped is None and not fill_in_scope(self.job):
+                stopped = "scope"                   # narrowed to other markets since it started: not waited for
+            elif stopped is None and (now_utc() - t0).total_seconds() > cap:
+                stopped = "timeout"
+            if stopped is not None and not getattr(self, "_fill_term_sent", False):
+                proc = getattr(self, "_fill_proc", None)
+                if proc is not None and os.name != "nt":
+                    with contextlib.suppress(OSError):
+                        proc.terminate()
+                else:
+                    stop_fill(self.cfg, key, fd.get("pid"))
+                self._fill_term_sent = True
+                self._fill_term_at = time.monotonic()
+            if not self._fill_alive(fd.get("pid")):
+                outcome = read_fill_state(self.cfg, key) or {}
+                if outcome.get("state") != "finished":
+                    outcome = {"status": "gone", "exit": None}
+                break
+            if stopped is not None and time.monotonic() - self._fill_term_at > 90:
+                outcome = {"status": stopped, "exit": None}
+                break
+            if not wait:
+                return                          # still running: settled by a later call
+            if time.monotonic() - last >= PROGRESS_EVERY_S:
+                last = time.monotonic()
+                with contextlib.suppress(Exception):
+                    done = max(0, self.described_in(market, floor, wait_s=2.0) - int(fd.get("before") or 0))
+                    with self.mu:
+                        self.job["fill_default"]["done"] = done
+                self.progress(2, STRINGS["zh"]["fill_running"].format(market=mz, n=fd.get("missing", "?"),
+                                                                      m=fd.get("minutes", "?")),
+                              STRINGS["en"]["fill_running"].format(market=me, n=fd.get("missing", "?"),
+                                                                   m=fd.get("minutes", "?")),
+                              (self.job["fill_default"].get("done") or 0), fd.get("total"), stage="fill")
+            time.sleep(1.0)
+            self.merge_inbox()                  # a late --fill-descriptions no stops it
+        self.merge_inbox()      # an opt-out the front sent while this worker held the lock: the child may end first
+        try:
+            added = max(0, self.described_in(market, floor) - int(fd.get("before") or 0))
+        except store.StoreLocked:
+            added = None
+        code = outcome.get("exit")
+        if code not in (0, 2):
+            # stopped on purpose, also when the child wrote its ending (SIGTERM: exit 130) before this loop saw why
+            if self.job.get("fill_pref") == "no":
+                stopped = "opted_out"
+            elif not fill_in_scope(self.job):
+                stopped = "scope"
+        state = ("done" if code == 0 else "blocked" if code == 2 else
+                 (stopped or ("failed" if outcome.get("status") != "interrupted" else "stopped")))
+        reason = "scope" if state == "scope" else None
+        state = "skipped" if state == "scope" else state
+        with self.mu:
+            f = self.job["fill_default"]
+            f.update(state=state, reason=reason, added=added, done=added if added is not None else f.get("done"),
+                     exit=code, status=outcome.get("status"), finished_at=iso(now_utc()),
+                     seconds=round((now_utc() - t0).total_seconds(), 1), pid=None)
+            if state == "blocked":
+                ra = outcome.get("retry_after") or "24 h"
+                f["message_zh"] = STRINGS["zh"]["fill_blocked"].format(retry_after=ra)
+                f["message_en"] = STRINGS["en"]["fill_blocked"].format(retry_after=ra)
+                self.note(f"default profile fill: TradingView refused; retry after {ra}")
+            elif state not in ("done",):
+                self.note(f"default profile fill ended {state}{f' ({reason})' if reason else ''} "
+                          f"({outcome.get('status')}); the screen goes on")
+            self.save()
+
+    def cn_share_of_l1(self, run_id: str) -> tuple[float, int]:
+        """(share of A-shares among the run's first-read passes, number of A-share passes)."""
+        from . import screen, store
+        with store.session(self.cfg, read_only=True, wait_s=WORKER_DB_WAIT_S) as con:
+            rows = con.execute(
+                """SELECT r.label, r.probs_json, r.status, u.country, u.exchange FROM screen_results r
+                   JOIN universe u ON u.company_key = r.company_key WHERE r.run_id = ? AND r.layer = 'l1'""",
+                [run_id]).fetchall()
+        passes = []
+        for label, probs, status, country, exchange in rows:
+            try:
+                pr = json.loads(probs) if probs else {}
+            except ValueError:
+                pr = {}
+            if screen.l1_passes({"status": status, "label": label, "probs": pr}):
+                passes.append((country, exchange))
+        if not passes:
+            return 0.0, 0
+        keep = screen.country_matcher(["CN"], {c for c, _e in passes if c})
+        n = sum(1 for c, e in passes if keep(c, e))
+        return n / len(passes), n
+
+    def after_l1_fill(self) -> None:
+        """An idea that does not name a market but whose first read passed mostly A-shares (>= AUTO_CN_SHARE and
+        >= AUTO_CN_MIN of the passes): the missing China profiles are filled right away (free, no question) and only
+        those companies are read and ranked in, before the first result is shown (and before your AI checks it)."""
+        fd = self.job.get("fill_default") or {}
+        if fd and not (fd.get("state") == "skipped" and fd.get("reason") == "no_market"):
+            return
+        if self.job.get("fill_pref") == "no":
+            return
+        res = getattr(self, "result", None)
+        if not res or res.get("status") not in ("ok", "partial") or not res.get("run_id"):
+            return
+        try:
+            share, n = self.cn_share_of_l1(res["run_id"])
+        except Exception:  # noqa: BLE001 - the fill is a bonus, never worth a failed job
+            return
+        if n < AUTO_CN_MIN or share < AUTO_CN_SHARE:
+            return
+        if not self.maybe_start_fill("CN", when="after_l1"):
+            return
+        self.rank_in_fill()
+
+    def rank_in_fill(self) -> None:
+        """The after_l1 fill: wait for it, then read and rank in only the companies it described (the screen step's
+        run is the base). Its rank_in stays 'pending' until this has run to its end, so a worker killed in the wait
+        (resumed) or an error in it (the next loop step) still ranks them in before the first result."""
+        self.join_fill()
+        f = self.job.get("fill_default") or {}
+        base = (step_of(self.job, "screen") or {}).get("run_id")
+        if f.get("state") == "done" and f.get("added") and base:
+            new, _why = self.rerank_after_fill(base, int(f["added"]))
+            if new is not None:
+                self.result = new
+                with self.mu:                # a resumed worker reloads the result by the screen step's run id
+                    (step_of(self.job, "screen") or {})["run_id"] = new["run_id"]
+        with self.mu:
+            f["rank_in"] = "done"
+            self.save()
+
+    def rerank_after_fill(self, base: str | None, added: int) -> tuple[dict[str, Any] | None, str | None]:
+        """screen --from-run `base` with l1_new: only the newly described companies are read by L1 (everyone else
+        keeps its answers for $0), then ranked in. Returns (result, None) or (None, 'busy' | 'failed' | 'budget'
+        [with the cost in self._rerank_cost])."""
+        from . import screen
+        try:
+            rem = self.remaining()
+        except store_locked() as e:
+            self.note(f"profile fill: re-rank skipped, the database is busy ({str(e)[:120]})")
+            return None, "busy"
+        out_dir = screen._default_out_dir(self.cfg, self.job["idea"], store_now())
+        with self.mu:
+            self.job["approval"].setdefault("out_dirs", []).append(str(out_dir))
+            self.save()
+        T = STRINGS
+        self.progress(4, T["zh"]["fill_screen"].format(n=added), T["en"]["fill_screen"].format(n=added), force=True)
+
+        def on_progress(phase: str, done: int, total: int, spent_usd: float | None = None) -> None:
+            k = {"l1": "p_l1", "l2": "p_l2"}.get(phase)
+            if k:
+                self.progress(4, T["zh"][k].format(done=f"{done:,}", total=f"{total:,}"),
+                              T["en"][k].format(done=f"{done:,}", total=f"{total:,}"), done, total)
+        t1 = time.monotonic()
+        try:
+            res = screen.screen(self.cfg, self.job["idea"], idea_en=self.job["idea_en"], from_run=base, l1_new=True,
+                                budget_usd=rem, reads=READS, sieve="auto", out_dir=out_dir, progress=on_progress,
+                                jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:  # noqa: BLE001 - the current result stands
+            self.note(f"profile fill: re-rank failed ({type(e).__name__}: {str(e)[:160]}); the result is unchanged")
+            return None, "failed"
+        self.add_run(res.get("run_id"))
+        with self.mu:
+            self.job["approval"].setdefault("costs", {})[res["run_id"]] = res.get("cost_usd")
+        self._rerank = {"run_id": res["run_id"], "status": res["status"], "seconds": round(time.monotonic() - t1, 1),
+                        "cost_usd": float(res.get("cost_usd") or 0.0)}
+        if res["status"] not in ("ok", "partial"):
+            self.note(f"profile fill: re-rank ended {res['status']}; the result is unchanged")
+            return None, "budget" if res["status"] == "budget_exhausted" else "failed"
+        return res, None
 
     def latest_run_id(self) -> str | None:
         """The newest run of the idea: the stable page's (card answers ...) when newer, else the job's result."""
@@ -3074,45 +3703,15 @@ class Worker:
             return
         self.progress(2, STRINGS["zh"]["fill_ok"].format(k=added, s=int(time.monotonic() - t0)),
                       STRINGS["en"]["fill_ok"].format(k=added, s=int(time.monotonic() - t0)), force=True)
-        try:
-            rem = self.remaining()
-        except store_locked() as e:
-            self.note(f"profile fill: re-rank skipped, the database is busy ({str(e)[:120]})")
-            self.fill_ended(fill, "fill_rerank_busy", k=added)
-            return
-        base = self.latest_run_id()
-        out_dir = screen._default_out_dir(self.cfg, self.job["idea"], store_now())
-        with self.mu:
-            self.job["approval"].setdefault("out_dirs", []).append(str(out_dir))
-            self.save()
-        T = STRINGS
-        self.progress(4, T["zh"]["fill_screen"].format(n=added), T["en"]["fill_screen"].format(n=added), force=True)
-
-        def on_progress(phase: str, done: int, total: int) -> None:
-            key = {"l1": "p_l1", "l2": "p_l2"}.get(phase)
-            if key:
-                self.progress(4, T["zh"][key].format(done=f"{done:,}", total=f"{total:,}"),
-                              T["en"][key].format(done=f"{done:,}", total=f"{total:,}"), done, total)
-        t1 = time.monotonic()
-        try:
-            res = screen.screen(self.cfg, self.job["idea"], idea_en=self.job["idea_en"], from_run=base, l1_new=True,
-                                budget_usd=rem, reads=READS, sieve="auto", out_dir=out_dir, progress=on_progress,
-                                jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception as e:  # noqa: BLE001 - the current result stands
-            self.note(f"profile fill: re-rank failed ({type(e).__name__}: {str(e)[:160]}); the result is unchanged")
-            self.fill_ended(fill, "fill_rerank_failed", k=added)
-            return
-        self.add_run(res.get("run_id"))
-        with self.mu:
-            self.job["approval"].setdefault("costs", {})[res["run_id"]] = res.get("cost_usd")
-            fill.update(run_id=res["run_id"], screen_status=res["status"], screen_seconds=round(
-                time.monotonic() - t1, 1))
-        if res["status"] not in ("ok", "partial"):
-            self.note(f"profile fill: re-rank ended {res['status']}; the result is unchanged")
-            self.fill_ended(fill, "fill_rerank_budget" if res["status"] == "budget_exhausted"
-                            else "fill_rerank_failed", k=added, c=_usd(float(res.get("cost_usd") or 0.0)))
+        self._rerank = None
+        res, why = self.rerank_after_fill(self.latest_run_id(), added)
+        rr = self._rerank or {}
+        if rr:
+            with self.mu:
+                fill.update(run_id=rr["run_id"], screen_status=rr["status"], screen_seconds=rr["seconds"])
+        if res is None:
+            key = {"busy": "fill_rerank_busy", "budget": "fill_rerank_budget"}.get(why or "", "fill_rerank_failed")
+            self.fill_ended(fill, key, k=added, c=_usd(float(rr.get("cost_usd") or 0.0)))
             return
         self.result = res
         self.step_fetch("fill_fetch")
@@ -3129,14 +3728,15 @@ class Worker:
             fill["finished_at"] = iso(now_utc())
             self.job["state"] = "done"
 
-    def described_in(self, market: str) -> int:
+    def described_in(self, market: str, floor: float | None = None, wait_s: float = WORKER_DB_WAIT_S) -> int:
+        """The market's companies with a profile at `floor` (default: the job's floor)."""
         from . import screen, store
-        with store.session(self.cfg, read_only=True, wait_s=WORKER_DB_WAIT_S) as con:
+        with store.session(self.cfg, read_only=True, wait_s=wait_s) as con:
             rows = con.execute(
                 """SELECT u.country, u.exchange FROM universe u WHERE u.market_cap_usd >= ? AND EXISTS (
                        SELECT 1 FROM descriptions d WHERE (d.company_key = u.company_key OR d.security_id =
                        u.security_id) AND d.text IS NOT NULL AND trim(d.text) <> '')""",
-                [float(self.job["min_mcap_usd"])]).fetchall()
+                [float(floor if floor is not None else self.job["min_mcap_usd"])]).fetchall()
         keep = screen.country_matcher([market], {r[0] for r in rows if r[0]})
         return sum(1 for r in rows if keep(r[0], r[1]))
 
@@ -3183,13 +3783,23 @@ class Worker:
             if rv is not None:
                 ar = rv.get("agent_review") or {}
                 if ar.get("state") == "pending" or not self.job.get("agent_review"):
-                    self.job["agent_review"] = {**ar, "run_id": res["run_id"]}
+                    self.job["agent_review"] = {**(self.job.get("agent_review") or {}), **ar,
+                                                "run_id": res["run_id"]}
                 self.job["review"] = review_brief(rv, self.job.get("review"))
             if totals:
                 self.job["totals"] = totals
             self.job["state"] = "done"
             self.job["waiting_on"] = None
-        if not (self.job.get("fill") or {}).get("answer"):
+        fdf = self.job.get("fill_default") or {}
+        floor = float(self.job["min_mcap_usd"])
+        # the default fill covered this result: the market a question would be about, at a floor at or below the
+        # result's (a floor lowered after it started leaves the companies in between to the question)
+        covered = fdf.get("state") == "done" and fdf.get("market") == fill_market(self.job) \
+            and float(fdf.get("floor") or floor) <= floor
+        if not (self.job.get("fill") or {}).get("answer") and (self.job.get("fill_pref") == "no" or covered):
+            with self.mu:
+                self.job["fill_offer"] = None        # filled by default, or the human said no: never asked
+        elif not (self.job.get("fill") or {}).get("answer"):
             try:
                 offer = self.fill_offer(res)
             except Exception as e:  # noqa: BLE001 - the optional question is never worth a failed job
@@ -3208,7 +3818,9 @@ class Worker:
         from . import review, review_cli
         if res.get("status") not in ("ok", "partial"):
             return None
-        done_before = (self.job.get("agent_review") or {}).get("state") in ("done", "skipped", "timed_out", "none")
+        ar0 = self.job.get("agent_review") or {}
+        done_before = ar0.get("state") in ("done", "skipped", "timed_out", "none") \
+            or str(ar0.get("part") or "A") != "A"            # a follow-up deck: part A was answered before
         try:
             if not done_before:
                 return review_cli.prepare(self.cfg, res, lang=self.job.get("lang"))
@@ -3216,13 +3828,28 @@ class Worker:
             agent = review.agent_verdicts(self.cfg, self.job["idea"])
             pool, _i, names = review_cli.pool_inputs(self.cfg, res)
             old = self.job.get("review") or {}
+            ar_old = self.job.get("agent_review") or {}
             rv = {"run_id": res["run_id"], "idea": self.job["idea"], "lang": self.job.get("lang"),
                   "provisional": [], "questions": old.get("questions") or [], "answered": old.get("answered") or {},
-                  "agent_review": {"state": (self.job.get("agent_review") or {}).get("state")}}
+                  "agent_review": {"state": ar_old.get("state"), "part_b": ar_old.get("part_b")},
+                  "ai_reviews": bool(old.get("ai_reviews")), "followups": list(old.get("followups") or []),
+                  "presented": dict(old.get("presented") or {}), "offered": dict(old.get("offered") or {})}
             rv = review_cli.finalize(self.cfg, res, rv, sieve=sv, agent=agent, names=names)
-            fu = review_cli._followup(self.cfg, res, sv, agent, rv, self.job.get("lang") or "zh", names)
+            lang = self.job.get("lang") or "zh"
+            fu = review_cli._followup(self.cfg, res, sv, agent, rv, lang, names)
             if fu:
-                rv["followups"] = [fu]
+                rv["followups"] = rv["followups"] + [fu]
+                rv = review_cli.presented(rv, review_cli._deck_of_path(fu.get("deck_path")), blocking=False)
+            # the companies this version brought in that your AI has not read: to your AI (blocking when one is in
+            # the top 10) and marked 未核对 until it has
+            base_rows = None
+            prev = (self.job.get("result") or {}).get("run_id")
+            if prev and prev != res["run_id"]:
+                with contextlib.suppress(Exception):
+                    base_rows = review_cli.run_files(self.cfg, prev)[1].get("rows") or []
+            rv = review_cli.check_new(self.cfg, res, rv, sieve=sv, agent=agent, lang=lang, names=names,
+                                      base_rows=base_rows, active=review_cli.ai_reviews(rv),
+                                      exclude=review_cli._deck_keys((fu or {}).get("deck_path")))
             review.save_review(res["output_dir"], rv)
             return rv
         except Exception as e:  # noqa: BLE001 - the questions are optional: the list stands
@@ -3262,18 +3889,56 @@ class Worker:
                  ("idea_en", self.step_idea_en), ("ai_check", self.step_ai_check),
                  ("estimate", self.step_estimate), ("screen", self.step_screen), ("fetch", self.step_fetch),
                  ("finish", self.step_finish)]
-        for sid, fn in order:
+        ids = [sid for sid, _fn in order]
+        i = 0
+        while i < len(order):          # a step reset meanwhile sends the loop back (i = 0): see 'screen'
+            sid, fn = order[i]
+            i += 1
             self.merge_inbox()
             if self.job.get("state") in ("failed", "waiting", "done", "declined"):
                 break
+            if step_done(self.job, "descriptions") and not self.job.get("fill_default") \
+                    and not step_done(self.job, "screen"):
+                try:                                    # the free default fill: never worth a failed job
+                    self.maybe_start_fill()
+                except Exception as e:  # noqa: BLE001
+                    self.note(f"default profile fill not started: {type(e).__name__}: {str(e)[:160]}")
+            fdf = self.job.get("fill_default") or {}
+            if step_done(self.job, "screen") and fdf.get("rank_in") == "pending":
+                try:                                    # an after_l1 fill a killed worker or an error left
+                    self.rank_in_fill()                 # behind: ranked in before the first result
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as e:  # noqa: BLE001 - the fill is a bonus: the first result stands
+                    self.note(f"default profile fill not ranked in: {type(e).__name__}: {str(e)[:160]}")
+            elif step_done(self.job, "screen") and fdf.get("state") == "running":
+                try:                                    # a resumed worker: settle a fill that ended meanwhile
+                    self.join_fill(wait=False)
+                except Exception as e:  # noqa: BLE001
+                    self.note(f"default profile fill not settled: {type(e).__name__}: {str(e)[:160]}")
             if sid != "finish" and step_done(self.job, sid):
                 continue                 # done by an earlier worker (resume); finish reloads the run by its id
             with self.mu:
                 self.job["current_step"] = sid
+            if sid == "screen" and approval_valid(self.job):
+                self.join_fill()         # the first paid read covers the filled profiles
+            if sid == "screen" and not all(step_done(self.job, s) for s in ids[:ids.index(sid)]):
+                # a flag merged meanwhile (during the fill's wait: a new floor, market or English sentence)
+                # reset an earlier step: it runs again first, so the paid read is always estimated for its scope
+                i = 0
+                continue
             if fn() == "stop":
                 break
             if sid == "universe":
                 self.after_universe()
+            if sid == "screen":
+                try:                     # mostly A-shares: fill China and rank them in before the first result
+                    self.after_l1_fill()
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as e:  # noqa: BLE001 - the fill is a bonus: the first result stands
+                    self.note(f"default profile fill after the first read skipped: {type(e).__name__}: "
+                              f"{str(e)[:160]}")
         return 0
 
 
@@ -3283,12 +3948,13 @@ def _next_steps(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     g = next((x for x in gaps if x["id"] == "no_description" and x.get("cn")), None)
     if g is not None:
         steps.append({"text_zh": STRINGS["zh"]["next_gap_cn"].format(n=g["cn"], m=g["minutes"]),
-                      "text_en": STRINGS["en"]["next_gap_cn"].format(n=g["cn"], m=g["minutes"]),
+                      "text_en": STRINGS["en"]["next_gap_cn"].format(n=g["cn"], m=g["minutes"],
+                                                                     companies="company" if g["cn"] == 1 else "companies"),
                       "command": g["command"], "cost_usd": 0.0, "minutes": g["minutes"]})
-    elif any(x["id"] == "us_profile_only" for x in gaps):
+    elif any(x["id"] == "us_profile_only" and x.get("command") for x in gaps):
         steps.append({"text_zh": STRINGS["zh"]["next_gap_sec"], "text_en": STRINGS["en"]["next_gap_sec"],
                       "command": "jevscreen keys set sec-email", "cost_usd": 0.0, "minutes": 2})
-    elif gaps:
+    elif gaps and not gaps[0].get("declined"):
         steps.append({"text_zh": gaps[0]["text_zh"], "text_en": gaps[0]["text_en"],
                       "command": gaps[0].get("command"), "cost_usd": 0.0, "minutes": None})
     return steps[:3]
@@ -3469,6 +4135,50 @@ def _retarget_fetch(fetch: dict[str, Any] | None, run_id: str | None,
     return {**fetch, "questions": qs_out}
 
 
+def open_fetch_questions(cfg, fetch: dict[str, Any] | None) -> dict[str, Any] | None:
+    """fetch.questions without the ones the human already settled since the fetch ran: the SEC contact (set, or
+    'no' recorded with `consent set sec-email-ask no`), the Taiwan annual-report consent (recorded either way) and the
+    OpenDART key (set). A settled question is never asked again, in chat or on the page."""
+    if not fetch or not fetch.get("questions"):
+        return fetch
+    from . import consent, keys, ondemand
+    settled: set[str] = set()
+    with contextlib.suppress(Exception):
+        if keys.presence(cfg, "sec-email").get("configured") \
+                or consent.get(cfg, ondemand.SEC_ASK_TOPIC)["state"] == "no":
+            settled.add("sec_email")
+    with contextlib.suppress(Exception):
+        if consent.get(cfg, ondemand.MOPS_TOPIC)["state"] in ("yes", "no"):
+            settled.add("mops_annual")
+    with contextlib.suppress(Exception):
+        if keys.presence(cfg, "opendart").get("configured"):
+            settled.add("opendart")
+    return {**fetch, "questions": [q for q in fetch["questions"] if q.get("id") not in settled]}
+
+
+def crawl_hidden(cfg, idea: str | None) -> bool:
+    """The China profile crawl is not offered as a command (page gap line, next_steps): after the human's no to the
+    default fill of this idea, or within the crawl's 24 h cooldown after a block (the command would be refused)."""
+    from . import cli, guard
+    try:
+        job = load_job(cfg, idea_key(idea)) if idea else None
+        if (job or {}).get("fill_pref") == "no":
+            return True
+        return guard.recent_block_marker(cfg, "crawl-descriptions", cli.COOLDOWN_HOURS) is not None
+    except Exception:  # noqa: BLE001 - a hint only
+        return False
+
+
+def sec_declined(cfg) -> bool:
+    """The human said no to giving the SEC a contact name and e-mail (consent sec-email-ask no) and none is set."""
+    from . import consent, keys, ondemand
+    try:
+        return not keys.presence(cfg, "sec-email").get("configured") \
+            and consent.get(cfg, ondemand.SEC_ASK_TOPIC)["state"] == "no"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _fetch_brief(fetch: dict[str, Any] | None) -> dict[str, Any] | None:
     """The job result's view of layers.fetch: status, companies fetched per source, seconds, the update's outcome,
     the next command and the human questions (sec_email / opendart / mops consent)."""
@@ -3573,6 +4283,10 @@ def main(argv: list[str] | None = None) -> int:
     if len(argv) == 2 and argv[0] == "--worker":
         from . import config
         return worker(config.load(), argv[1])
+    if len(argv) == 4 and argv[0] == "--fill":
+        from . import cli, config
+        with cli.sigterm_as_interrupt():
+            return fill_child(config.load(), argv[1], argv[2].upper(), float(argv[3]))
     print("usage: python -m jevscreen.quickstart --worker IDEA_KEY (started by `jevscreen quickstart`)",
           file=sys.stderr)
     return 2
