@@ -679,6 +679,13 @@ EDINET is not fetched on demand. Every company still on a profile gets a reason 
   gray-private data; it carries TradingView / Yahoo-derived text and verbatim annual-report excerpts and says so in
   its banner. It makes no network request (strict Content-Security-Policy, no external resource) and is never
   uploaded or shared by jev-screen.
+  - One page per idea: the prerequisites checklist, the live progress and the results share the stable page. Its
+    status part (`live`, jevscreen.pagestatus) comes from the quickstart job file and local files only (consent
+    answers, key presence by stat, cooldown markers, doctor's local checks): no network request, no wait on the
+    store, no key value (the page is scanned for every configured secret before each write, and a hit means no
+    write). The worker rewrites it atomically (tmp + replace, under the page lock that write_page's stable copy also
+    takes, so a status tick never puts back older results); it reloads itself (meta refresh, 3 s) only while work
+    runs or waits for an answer. No card button and no answer bar: cards are a CLI tool for the user's AI.
   - Evidence must match the claim. The idea's words (page.idea_terms: the run's excerpt terms in every language
     and the sieve's learned keywords minus the weak ones and generic words such as supplier / 系统 / 核心; CJK
     phrases also as their 2-character pieces) are looked for in all the text the AI read for the row (the run

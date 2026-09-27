@@ -233,28 +233,17 @@ class TestPageEscaping(unittest.TestCase):
                 self.assertNotIn(ph, t)
         self.assertEqual(data["chips"]["a"]["en"], "Does it directly")
 
-    @unittest.skipUnless(shutil.which("node"), "node not installed")
-    def test_the_english_answer_line_asks_for_english_messages(self):
-        deck = deck3(False)
-        data = page.build_page_data(self.RESULT, deck, lang="en")
-        out = self.drive(page.render_page(data), DRIVE_EN)
-        self.assertEqual(out["line"], 'jevscreen answer "1yes 2no" --deck deck-scr-x-1 --lang en')
-
-    @unittest.skipUnless(shutil.which("node"), "node not installed")
-    def test_no_offers_every_role_chip_of_a_v11_deck(self):
-        """A v1.1 deck (calib.deck_chips) carries the role chips h-k: a click on 'No' must offer c..k, and the
-        chosen h-k chip lands in the answer line as its token."""
+    def test_a_v11_deck_carries_every_role_chip_in_the_data(self):
+        """The `cards` printout offers every 'no' chip of a v1.1 deck (c..k); the page data keeps them all."""
         deck = deck3(False)
         deck["chips"] = calib.deck_chips(None)
         for c in deck["cards"]:
             c["chips"] = list(calib.YES_CHIPS + calib.NO_CHIPS)
         self.assertEqual(set(deck["chips"]["no"]), set("cdefghijk"))
-        for lang, no in (("en", "No"), ("zh", "不要")):
+        for lang in ("en", "zh"):
             data = page.build_page_data(self.RESULT, deck, lang=lang)
-            drive = DRIVE_CHIPS.replace("@NO@", no)
-            out = self.drive(page.render_page(data), drive)
-            self.assertEqual(out["chips"], list("cdefghijk"), lang)
-            self.assertIn('"1j"', out["line"])
+            self.assertTrue(set("cdefghijk") <= set(data["chips"]), lang)
+            self.assertEqual(data["cards"][0]["tokens"]["j"], "1j")
 
     def drive(self, html, drive):
         js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
@@ -268,34 +257,24 @@ class TestPageEscaping(unittest.TestCase):
         return json.loads(r.stdout.strip().splitlines()[-1])
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
-    def test_page_script_renders_and_builds_the_answer_line(self):
-        """Run the page's own script in node with a tiny DOM stand-in: it renders in its one language (no language
-        toggle: a zh page is fully Chinese) and a click on card 1 'Yes' then chip 'a' and card 2 'No' gives exactly
-        the tokens joined, which parse_answers reads."""
+    def test_the_one_page_has_no_card_buttons_and_no_answer_bar(self):
+        """Owner decision 2026-09-27 (ONE PAGE): cards are a CLI tool for the user's AI, never a human step on the
+        page: no card, no answer button, no answer bar, no 'jevscreen answer' line; one language, no toggle. The
+        card data stays in the data block (its plain-word forms and translations serve the `cards` printout)."""
         deck = deck3(False)
-
-        def run(lang):
+        for lang, words in (("zh", ("要", "不要", "不确定", "复制给你的 AI：")), ("en", ("Yes", "No", "Not sure", "Paste this to your AI:"))):
             html = page.render_page(page.build_page_data(self.RESULT, deck, lang=lang))
-            js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
-            blob = re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S).group(1)
-            with tempfile.TemporaryDirectory() as tmp:
-                harness = Path(tmp) / "h.js"
-                harness.write_text(DOM_SHIM + f"\nconst BLOB={json.dumps(blob)};\n" + "(function(){" + js + "})();\n"
-                                   + (DRIVE if lang == "zh" else "console.log(JSON.stringify({title:document.title,"
-                                      "toggle:all.filter(n=>n.tagName==='button'&&n._text==='中文').length}));"),
-                                   encoding="utf-8")
-                r = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            return json.loads(r.stdout.strip().splitlines()[-1])
-        out = run("zh")
-        self.assertEqual(out["line"], 'jevscreen answer "1a 2no" --deck deck-scr-x-1')
-        self.assertIn("筛选结果", out["title_zh"])
-        self.assertEqual(out["toggle"], 0)
-        en = run("en")
-        self.assertIn("Screen results", en["title"])
-        self.assertEqual(en["toggle"], 0)
-        got = [(a.n, a.verdict, a.chip) for a in calib.parse_answers(shlex.split(out["line"])[2], deck)]
-        self.assertEqual(got, [(1, "yes", "a"), (2, "no", None)])
+            probe = ("const btn=all.filter(n=>n.tagName==='button').map(n=>n._text);"
+                     "const ta=all.filter(n=>n.tagName==='textarea').length;"
+                     "console.log(JSON.stringify({title:document.title,buttons:btn,ta:ta}));")
+            out = self.drive(html, probe)
+            self.assertEqual(out["ta"], 0, lang)
+            for w in words:
+                self.assertNotIn(w, out["buttons"], lang)
+            self.assertNotIn("中文" if lang == "zh" else "English", out["buttons"])
+            self.assertIn("筛选结果" if lang == "zh" else "Screen results", out["title"])
+            self.assertNotIn("jevscreen answer", dom_text(self, html)["text"])
+            self.assertEqual(len(data_of(html)["cards"]), 3)
 
 
 
@@ -558,7 +537,9 @@ class TestNoviceReviewFixes(unittest.TestCase):
             self.assertIn(want, text)
             for word in ("annual_report", "filing_form", "出处: filing", "Source: filing", "2026-04-01"):
                 self.assertNotIn(word, text, lang)
-            self.assertIn("美国年报 10-K" if lang == "zh" else "SEC 10-K", text)     # a card's SEC form
+            # a card's SEC form (the cards are not on the page; their data serves the `cards` printout)
+            cards = page.build_page_data(_novice_result(), deck3(False), lang=lang)["cards"]
+            self.assertEqual(cards[0]["quote"]["where"], "美国年报 10-K" if lang == "zh" else "SEC 10-K")
             if lang == "zh":
                 self.assertNotIn("CNINFO", text)
         self.assertEqual(page.form_words("annual_report_summary"), ("年报摘要", "annual report summary"))
@@ -680,40 +661,6 @@ global.document={documentElement:{},body:{className:''},title:'',createElement:m
  getElementById:(id)=>id==='data'?{textContent:BLOB}:app,querySelector:()=>null,execCommand:()=>true};
 global.navigator={};
 """
-
-DRIVE = r"""
-function find(pred){return all.filter(pred);}
-function buttons(label){return find(n=>n.tagName==='button'&&n._text===label);}
-const titleZh=document.title;
-const toggle=buttons('English').length;
-buttons('要')[0].onclick();                       // card 1 yes
-buttons('a · 直接做')[0].onclick();               // chip a
-buttons('不要')[1].onclick();                     // card 2 no
-const ta=find(n=>n.tagName==='textarea').pop();
-console.log(JSON.stringify({line:ta.value,title_zh:titleZh,toggle:toggle}));
-"""
-
-DRIVE_EN = r"""
-function find(pred){return all.filter(pred);}
-function buttons(label){return find(n=>n.tagName==='button'&&n._text===label);}
-buttons('Yes')[0].onclick();                      // card 1 yes
-buttons('No')[1].onclick();                       // card 2 no
-const ta=find(n=>n.tagName==='textarea').pop();
-console.log(JSON.stringify({line:ta.value}));
-"""
-
-DRIVE_CHIPS = r"""
-function find(pred){return all.filter(pred);}
-function buttons(label){return find(n=>n.tagName==='button'&&n._text===label);}
-buttons('@NO@')[0].onclick();                     // card 1 no: every "no" chip of the card is offered
-const before=all.length;
-const offered=find(n=>n.tagName==='button'&&/^[a-k] · /.test(n._text));
-const last=offered.slice(-9).map(n=>n._text[0]);
-offered.filter(n=>n._text[0]==='j').pop().onclick();
-const ta=find(n=>n.tagName==='textarea').pop();
-console.log(JSON.stringify({chips:last,line:JSON.stringify(ta.value.split('"')[1].split(' '))}));
-"""
-
 
 if __name__ == "__main__":
     unittest.main()

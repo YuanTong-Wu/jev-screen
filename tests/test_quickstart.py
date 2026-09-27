@@ -398,9 +398,9 @@ class TestOnDemandFetch(QuickCase):
         seen = []
         orig = qs.Worker.progress
 
-        def spy(w, phase, zh, en, done=None, total=None, force=False):
+        def spy(w, phase, zh, en, done=None, total=None, force=False, **kw):
             seen.append(en)
-            return orig(w, phase, zh, en, done, total, force)
+            return orig(w, phase, zh, en, done, total, force, **kw)
         with mock.patch.object(qs.Worker, "progress", spy):
             out = self.done_flow()
         self.assertEqual(out["status"], "done", out.get("text_en"))

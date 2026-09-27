@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import http.client
 import json
 import re
@@ -245,17 +246,49 @@ def _read_some(obj: Any, n: int, dl: _Deadline, received: int, status: int | Non
         raise dl.stall(received, status) from e
 
 
+_BODY_BYTES: contextvars.ContextVar = contextvars.ContextVar("jevscreen_body_bytes", default=None)
+
+
+@contextlib.contextmanager
+def on_body_bytes(callback: Callable[[int, int | None], None]):
+    """Within the block, callback(bytes_so_far, content_length_or_None) after every chunk of a response body read
+    in this thread (the result page's 'MB downloaded'). A failing callback is ignored."""
+    token = _BODY_BYTES.set(callback)
+    try:
+        yield
+    finally:
+        _BODY_BYTES.reset(token)
+
+
+def _content_length(obj: Any) -> int | None:
+    try:
+        v = obj.headers.get("Content-Length") if getattr(obj, "headers", None) is not None else None
+        return int(v) if v is not None else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def _read_body(obj: Any, limit: int, dl: _Deadline, status: int | None, chunk: int = READ_CHUNK_BYTES) -> bytes:
     """Up to `limit` bytes of a body under the deadline (see _read_some): in chunks until EOF on a read1 reader;
-    an object with plain read(n) semantics (a whole-body read, as before) is read once."""
+    an object with plain read(n) semantics (a whole-body read, as before) is read once. The on_body_bytes callback
+    of the calling thread hears the count after each chunk."""
+    hook = _BODY_BYTES.get()
     if not _reader(obj)[1]:
-        return _read_some(obj, limit, dl, 0, status)
+        data = _read_some(obj, limit, dl, 0, status)
+        if hook is not None:
+            with contextlib.suppress(Exception):
+                hook(len(data), _content_length(obj))
+        return data
+    total = _content_length(obj) if hook is not None else None
     buf = bytearray()
     while len(buf) < limit:
         data = _read_some(obj, min(chunk, limit - len(buf)), dl, len(buf), status)
         if not data:
             break
         buf += data
+        if hook is not None:
+            with contextlib.suppress(Exception):
+                hook(len(buf), total)
     return bytes(buf)
 
 

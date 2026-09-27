@@ -105,7 +105,7 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
     one, rerun `next_command` plus that alternative's `flags` (e.g. `--countries US`); it is estimated again.
   - `key_jev`: with `provider: null` (no Jev key set yet) it carries the one account question: read `text_<lang>`
     (TypeSafe's official API, OpenRouter or Vercel AI Gateway, same price, each with its sign-up link and key step)
-    and let the human name the account they have (none yet: OpenRouter is the quickest). Take the matching entry of
+    and let the human name the account they have (none yet: TypeSafe's official API first; OpenRouter when TypeSafe sign-ups are paused). Take the matching entry of
     `choices` (`provider` typesafe | openrouter | vercel). With `provider` set (its key was rejected: `rejected:
     true`, or the human chose it and its key is missing) the item itself carries that provider's `agent_try` etc.,
     and `choices` lists the other providers: if the human now wants another account, run that entry instead (the
@@ -133,7 +133,8 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
   human is still making the key. From then on the JSON carries `poll_command` whenever the worker runs, even while
   a key or an answer is still open: poll it between your messages.
 - `running` (exit 0): run `poll_command` (`jevscreen quickstart --status --key K --wait 100 --json`) in a loop; each
-  call returns within 110 s. About once a minute, tell the human `progress.text_<lang>` in one line. Never rerun the
+  call returns within 110 s. About once a minute, tell the human `progress.text_<lang>` in one line. The page
+  (`page`) opened at the first step shows the same progress live; if `page_opened` is false, give them `page_uri`. Never rerun the
   front command while the status is `running`.
 - `done` / `partial` (exit 0): relay `text_<lang>` (the counts, the idea's total time and cost, the page, and what
   changed in this version) and the `top` rows as a short list in chat (translate `one_line` into the human's
@@ -189,9 +190,12 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
 A usage error (a typo in the flags) exits 2 **with no JSON**: that is a typo, not a block.
 
 **4. After the first result.** The same idea again returns the finished result for $0. A new idea costs about
-$0.25 and 4 minutes with no downloads. On the page the human can answer a few cards and copy one line
-(`jevscreen answer "1a 2h 3c" --deck deck-...`) to you: run it as given (about $0.01–0.03); it updates the same page
-(tell the human to refresh it), and `quickstart --status` then reports that newest version. A new version can bring
+$0.25 and 4 minutes with no downloads. The idea's one page (`page`) opened in the browser at the worker's first step:
+the checklist, the progress while the work runs (it reloads itself every 3 seconds) and then the result, so the
+human never has to refresh it. Cards are not a human step: only when the human asks to sharpen the list, run
+`jevscreen cards <run_id>` yourself, judge the few borderline companies, and apply your answers with
+`jevscreen answer "1a 2h 3c" --deck deck-...` (about $0.01–0.03); that updates the same page, and
+`quickstart --status` then reports that newest version. A new version can bring
 new foreign texts: when `quickstart --status --json` shows `translation_pending` > 0 again, do the translation
 rounds again (translations made before are reused). The page, the `--text` list, `why`, `answer` and `cards` speak
 the human's language (`--lang zh|en`, default: the language of the idea's quickstart job). If the human asks why a
@@ -301,7 +305,7 @@ has. When `doctor --json` fails `jev_provider` with no key at all, ask its `huma
 |---|---|---|---|
 | TypeSafe official API (sign-ups are sometimes paused) | https://console.typesafe.ai/keys | `jevscreen keys set typesafe` | `jev-1.13.0` (pinned) |
 | OpenRouter | https://openrouter.ai/settings/keys | `jevscreen keys set openrouter` | `typesafe/jev-1.13` |
-| Vercel AI Gateway (buy AI Gateway credits first; Jev may not be in the free tier) | Vercel dashboard, AI Gateway, API Keys | `jevscreen keys set vercel` | `typesafe-ai/jev` (no version) |
+| Vercel AI Gateway (version cannot be pinned; buy AI Gateway credits first; Jev may not be in the free tier) | Vercel dashboard, AI Gateway, API Keys | `jevscreen keys set vercel` | `typesafe-ai/jev` (no version: version cannot be pinned) |
 
 Tell the human, in plain words, to create the key (a spending limit of a few dollars on the key is a good idea where
 the provider has one), then run this in their own terminal and paste the key when it asks; nothing will show while

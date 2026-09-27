@@ -72,7 +72,7 @@ Exit code: `0` when `ok` is true (no check failed), else `1`. Without `--json` i
 | `descriptions` | warn: under 80% of companies >= $1B have a description | `companies`, `with_description` |
 | `official_text` | warn: no company >= $1B has official annual-report text | `companies`, `with_official_text` |
 | `key_typesafe`, `key_openrouter`, `key_vercel` | skip when not configured (one Jev key is enough; `jev_provider` fails when there is none); warn: its variable is blank / its first file is empty, or the key file is readable by other users | `configured`, `source` |
-| `jev_provider` | fail: no Jev key at all (`ask_human`, `human_question` / `human_question_zh`: the one account question, `key_commands` {provider: `jevscreen keys set <provider> --dialog`}, `fix_command` null; the text output prints the question and the commands too), the chosen provider (`JEVSCREEN_JEV_PROVIDER` or `keys use`) has no key (`fix_command` `jevscreen keys set <provider>`) or an unknown provider | `provider` (str?), `label`, `model`, `pinned` (bool), `endpoint`, `reason` (`saved`\|`key`\|`explicit`\|`default`: `saved` = the last Jev key set or `keys use`), `configured` ([str]) |
+| `jev_provider` | fail: no Jev key at all (`ask_human`, `human_question` / `human_question_zh`: the one account question, `key_commands` {provider: `jevscreen keys set <provider> --dialog`}, `fix_command` null; the text output prints the question and the commands too), the chosen provider (`JEVSCREEN_JEV_PROVIDER` or `keys use`) has no key (`fix_command` `jevscreen keys set <provider>`) or an unknown provider | `provider` (str?), `label`, `shown_as` / `shown_as_zh` (the name to show: Vercel AI Gateway always carries "version cannot be pinned" / "版本无法锁定"), `model`, `pinned` (bool), `endpoint`, `reason` (`saved`\|`key`\|`explicit`\|`default`: `saved` = the last Jev key set or `keys use`), `configured` ([str]) |
 | `key_sec_email` | warn: not configured, blank or empty (only `sync-sec` needs it) | `configured`, `source` |
 | `key_edinet`, `key_opendart` | skip when not configured (off by default); warn on a blank variable, an empty file or loose file mode | `configured`, `source` |
 | `consent_gray_sources` | warn: unset or unreadable (treated as no; `human_question` + `record_answer_commands`, `recipient_note` / `recipient_note_zh` to say right after the question, `answer_words` {yes: [...], no: [...]}: the clear replies); fail: recorded `no` (today the universe and descriptions are gray-private, so no screen) — `fix_command` is always null | `state` (`yes`\|`no`\|`unset`\|`unreadable`), `recorded_at` (str?) |
@@ -582,6 +582,34 @@ The job file holds no key and no SEC name or e-mail: it is scanned for every con
 and a hit refuses the write. The result page is scanned the same way.
 
 `jevscreen doctor --json` carries `quickstart_command` (the front command with a placeholder idea).
+
+### The one page per idea
+
+`<home>/pages/<idea_key>.html` is the only page the human needs (owner decision 2026-09-27). Top to bottom:
+
+1. **Prerequisites**: Python and packages, the data-source consent, the Jev key configured **and** verified by the
+   tiny paid test (with the provider's name; Vercel AI Gateway always says "version cannot be pinned"), the stock
+   list, the company profiles, the open data pack, ready to screen; optional (grey): SEC contact, EDINET, OpenDART,
+   MOPS annual reports. Each line is a green check, a spinner, a grey circle (not started / optional) or a red cross
+   with one plain sentence and the fix. When everything passes it collapses to one green line.
+2. **Progress**: per data item done / total with a bar (the stock list, the profiles with MB downloaded, the AI's
+   first read n/N, its check n/N, the annual reports fetched n/N), an ETA from the stage's own pace, the dollars
+   spent against the approved cap; blocks, cooldowns and stops in red, in plain words.
+3. **Scope questions**: an empty slot (`data.questions.items`, hidden while empty) for 1-2 questions with answer
+   buttons that build the line to paste to the AI (`data.questions.template` with `{answers}`), plus a copy button.
+4. **Results**: a compact top-10 table, then one expandable row per company (evidence with the translation /
+   original toggle; labels fact / inference / gap / your or your AI's call; source links), the unconfirmed
+   companies, the gaps.
+
+There are no card buttons and no answer bar on the page: the cards stay a CLI tool for you (`jevscreen cards`,
+`jevscreen answer`). The status part is the data block's `live` object (jevscreen.pagestatus): it is built from the
+quickstart job file and local files only (consent answers, key presence by stat, cooldown markers, doctor's local
+checks), never from the network and never waiting on the store. The front writes the page from its first call, the
+worker opens it once at its first step (`page_opened`; not with `--no-open`) and rewrites it atomically at every job
+save and progress tick; while work runs (or waits for an answer or a key) the page carries
+`<meta http-equiv="refresh" content="3">`, which is gone once the job is done, declined or blocked for 24 hours. The
+quickstart JSON carries `page` / `page_uri` from the first call on. `--text` and the `<noscript>` block start with the
+same status lines.
 
 ### `jevscreen page`
 

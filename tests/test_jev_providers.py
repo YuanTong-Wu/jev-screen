@@ -421,6 +421,30 @@ class QuickstartKeyTests(Base):
         self.assertIn("paused", item["question_en"])
         self.assertEqual(item["question_en"].count("Which one do you have?"), 1)       # one question
 
+    def test_owner_provider_decisions_in_the_texts(self):
+        """Owner decisions 2026-09-27: Vercel is named 'version cannot be pinned' / '版本无法锁定' wherever it is shown;
+        the recommendation is TypeSafe official first, OpenRouter when TypeSafe sign-ups are paused (static)."""
+        item = quickstart.key_item(self.cfg, quickstart.key_state(self.cfg), rejected=False)
+        self.assertIn("Vercel AI Gateway（版本无法锁定）", item["question_zh"])
+        self.assertIn("Vercel AI Gateway (version cannot be pinned)", item["question_en"])
+        self.assertIn("先试 TypeSafe 官方；官方暂停注册时，用 OpenRouter", item["question_zh"])
+        self.assertIn("Try TypeSafe's official API first; when its sign-ups are paused, use OpenRouter",
+                      item["question_en"])
+        self.assertNotIn("OpenRouter is the quickest", item["question_en"])
+        self.assertEqual([c["shown_as"] for c in item["choices"]],
+                         ["TypeSafe (official API)", "OpenRouter", "Vercel AI Gateway (version cannot be pinned)"])
+        with mock.patch.dict(os.environ, {"JEVSCREEN_JEV_PROVIDER": "vercel"}):
+            item = quickstart.key_item(self.cfg, quickstart.key_state(self.cfg), rejected=False)
+        self.assertIn("Vercel AI Gateway (version cannot be pinned)", item["text_en"])
+        self.assertIn("Vercel AI Gateway（版本无法锁定）", item["text_zh"])
+        with mock.patch.dict(os.environ, {"AI_GATEWAY_API_KEY": FAKE_VC}):
+            c = doctor.jev_provider_check(self.cfg)
+        self.assertIn("Vercel AI Gateway (version cannot be pinned)", c["detail"])
+        self.assertEqual(c["shown_as_zh"], "Vercel AI Gateway（版本无法锁定）")
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": FAKE_OR}):
+            c = doctor.jev_provider_check(self.cfg)
+        self.assertNotIn("cannot be pinned", c["detail"])
+
     def test_known_provider_and_rejection_texts(self):
         with mock.patch.dict(os.environ, {"JEVSCREEN_JEV_PROVIDER": "typesafe"}):
             k = quickstart.key_state(self.cfg)

@@ -18,7 +18,7 @@ import safe_env  # noqa: E402,F401
 
 from jevscreen import calib, jev, keys, l10n, page, quickstart as qs  # noqa: E402
 from test_cli_calib import CliCase  # noqa: E402
-from test_jev_providers import FAKE_TS, FAKE_VC, Base  # noqa: E402
+from test_jev_providers import FAKE_OR, FAKE_TS, FAKE_VC, Base  # noqa: E402
 
 TIER_CODE = re.compile(r"\b(?:gray|official|public)-(?:private|public)\b")
 CJK_SPACE = re.compile(r"[一-鿿] [一-鿿]")
@@ -78,6 +78,25 @@ class TestProviderWording(Base):
         en = out["provider_switch"]["notice_en"]
         self.assertIn("Jev now goes through TypeSafe (official API) instead of Vercel AI Gateway.", en)
         self.assertNotIn(") (", en)
+
+    def test_switching_to_vercel_names_the_unpinned_version(self):
+        """Owner decision: wherever the active provider is named, Vercel carries 'version cannot be pinned'."""
+        keys.write_key(self.cfg, "openrouter", FAKE_OR)
+        out = keys.write_key(self.cfg, "vercel", FAKE_VC)["provider_switch"]
+        self.assertIn("Jev now goes through Vercel AI Gateway (version cannot be pinned) instead of OpenRouter.",
+                      out["notice_en"])
+        self.assertIn("Jev 原来用 OpenRouter，现在改用 Vercel AI Gateway（版本无法锁定）。", out["notice_zh"])
+
+    def test_doctor_names_the_unpinned_version(self):
+        import urllib.error
+        from jevscreen import doctor
+        keys.write_key(self.cfg, "vercel", FAKE_VC)
+
+        def rejected(req, timeout):
+            raise urllib.error.HTTPError(req.full_url, 401, "no", None, None)
+        c = doctor.check_jev(self.cfg, rejected)
+        self.assertEqual(c["status"], "fail")
+        self.assertIn("Vercel AI Gateway (version cannot be pinned) rejected the key", c["detail"])
 
 
 class TestDoneText(unittest.TestCase):

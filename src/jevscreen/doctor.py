@@ -10,7 +10,8 @@ Rules:
   sends the active provider's key in its Authorization header and redacts it from every error text.
 - Jev provider: one check `jev_provider` names the active provider (jev.resolve_provider: JEVSCREEN_JEV_PROVIDER, else
   the human's saved choice - the last Jev key set, or `keys use` - else the first configured of openrouter, typesafe,
-  vercel), its model id and whether that id is pinned to one version. With no Jev key at all it fails with ask_human
+  vercel), its model id and whether that id is pinned to one version (Vercel AI Gateway is always named with "version
+  cannot be pinned": jev.provider_title; `shown_as` / `shown_as_zh`). With no Jev key at all it fails with ask_human
   and the one account question (human_question / _zh) plus key_commands; the text output prints them too.
 - The store is opened read-only in one short connection (_read_only_store: duckdb directly, NOT store.session, which
   creates the data folders), waiting up to STORE_WAIT_S for a lock. A lock held by another process is a warning,
@@ -289,6 +290,7 @@ def jev_provider_check(cfg: Config) -> dict[str, Any]:
         return _check("jev_provider", "fail", f"{e}. Unset it or fix it", None, ask_human=False, provider=None)
     configured = jev.configured_providers(cfg)
     extra = {"provider": prov.name, "label": prov.label, "model": prov.model, "pinned": prov.pinned,
+             "shown_as": jev.provider_title(prov, "en"), "shown_as_zh": jev.provider_title(prov, "zh"),
              "endpoint": prov.endpoint, "reason": why, "configured": configured}
     if why == "default":
         return _check("jev_provider", "fail", "no Jev key: real screens need one (dry runs do not). Jev is sold at "
@@ -305,14 +307,15 @@ def jev_provider_check(cfg: Config) -> dict[str, Any]:
         return _check("jev_provider", "fail", f"{chose} but no {prov.label} key is set{other}",
                       f"jevscreen keys set {prov.name}", ask_human=True, **extra)
     pin = ("model pinned to one version" if prov.pinned else
-           "model id names no version: Vercel decides which Jev version answers")
+           f"{jev.VERSION_NOT_PINNED['en']}: the model id names no version, so Vercel decides which Jev version "
+           "answers")
     others = [n for n in configured if n != prov.name]
     how = (f"chosen by {jev.PROVIDER_ENV}" if why == "explicit" else
            "the only Jev key set" if not others else
            (f"the human's choice (the last Jev key set, or `jevscreen keys use`)" if why == "saved" else
             f"first of {', '.join(configured)}") + f"; `jevscreen keys use {others[0]}` switches")
-    return _check("jev_provider", "ok", f"Jev via {prov.label}, model {prov.model} ({pin}); {how}. Answers are cached "
-                  "per provider: switching provider reads again and pays again", **extra)
+    return _check("jev_provider", "ok", f"Jev via {jev.provider_title(prov, 'en')}, model {prov.model} ({pin}); {how}. "
+                  "Answers are cached per provider: switching provider reads again and pays again", **extra)
 
 
 # Who receives the text the consent statement says is "sent to Jev": the owner's statement is kept word for word, and
@@ -391,7 +394,7 @@ def check_jev(cfg: Config, opener: Callable[..., Any] | None = None) -> dict[str
         prov = jev.active_provider(cfg)
     except jev.ProviderError as e:
         return _check("jev", "fail", str(e), None)
-    name, label = prov.name, prov.label
+    name, label = prov.name, jev.provider_title(prov, "en")    # Vercel: '... (version cannot be pinned)'
     fix = f"jevscreen keys set {name}"
     key = cfg.jev_key(name)
     if not key:

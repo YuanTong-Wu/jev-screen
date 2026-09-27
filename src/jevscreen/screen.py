@@ -2193,9 +2193,15 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                     meta={"security_id": c["security_id"], "input_tier": inp["input_tier"],
                           "input_source": inp["input_source"]})
 
-    def tell(phase: str, done: int, total: int) -> None:
+    def tell(phase: str, done: int, total: int, spent: Any = None) -> None:
         if progress is not None:
             with contextlib.suppress(Exception):     # a progress callback must never stop a paid run
+                if isinstance(spent, (int, float)):
+                    try:                             # the layer's spend so far (the page's running cost)
+                        progress(phase, done, total, spent_usd=float(spent))
+                        return
+                    except TypeError:
+                        pass
                 progress(phase, done, total)
 
     def make(layer: str, budget: float, dry: bool):
@@ -2205,7 +2211,8 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         client = factory(cfg, **kw)
         if progress is not None and not dry and client is not None:
             with contextlib.suppress(Exception):     # JevClient heartbeat (a fake client may not take attributes)
-                client.on_packet = lambda d, t, _layer=layer: tell(_layer, d, t)
+                client.on_packet = lambda d, t, _layer=layer, _c=client: tell(_layer, d, t,
+                                                                              getattr(_c, "spent_usd", None))
         return client
 
     status = STATUS_OK

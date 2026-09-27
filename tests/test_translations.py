@@ -79,9 +79,10 @@ class TestPageData(unittest.TestCase):
         texts = [i["text"] for i in items]
         # the top rows first: row 2's English profile line, row 3's English name (no official Chinese name) ...
         self.assertEqual(texts[:2], ["Baifeng makes aluminium.", "Heyuan Controls Co. Ltd."])
-        self.assertIn("We make things.", texts)                       # a card's excerpt
+        # cards are not on the page (a CLI tool for the user's AI): their texts are not exported nor pending
+        self.assertNotIn("We make things.", texts)
         self.assertIn("Unverio 0 Inc.", texts)                        # the unverified names come last
-        self.assertLess(texts.index("We make things."), texts.index("Unverio 0 Inc."))
+        self.assertEqual(texts[-1], "Unverio 4 Inc.")
         self.assertNotIn("青澜科技", texts)                           # Chinese already
         self.assertEqual(len(texts), len(set(texts)))                 # one item per distinct text
         for i in items:
@@ -90,8 +91,17 @@ class TestPageData(unittest.TestCase):
             self.assertEqual(i["sha"], l10n.text_sha(i["text"]))
             self.assertEqual(i["target_lang"], "zh")
             self.assertIn(i["kind"], tr.KINDS)
-        self.assertEqual({i["kind"] for i in items}, {"name", "description", "excerpt"})
+        self.assertEqual({i["kind"] for i in items}, {"name", "description"})     # the only English excerpt is a card's
         self.assertEqual(d["translation"]["pending"], len(items))
+
+    def test_a_stored_card_translation_still_reaches_the_card(self):
+        """Card texts are neither exported nor counted as pending, but a translation already in the store (the same
+        text on a row, or an earlier page) still fills the card for the `cards` printout."""
+        sha = l10n.text_sha("We make things.")
+        d = self.data("zh", translations={sha: "我们制造东西。"})
+        quotes = [c.get("quote") or {} for c in d["cards"]]
+        self.assertIn("我们制造东西。", [q.get("text_tr") for q in quotes])
+        self.assertEqual(d["translation"]["pending"], len(tr.pending_items(d)))
 
     def test_an_english_page_exports_the_chinese_excerpts_not_the_names(self):
         d = self.data("en")
@@ -123,15 +133,18 @@ class TestPageData(unittest.TestCase):
     def test_the_page_script_tags_translations_and_untranslated_originals(self):
         base = self.data("zh")
         items = tr.pending_items(base)
-        half = {i["sha"]: zh_of(i["text"]) for i in items if i["text"] != "We make things."}
+        half = {i["sha"]: zh_of(i["text"]) for i in items if i["text"] != "Baifeng makes aluminium."}
         text = dom_text(self, page.render_page(self.data("zh", translations=half)))["text"]
         self.assertIn("AI 翻译", text)
         self.assertIn("看原文", text)
-        self.assertIn(zh_of("Baifeng makes aluminium."), text)
-        self.assertIn("原文（未翻译）", text)                         # the card excerpt without a translation
-        self.assertIn("We make things.", text)
+        self.assertIn(zh_of("Heyuan Controls Co. Ltd."), text)
+        self.assertIn("原文（未翻译）", text)                         # the profile line without a translation
+        self.assertIn("Baifeng makes aluminium.", text)
+        self.assertNotIn("We make things.", text)                     # cards are not on the page
         # the hidden original is there for the toggle, labelled 原文
-        self.assertIn("原文\nBaifeng makes aluminium.", text)
+        full = dom_text(self, page.render_page(self.data("zh", translations={i["sha"]: zh_of(i["text"])
+                                                                              for i in items})))["text"]
+        self.assertIn("原文\nBaifeng makes aluminium.", full)
 
 
 class TestImportChecks(unittest.TestCase):

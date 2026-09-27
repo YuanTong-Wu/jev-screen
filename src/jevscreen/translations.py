@@ -31,6 +31,8 @@ PROVENANCE = "agent translation"
 KINDS = ("name", "description", "excerpt", "reason")
 BATCH_MAX = 60
 TOP = 10                 # the first rows go first in a batch (the ones the human reads)
+CARDS = 9                # the priority of the card texts: not on the page (a CLI tool for the user's AI), so never
+                         # exported nor pending; a translation already stored still fills them (the `cards` printout)
 MAX_CHARS = 4000
 
 INSTRUCTIONS_EN = ("Translate each item's \"text\" into {target} and write it into its \"translation\" field; keep "
@@ -46,7 +48,7 @@ TARGET_WORDS = {"zh": "Simplified Chinese", "en": "English"}
 
 def _slots(data: dict[str, Any]) -> Iterator[tuple[int, str, dict[str, Any], str, dict[str, Any]]]:
     """(priority, kind, holder, field, context) of every text on the page that may need a translation, in the order
-    a batch takes them: the top rows, the cards, the other rows, then the names of the lists."""
+    a batch takes them: the top rows, the other rows, the names of the lists, then the cards (priority CARDS)."""
     lang = data.get("lang") or "zh"
     rows = data.get("rows") or []
 
@@ -59,21 +61,21 @@ def _slots(data: dict[str, Any]) -> Iterator[tuple[int, str, dict[str, Any], str
             yield prio, "excerpt", r["quote"], "text", ctx
     for r in rows[:TOP]:
         yield from row_slots(r, 0)
-    for c in data.get("cards") or []:
-        ctx = {"ticker": c.get("ticker")}
-        if not c.get("name_zh"):
-            yield 1, "name", c, "name", ctx
-        yield 1, "description", c, "what", ctx
-        if lang == "en" and not c.get("why_en"):
-            yield 1, "reason", c, "why_zh", ctx
-        if isinstance(c.get("quote"), dict):
-            yield 1, "excerpt", c["quote"], "text", ctx
     for r in rows[TOP:]:
         yield from row_slots(r, 2)
     for part in ("unverified", "excluded"):
         for u in data.get(part) or []:
             if not u.get("name_zh"):
                 yield 3, "name", u, "name", {"ticker": u.get("ticker"), "country": u.get("country")}
+    for c in data.get("cards") or []:
+        ctx = {"ticker": c.get("ticker")}
+        if not c.get("name_zh"):
+            yield CARDS, "name", c, "name", ctx
+        yield CARDS, "description", c, "what", ctx
+        if lang == "en" and not c.get("why_en"):
+            yield CARDS, "reason", c, "why_zh", ctx
+        if isinstance(c.get("quote"), dict):
+            yield CARDS, "excerpt", c["quote"], "text", ctx
 
 
 def _needs(kind: str, holder: dict[str, Any], field: str, lang: str) -> str | None:
@@ -105,8 +107,8 @@ def apply(data: dict[str, Any], tr: dict[str, str] | None) -> dict[str, Any]:
     (sha -> text); data['translation'] = {lang, foreign, translated, pending}. Returns data (changed in place)."""
     lang = data.get("lang") or "zh"
     tr = tr or {}
-    seen: dict[str, bool] = {}
-    for _p, kind, holder, field, _ctx in _slots(data):
+    seen: dict[str, str] = {}
+    for prio, kind, holder, field, _ctx in _slots(data):
         t = _needs(kind, holder, field, lang)
         if t is None:
             continue
@@ -119,7 +121,8 @@ def apply(data: dict[str, Any], tr: dict[str, str] | None) -> dict[str, Any]:
             holder[f"{field}_kept"] = True
         else:
             holder.pop(f"{field}_kept", None)
-        seen[s] = "kept" if kept else ("translated" if got else "pending")
+        if prio != CARDS:                                 # only what the page shows counts
+            seen[s] = "kept" if kept else ("translated" if got else "pending")
     vals = list(seen.values())
     data["translation"] = {"lang": lang, "foreign": len(seen), "translated": vals.count("translated"),
                            "kept": vals.count("kept"), "pending": vals.count("pending")}
@@ -134,7 +137,7 @@ def pending_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     order: list[tuple[int, int, str]] = []
     for i, (prio, kind, holder, field, ctx) in enumerate(_slots(data)):
         t = _needs(kind, holder, field, lang)
-        if t is None or holder.get(f"{field}_tr") or holder.get(f"{field}_kept"):
+        if prio == CARDS or t is None or holder.get(f"{field}_tr") or holder.get(f"{field}_kept"):
             continue
         s = l10n.text_sha(t)
         if s in items:

@@ -43,6 +43,10 @@ Execution model (see docs/AGENT_API.md "quickstart"):
   front; an approval the human gave for it is held: only a recase or a Core/Main-style synonym of a flagged ordinary
   word keeps it (calib.idea_en_minor_fix; noted, never asked again), any other new sentence is the reprice question.
   A company the idea names in Chinese / Japanese / Korean may be named in English (calib.IDEA_EN_ALIASES).
+- The ONE page per idea (<home>/pages/<idea_key>.html; jevscreen.pagestatus + jevscreen.page): the front writes it
+  from its first call (prerequisites checklist), the worker opens it once at its first step (job.page_opened; never
+  with --no-open) and rewrites it atomically at every job save and progress tick (live progress, blocks in red); it
+  reloads itself every few seconds while work runs and stops once the job is done. The results fill in below.
 - One page per idea: result.page is always <home>/pages/<idea_key>.html, and when a newer run of the idea owns it
   (card answers, fetch-docs, a plain screen) the views show that run (newest_view). Time and cost are the idea's
   totals (idea_totals: the worker's own clock plus runs made outside it; every Jev cost of its runs + the key test).
@@ -77,6 +81,7 @@ LOCK = "quickstart"
 HEARTBEAT_STALE_S = 60.0
 HEARTBEAT_EVERY_S = 10.0
 PROGRESS_EVERY_S = 10.0
+PAGE_EVERY_S = 2.0                  # the worker rewrites the idea's page at most this often between job saves
 RETRY_NET_S = 15 * 60
 WAIT_DEFAULT_S, WAIT_MAX_S = 100.0, 110.0
 RELAY_EVERY_S = 60
@@ -142,11 +147,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "key_credits": "（先在 {credits_url} 买一点 AI Gateway credits，Jev 可能不在免费额度里）",
         "account_q": "Jev（读简介和年报的 AI 服务）要用你自己的付费账号。下面三家卖的是同一个 Jev，价格一样（这次约 $0.3）。"
                      "你有哪一家的账号？"
-                     "① TypeSafe 官方（Jev 的开发公司）：在 {ts_signup} 注册（官方注册有时会暂停），然后在 {ts_keys} 创建 key；"
+                     "① TypeSafe 官方（Jev 的开发公司，推荐）：在 {ts_signup} 注册（官方注册有时会暂停），然后在 {ts_keys} 创建 key；"
                      "② OpenRouter：在 {or_signup} 注册并充值几美元，然后在 {or_keys} 创建 key（建议给 key 设几美元的额度上限）；"
-                     "③ Vercel：在 {vc_signup} 注册，在 AI Gateway 买一点 credits（Jev 可能不在免费额度里），然后在 AI Gateway 的 "
-                     "API Keys 页面 {vc_keys} 点 Create key。"
-                     "都没有的话，OpenRouter 最省事。告诉我是哪一家；key 准备好了说一声，我会弹出一个输入框让你粘贴，输入内容不会显示，"
+                     "③ Vercel AI Gateway（版本无法锁定）：在 {vc_signup} 注册，在 AI Gateway 买一点 credits（Jev 可能不在免费额度里），"
+                     "然后在 AI Gateway 的 API Keys 页面 {vc_keys} 点 Create key。"
+                     "都没有的话：先试 TypeSafe 官方；官方暂停注册时，用 OpenRouter。告诉我是哪一家；key 准备好了说一声，我会弹出一个输入框让你粘贴，输入内容不会显示，"
                      "也不会经过我。千万不要把 key 发到聊天里。",
         "account_fallback": "输入框弹不出来的话：{terminal}，运行你那一家对应的命令：{cmds}，粘贴后按回车。",
         "key_other": "想改用另一家的账号？设置那一家的 key 就会改用它（{cmds}）。",
@@ -195,12 +200,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "idea_en_refused_q": "原来那句英文 '{old}' 不能用：{why}。新的英文是 '{new}'，意思有变化。同意改用新的英文吗？"
                              "预算上限仍是你同意的 ${x}。不同意的话，我再写一句。",
         "opened": "已在浏览器打开", "open_file": "用浏览器打开这个文件：{uri}",
+        "page_live": "浏览器里已打开这个想法的页面：准备情况、进度和结果都在上面，它会自己刷新。",
         "top_line": "{rank}. {name}（{ticker}，{country}）——{one}；{verdict}，{evidence}",
         "ev_annual_report": "年报原文", "ev_profile": "只有简介",
         "ev_gap_annual_report": "年报摘录未提到（缺口）", "ev_gap_profile": "简介摘录未提到（缺口）",
         "ev_user": "按你的判断（AI 没从原文确认）", "mark_user": "，你的判断", "mark_edge": "，边缘",
         "next_idea": "换一个想法：直接告诉你的 AI（约 4 分钟，约 $0.25，不用再下载）",
-        "next_cards": "想更准：在结果页回答几张卡（可选；应用后重新排序，约 $0.01–0.03）",
+        "next_cards": "想更准：让你的 AI 复核几家边缘公司（可选，你不用做什么；重新排序约 $0.01–0.03）",
         "next_gap_cn": "补中国公司简介：约 {n} 家，约 {m} 分钟，可后台",
         "next_gap_sec": "用美股年报原文核对：下载时按 SEC 规则附上一个名字和邮箱（可选，不用注册账号）",
         "budget_exhausted": "预算用完了：结果页先给出已核对的 {n} 家。继续需要再同意约 ${x}。",
@@ -264,13 +270,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "key_credits": " (first buy some AI Gateway credits at {credits_url}; Jev may not be in the free tier)",
         "account_q": "Jev (the AI service that reads profiles and annual reports) runs on your own paid account. These "
                      "three sell the same Jev at the same price (about $0.30 for this screen). Which one do you have? "
-                     "(1) TypeSafe, the official API (Jev's maker): sign up at {ts_signup} (sign-ups are sometimes "
-                     "paused), then create a key at {ts_keys}; "
+                     "(1) TypeSafe, the official API (Jev's maker; recommended): sign up at {ts_signup} (sign-ups are "
+                     "sometimes paused), then create a key at {ts_keys}; "
                      "(2) OpenRouter: sign up at {or_signup} and add a few dollars of credit, then create a key at "
                      "{or_keys} (a limit of a few dollars on the key is a good idea); "
-                     "(3) Vercel: sign up at {vc_signup}, buy some AI Gateway credits (Jev may not be in the free tier), "
-                     "then click Create key on the AI Gateway API Keys page {vc_keys}. "
-                     "None yet? OpenRouter is the quickest. Tell me which one; when the key is ready, say so and I will "
+                     "(3) Vercel AI Gateway (version cannot be pinned): sign up at {vc_signup}, buy some AI Gateway "
+                     "credits (Jev may not be in the free tier), then click Create key on the AI Gateway API Keys page "
+                     "{vc_keys}. None yet? Try TypeSafe's official API first; when its sign-ups are paused, use "
+                     "OpenRouter. Tell me which one; when the key is ready, say so and I will "
                      "open a box where you paste it: the text stays hidden and never passes through me. Never paste the "
                      "key into the chat.",
         "account_fallback": "If no box appears: {terminal} and run the command for your provider: {cmds}; paste, press "
@@ -333,6 +340,8 @@ STRINGS: dict[str, dict[str, str]] = {
                              "changes the meaning. OK to use the new English? The cap stays at the ${x} you approved. "
                              "If not, I will write another sentence.",
         "opened": "opened in your browser", "open_file": "open this file in a browser: {uri}",
+        "page_live": "The idea's page is open in your browser: the checklist, the progress and then the result, "
+                     "refreshing by itself.",
         "top_line": "{rank}. {name} ({ticker}, {country}) - {one}; {verdict}, {evidence}",
         "ev_annual_report": "annual report", "ev_profile": "profile only",
         "ev_gap_annual_report": "the filing excerpt does not mention it (gap)",
@@ -340,7 +349,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "ev_user": "your call (the AI did not confirm it from the text)", "mark_user": ", your call",
         "mark_edge": ", borderline",
         "next_idea": "Try another idea: just tell your AI (about 4 min, about $0.25, no downloads)",
-        "next_cards": "Sharpen it: answer a few cards on the page (optional; re-ranking costs about $0.01–0.03)",
+        "next_cards": "Sharpen it: let your AI review a few borderline companies (optional, nothing for you to do; "
+                      "re-ranking costs about $0.01–0.03)",
         "next_gap_cn": "Fill Chinese company profiles: about {n} companies, about {m} min, can run in the background",
         "next_gap_sec": "Check US companies against annual reports: give the SEC a contact name and e-mail, sent with "
                         "each download (optional, no account)",
@@ -629,7 +639,9 @@ def key_item(cfg, k: dict[str, Any], rejected: bool, http_status: Any = None) ->
     choices = []
     for n in jev.PROVIDER_ORDER:
         pr = jev.PROVIDERS[n]
-        choices.append({"provider": n, "label": pr.label, "label_zh": pr.label_zh, "signup_url": pr.signup_url,
+        choices.append({"provider": n, "label": pr.label, "label_zh": pr.label_zh, "pinned": pr.pinned,
+                        "shown_as": jev.provider_title(pr, "en"), "shown_as_zh": jev.provider_title(pr, "zh"),
+                        "signup_url": pr.signup_url,
                         "key_url": pr.key_url, "agent_try": f"jevscreen keys set {n} --dialog",
                         "agent_try_file": f"jevscreen keys set {n} --from-file <the file the human saved it in>",
                         "human_command": f"{_abs_jevscreen()} keys set {n}"})
@@ -637,7 +649,7 @@ def key_item(cfg, k: dict[str, Any], rejected: bool, http_status: Any = None) ->
     def cmds(lang: str, skip: str | None = None) -> str:
         sep = "；" if lang == "zh" else "; "
         colon = "：" if lang == "zh" else ": "
-        return sep.join(f"{c['label_zh' if lang == 'zh' else 'label']}{colon}`{c['human_command']}`"
+        return sep.join(f"{c['shown_as_zh' if lang == 'zh' else 'shown_as']}{colon}`{c['human_command']}`"
                         for c in choices if c["provider"] != skip)
 
     if k.get("reason") in ("default", "error") and not rejected:
@@ -653,7 +665,8 @@ def key_item(cfg, k: dict[str, Any], rejected: bool, http_status: Any = None) ->
     pr = _provider(k.get("provider"))
     absc = f"{_abs_jevscreen()} keys set {pr.name}"
     pinned = k.get("reason") == "explicit"          # JEVSCREEN_JEV_PROVIDER: another key would not switch
-    item.update(provider=pr.name, label=pr.label, label_zh=pr.label_zh,
+    item.update(provider=pr.name, label=pr.label, label_zh=pr.label_zh, pinned=pr.pinned,
+                shown_as=jev.provider_title(pr, "en"), shown_as_zh=jev.provider_title(pr, "zh"),
                 agent_try=f"jevscreen keys set {pr.name} --dialog", agent_try_file=f"jevscreen keys set {pr.name} --from-file <the file the human saved it in>",
                 human_command=absc)
     if not pinned:
@@ -662,6 +675,7 @@ def key_item(cfg, k: dict[str, Any], rejected: bool, http_status: Any = None) ->
     for lang in ("zh", "en"):
         T = STRINGS[lang]
         label = provider_label(pr, lang)
+        shown = jev.provider_title(pr, lang)          # Vercel: 'version cannot be pinned' wherever it is named
         head, sp = "", (" " if lang == "en" else "")
         vercel_403 = pr.name == "vercel" and http_status == 403
         if rejected:
@@ -670,7 +684,7 @@ def key_item(cfg, k: dict[str, Any], rejected: bool, http_status: Any = None) ->
         hint = (T["key_limit"] if pr.name == "openrouter" else
                 T["key_credits"].format(credits_url=pr.credits_url) if pr.name == "vercel" and not vercel_403 else "")
         text = head + T["key"].format(
-            label=label, key_url=pr.key_url, limit=hint,
+            label=shown, key_url=pr.key_url, limit=hint,
             terminal=agent_cli.terminal_hint(lang), abs_cmd=absc) + (
             "" if pinned else sp + T["key_other"].format(cmds=cmds(lang, pr.name)))
         item[f"text_{lang}"] = zh_tidy(text) if lang == "zh" else text
@@ -1268,6 +1282,9 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
     rem = remaining_usd(cfg, job, spent=spent) if a else None
     totals = idea_totals(cfg, job["idea"], job) if res else None
     failure = job.get("failure") or {}
+    from . import page as _page
+    one = _page.stable_path(cfg, job["idea"])          # the idea's one page, from the first call on
+    page_now = res.get("page") or (str(one) if one.exists() else None)
     out: dict[str, Any] = {
         "command": "quickstart", "format": FORMAT, "status": status, "exit_code": STATUS_EXIT[status],
         "idea": job["idea"], "idea_key": job["idea_key"], "lang": job.get("lang"), "state": job.get("state"),
@@ -1275,9 +1292,10 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         "pending": items, "idea_en": job.get("idea_en"), "idea_en_source": job.get("idea_en_source"),
         "approved_usd": a["usd"] if a else None, "spent_usd": None if not a else round(a["usd"] - (rem or 0), 6),
         "remaining_usd": rem, "next_command": None, "poll_command": None, "retry_after": failure.get("retry_after"),
-        "relay_every_s": RELAY_EVERY_S, "run_id": res.get("run_id"), "page": res.get("page"),
-        "page_uri": Path(res["page"]).resolve().as_uri() if res.get("page") else None,
-        "page_opened": bool(res.get("page_opened")), "deck_id": res.get("deck_id"), "cost_usd": res.get("cost_usd"),
+        "relay_every_s": RELAY_EVERY_S, "run_id": res.get("run_id"), "page": page_now,
+        "page_uri": Path(page_now).resolve().as_uri() if page_now else None,
+        "page_opened": bool(res.get("page_opened") or job.get("page_opened")), "deck_id": res.get("deck_id"),
+        "cost_usd": res.get("cost_usd"),
         "total_cost_usd": (totals or {}).get("cost_usd"), "total_seconds": (totals or {}).get("seconds"),
         "version": res.get("version"), "change_zh": res.get("change_zh"), "change_en": res.get("change_en"),
         "idea_en_changes": job.get("idea_en_changes") or [],
@@ -1429,7 +1447,8 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
             lines.append(T["bg_started"])
         return "\n".join(x for x in lines if x)
     if status == "running":
-        return _progress_text(job, lang) or T["running"].format(phase=1, what=T["p_check"])
+        text = _progress_text(job, lang) or T["running"].format(phase=1, what=T["p_check"])
+        return text + ("\n" + T["page_live"] if job.get("page_opened") else "")
     kind = failure.get("kind")
     if job.get("state") == "interrupted":
         return T["interrupted"]
@@ -1502,6 +1521,14 @@ def reusable(cfg, job: dict[str, Any]) -> bool:
         and res.get("countries") == job.get("countries")
 
 
+def _save_and_page(cfg, job: dict[str, Any]) -> None:
+    """The front's save (it holds the quickstart lock): the job file, then the idea's one page from it, before any
+    worker is spawned (the worker keeps the page up to date from then on)."""
+    from . import pagestatus
+    save_job(cfg, job)
+    pagestatus.write(cfg, job)
+
+
 def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float | None = None,
           min_mcap: float | None = None, countries: list[str] | None = None, lang: str = "auto",
           fd_file: str | None = None, no_open: bool = False, retry: bool = False, new_run: bool = False,
@@ -1541,7 +1568,7 @@ def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float |
         c = consent_state(cfg)
         if c["state"] == "no":
             job["state"] = "declined"
-            save_job(cfg, job)
+            _save_and_page(cfg, job)
             return _with_refusal(response(cfg, job, []), job, problems)
         if job.get("state") == "declined":
             job["state"] = "new"
@@ -1563,13 +1590,13 @@ def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float |
             t = iso(now_utc())
             job["worker"] = {"pid": None, "started_at": t, "heartbeat_at": t}
             job["progress"] = {**(job.get("progress") or {}), "heartbeat_at": t}
-            save_job(cfg, job)
+            _save_and_page(cfg, job)
             lock.__exit__(None, None, None)
             lock = None
             (spawn or spawn_worker)(cfg, key)
             return _with_refusal(response(cfg, job), job, problems)
         if job.get("state") == "done" and (reusable(cfg, job) or exhausted(job)):
-            save_job(cfg, job)           # the result as it is ($0); an exhausted one carries the top-up question
+            _save_and_page(cfg, job)           # the result as it is ($0); an exhausted one carries the top-up question
             return _with_refusal(response(cfg, job), job, problems)
         if job.get("state") == "done":        # sieve / scope changed: screen again (the Jev cache makes it cheap)
             reset_steps(job, "estimate", "screen", "fetch", "finish")
@@ -1586,12 +1613,12 @@ def front(cfg, idea: str, *, idea_en: str | None = None, approve_budget: float |
             t = iso(now_utc())
             job["worker"] = {"pid": None, "started_at": t, "heartbeat_at": t}
             job["progress"] = {**(job.get("progress") or {}), "heartbeat_at": t}
-            save_job(cfg, job)
+            _save_and_page(cfg, job)
             lock.__exit__(None, None, None)
             lock = None
             (spawn or spawn_worker)(cfg, key)
         else:
-            save_job(cfg, job)
+            _save_and_page(cfg, job)
     finally:
         if lock is not None:
             lock.__exit__(None, None, None)
@@ -1635,6 +1662,8 @@ def _front_busy(cfg, idea: str, key: str, flags: dict[str, Any], *, lang: str, m
     sieve_drift(cfg, view, inbox)
     if view.get("state") != "running":
         view["queued"] = True      # a fill yes on a finished job too: --status starts it once the lock is free
+        from . import pagestatus   # another idea's worker holds the lock: nobody else writes this idea's page
+        pagestatus.write(cfg, view)
     out = response(cfg, view)
     if problems:
         _refusal_fields(out, view, problems)
@@ -1689,6 +1718,9 @@ def _view(cfg, key: str, spawn: Callable[[Any, str], Any] | None) -> dict[str, A
         job = {**job, "state": "interrupted"}
     if _resumable(cfg, job):
         return front(cfg, job["idea"], spawn=spawn)
+    if job.get("state") != "running":      # no worker writes the page now: it follows the answers given since
+        from . import pagestatus
+        pagestatus.write(cfg, job)
     return response(cfg, job)
 
 
@@ -1842,6 +1874,7 @@ class Worker:
         self.cfg, self.job, self.d = cfg, job, deps
         self.mu = threading.RLock()
         self.last_progress = 0.0
+        self.last_page = 0.0
         self.stop = threading.Event()
         self.t_start = time.monotonic()
         self.base_seconds = float(job.get("worker_seconds") or 0.0)
@@ -1863,6 +1896,32 @@ class Worker:
     def save(self) -> None:
         with self.mu:
             save_job(self.cfg, self.job)
+            self.page()
+
+    def page(self) -> None:
+        """Rewrite the idea's one page (prerequisites, progress, results) from the job: at every save and at most
+        every PAGE_EVERY_S between saves (the page reloads itself every few seconds while work runs)."""
+        from . import pagestatus
+        with self.mu:
+            self.last_page = time.monotonic()
+            pagestatus.write(self.cfg, self.job, warn=lambda m: print(m, file=sys.stderr))
+
+    def open_once(self) -> bool:
+        """Open the idea's page in the browser the first time a worker runs for this job (not with --no-open):
+        it then reloads itself while the work runs, so it is never opened twice. True when it was opened now."""
+        from . import page
+        with self.mu:
+            if self.job.get("page_opened") or self.job.get("no_open"):
+                return False
+            self.page()
+            sp = page.stable_path(self.cfg, self.job["idea"])
+            if not sp.exists():
+                return False
+            opened = bool((self.d.open_page or _default_open)(sp))
+            if opened:
+                self.job["page_opened"] = True
+                save_job(self.cfg, self.job)
+            return opened
 
     def beat(self) -> None:
         with self.mu:
@@ -1878,16 +1937,44 @@ class Worker:
                 self.beat()
 
     def progress(self, phase: int, text_zh: str, text_en: str, done: int | None = None, total: int | None = None,
-                 force: bool = False) -> None:
+                 force: bool = False, stage: str | None = None, **extra: Any) -> None:
+        """The progress line (job['progress']); `stage` (universe, descriptions, l1, fetch, l2) also keeps that
+        stage's own done / total and start time for the page's bars and ETA (progress.stages)."""
         with self.mu:
             p = self.job.get("progress") or {}
             changed = p.get("phase") != phase
-            self.job["progress"] = {"phase": phase, "done": done, "total": total, "text_zh": text_zh,
-                                    "text_en": text_en, "heartbeat_at": iso(now_utc())}
+            keep = {k: p[k] for k in ("stages", "spent_before", "run_spent_usd") if k in p}
+            if phase < 4:
+                keep.pop("run_spent_usd", None)
+            new = {"phase": phase, "done": done, "total": total, "text_zh": text_zh, "text_en": text_en,
+                   "heartbeat_at": iso(now_utc()), **keep, **extra}
+            if stage is not None:
+                stages = dict(new.get("stages") or {})
+                st = dict(stages.get(stage) or {})
+                if not st.get("started_at") or p.get("stage") != stage:
+                    st.update(started_at=iso(now_utc()), done0=done or 0)
+                st.update(done=done, total=total)
+                stages[stage] = st
+                new.update(stages=stages, stage=stage, stage_started_at=st["started_at"])
+            elif p.get("stage") is not None and phase == p.get("phase"):
+                new.update(stage=p.get("stage"), stage_started_at=p.get("stage_started_at"))
+            self.job["progress"] = new
             if force or changed or time.monotonic() - self.last_progress >= PROGRESS_EVERY_S:
                 self.last_progress = time.monotonic()
                 self.job["worker"]["heartbeat_at"] = iso(now_utc())
                 self.save()
+            elif time.monotonic() - self.last_page >= PAGE_EVERY_S:
+                self.page()
+
+    def stage_count(self, stage: str, done: int, total: int | None) -> None:
+        """A stage's count without a new progress line (the bytes of the profile download)."""
+        with self.mu:
+            p = self.job.setdefault("progress", {})
+            stages = p.setdefault("stages", {})
+            st = stages.setdefault(stage, {"started_at": iso(now_utc()), "done0": 0})
+            st.update(done=done, total=total)
+            if time.monotonic() - self.last_page >= PAGE_EVERY_S:
+                self.page()
 
     def record(self, sid: str, status: str, t0: float, detail_zh: str = "", detail_en: str = "",
                **extra: Any) -> None:
@@ -1992,6 +2079,12 @@ class Worker:
         self.progress(1, T["zh"]["p_check_ok"], T["en"]["p_check_ok"], force=True)
         return "ok"
 
+    def first_step(self) -> None:
+        """The quickstart's first step opens the idea's one page (prerequisites, then progress, then results): it
+        reloads itself while the work runs, so the human watches it fill in."""
+        with contextlib.suppress(Exception):     # never worth a failed job
+            self.open_once()
+
     def step_universe(self) -> str:
         from . import ops, store
         t0 = time.monotonic()
@@ -2001,18 +2094,18 @@ class Worker:
         if facts["companies"] and facts["age_days"] is not None and facts["age_days"] <= UNIVERSE_FRESH_DAYS:
             zh = T["zh"]["p_universe_skip"].format(age=UNIVERSE_FRESH_DAYS)
             en = T["en"]["p_universe_skip"].format(age=UNIVERSE_FRESH_DAYS)
-            self.record("universe", "skipped", t0, zh, en)
+            self.record("universe", "skipped", t0, zh, en, companies=facts["at_floor"])
             self.progress(2, zh, en, force=True)
             return "ok"
         if self.backoff("universe"):
             if facts["companies"]:
                 self.record("universe", "skipped", t0, "网络失败后 15 分钟内不重试，先用旧清单", "not retried within 15 min "
-                            "of a network failure; using the old list")
+                            "of a network failure; using the old list", stale=True)
                 return "ok"
             f = self.job["failures"]["universe"]
             return self.fail("network", f.get("error"), retry_after=f.get("retry_after"))
         self.progress(2, T["zh"]["running"].format(phase=2, what=T["zh"]["p_universe"]),
-                      T["en"]["running"].format(phase=2, what=T["en"]["p_universe"]), force=True)
+                      T["en"]["running"].format(phase=2, what=T["en"]["p_universe"]), force=True, stage="universe")
         client = (self.d.scanner_client or _default_scanner_client)(self.cfg)
         refresh = self.d.refresh_universe or _default_refresh
 
@@ -2036,7 +2129,7 @@ class Worker:
             if facts["companies"]:
                 self.note("TradingView refused the refresh (24 h cooldown); screening the older stock list")
                 self.record("universe", "skipped", t0, "TradingView 暂时拒绝，先用旧清单", "TradingView refused; "
-                            "using the older list", blocked=True)
+                            "using the older list", blocked=True, stale=True)
                 return "ok"
             return self.fail("blocked", summ.get("reason") or summ.get("status"),
                              retry_after=summ.get("retry_after"))
@@ -2044,7 +2137,8 @@ class Worker:
             return self.fail("busy", summ.get("status"))
         self.net_failure("universe", str(summ.get("error") or summ.get("status")))
         if facts["companies"]:
-            self.record("universe", "skipped", t0, "下载失败，先用旧清单", "download failed; using the older list")
+            self.record("universe", "skipped", t0, "下载失败，先用旧清单", "download failed; using the older list",
+                        stale=True)
             return "ok"
         f = self.job["failures"]["universe"]
         return self.fail("network", f.get("error"), retry_after=f.get("retry_after"))
@@ -2064,7 +2158,8 @@ class Worker:
         fd_file = self.job.get("fd_file")
         if not fd_file and (facts["import_fresh"] or facts["share"] >= DESC_OK_SHARE):
             zh, en = T["zh"]["p_desc_skip"].format(pct=pct), T["en"]["p_desc_skip"].format(pct=pct)
-            self.record("descriptions", "skipped", t0, zh, en, share=round(facts["share"], 3))
+            self.record("descriptions", "skipped", t0, zh, en, share=round(facts["share"], 3),
+                        described=facts["described"])
             self.progress(2, zh, en, force=True)
             return "ok"
 
@@ -2076,7 +2171,7 @@ class Worker:
             if facts["share"] >= DESC_FAIL_SHARE:
                 self.note("company profiles could not be downloaded; screening the profiles already stored")
                 self.record("descriptions", "skipped", t0, "下载失败，先用已有简介", "download failed; using the "
-                            "stored profiles", share=round(facts["share"], 3))
+                            "stored profiles", share=round(facts["share"], 3), stale=True)
                 return "ok"
             f = self.job["failures"]["descriptions"]
             if blocked_until:     # the real cooldown, not the 15-minute network retry (--retry cannot shorten it)
@@ -2087,11 +2182,19 @@ class Worker:
             if self.backoff("descriptions"):
                 return gave_up((self.job["failures"]["descriptions"] or {}).get("error") or "earlier failure")
             self.progress(2, T["zh"]["running"].format(phase=2, what=T["zh"]["p_desc"]),
-                          T["en"]["running"].format(phase=2, what=T["en"]["p_desc"]), force=True)
+                          T["en"]["running"].format(phase=2, what=T["en"]["p_desc"]), force=True,
+                          stage="descriptions")
             client = (self.d.fd_client or _default_fd_client)(self.cfg)
             download = self.d.download_equities or _default_download
-            code, summ = ops.run_networked("fetch-fd", self.cfg, lambda: download(self.cfg, client), client=client,
-                                           consent_source=fd.SOURCE_ID)
+            from . import http as _http
+
+            def got_bytes(n: int, total: int | None) -> None:     # MB downloaded, for the page
+                self.stage_count("descriptions", n, total or None)
+
+            def fetch():
+                with _http.on_body_bytes(got_bytes):
+                    return download(self.cfg, client)
+            code, summ = ops.run_networked("fetch-fd", self.cfg, fetch, client=client, consent_source=fd.SOURCE_ID)
             info = summ.get("result") or {}
             if code == 2:        # every mirror refused, now or within the 24 h fetch-fd cooldown
                 return gave_up(f"blocked: {summ.get('reason') or summ.get('status')}",
@@ -2102,6 +2205,7 @@ class Worker:
                 return gave_up(str(summ.get("error") or info.get("status") or "download failed")
                                + (f" ({'; '.join(info.get('errors') or [])})" if info.get("errors") else ""))
             fd_file = info["path"]
+            self.fd_bytes = info.get("bytes")
         imp = self.d.import_descriptions or _default_import
 
         def work():
@@ -2118,7 +2222,9 @@ class Worker:
         en = T["en"]["p_desc_ok"].format(n=f"{facts['described']:,}", pct=pct, s=int(time.monotonic() - t0))
         with self.mu:
             self.job["failures"].pop("descriptions", None)
-        self.record("descriptions", "ok", t0, zh, en, share=round(facts["share"], 3))
+        mb = getattr(self, "fd_bytes", None)
+        self.record("descriptions", "ok", t0, zh, en, share=round(facts["share"], 3), described=facts["described"],
+                    mb=round(mb / 1e6, 1) if isinstance(mb, (int, float)) and mb else None)
         self.progress(2, zh, en, force=True)
         return "ok"
 
@@ -2375,16 +2481,26 @@ class Worker:
             self.job["approval"].setdefault("out_dirs", []).append(str(out_dir))
             self.save()
 
-        def on_progress(phase: str, done: int, total: int) -> None:
+        layer_spent: dict[str, float] = {}
+
+        def on_progress(phase: str, done: int, total: int, spent_usd: float | None = None) -> None:
             key = {"l1": "p_l1", "fetch": "p_fetch", "l2": "p_l2"}.get(phase)
             if key is None:
                 return
+            if spent_usd is not None:
+                layer_spent[phase] = float(spent_usd)
             self.progress(4, T["zh"][key].format(done=f"{done:,}", total=f"{total:,}", s=f"{FETCH_DOCS_S:g}"),
                           T["en"][key].format(done=f"{done:,}", total=f"{total:,}", s=f"{FETCH_DOCS_S:g}"), done,
-                          total)
+                          total, stage=phase, run_spent_usd=round(sum(layer_spent.values()), 6))
 
+        with self.mu:       # a new screen: its stages start empty; the page adds its cost to what was spent before
+            p = self.job.setdefault("progress", {})
+            p["stages"] = {k: v for k, v in (p.get("stages") or {}).items() if k not in ("l1", "l2", "fetch")}
+            a = self.job.get("approval") or {}
+            p["spent_before"] = round(max(0.0, float(a.get("usd") or 0.0) - rem), 6)
+            p["run_spent_usd"] = 0.0
         self.progress(4, T["zh"]["p_l1"].format(done=0, total="…"), T["en"]["p_l1"].format(done=0, total="…"),
-                      force=True)
+                      force=True, stage="l1")
         try:
             res = screen.screen(self.cfg, self.job["idea"], idea_en=self.job["idea_en"],
                                 min_mcap_usd=float(self.job["min_mcap_usd"]), countries=self.job.get("countries"),
@@ -2467,7 +2583,7 @@ class Worker:
         def on_progress(done: int, total: int) -> None:
             self.progress(4, T["zh"]["p_fetch"].format(done=f"{done:,}", total=f"{total:,}", s=f"{FETCH_DOCS_S:g}"),
                           T["en"]["p_fetch"].format(done=f"{done:,}", total=f"{total:,}", s=f"{FETCH_DOCS_S:g}"),
-                          done, total)
+                          done, total, stage="fetch")
         try:        # its console lines go to the worker's log
             ret = (self.d.fetch_docs or _default_fetch_docs)(
                 self.cfg, res, time_s=FETCH_DOCS_S, update_budget=round(min(ondemand.UPDATE_BUDGET_DEFAULT, left), 6),
@@ -2674,15 +2790,20 @@ class Worker:
         self.tick()
         totals = idea_totals(self.cfg, self.job["idea"], self.job, wait_s=30.0)
         path, data = page.write_page(self.cfg, res["output_dir"], res, deck, lang=self.job.get("lang") or "zh",
-                                     extra={"totals": totals} if totals else None)
+                                     extra={"totals": totals} if totals else None, job=self.job)
         stable = page.stable_path(self.cfg, self.job["idea"]) if path and page.stable_holds(
             self.cfg, self.job["idea"], res["run_id"]) else path
         opened = False
         if stable is not None and not self.job.get("no_open") and res["run_id"] not in self.job["opened_run_ids"]:
-            opened = bool((self.d.open_page or _default_open)(stable))
+            # the one page was opened at the first step and reloads itself: it now shows the result. Opened here
+            # only when it never was (a job from before, a browser that could not be opened then)
+            opened = bool(self.job.get("page_opened")) and stable == page.stable_path(self.cfg, self.job["idea"])
+            if not opened:
+                opened = bool((self.d.open_page or _default_open)(stable))
             if opened:
                 with self.mu:
                     self.job["opened_run_ids"].append(res["run_id"])
+                    self.job["page_opened"] = True
         with self.mu:
             self.job["notes"] = [n for n in self.job.get("notes") or []      # resolved by this result
                                  if not str(n).startswith(("worker stopped without finishing", "interrupted ("))]
@@ -2710,6 +2831,7 @@ class Worker:
                 and step_done(self.job, "finish"):
             self.run_fill()              # the first result stands; only the fill and its re-rank run
             return 0
+        self.first_step()
         order = [("check", self.step_check), ("universe", self.step_universe),
                  ("descriptions", self.step_descriptions), ("pack", self.step_pack),
                  ("idea_en", self.step_idea_en), ("ai_check", self.step_ai_check),

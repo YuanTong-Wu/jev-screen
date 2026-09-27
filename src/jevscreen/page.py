@@ -1,5 +1,6 @@
-"""The result page: one self-contained page.html per screen run (and a stable copy per idea) that a non-technical
-human opens in a browser.
+"""The ONE page per idea (<home>/pages/<idea_key>.html; also page.html in each run folder) that a non-technical human
+opens in a browser: prerequisites checklist and live progress (data['live'], jevscreen.pagestatus), a slot for scope
+questions (data['questions'], hidden while empty), then the results (top-10 table, one expandable row per company).
 
 Rules (see docs/DATA_RULES.md "Result page"):
 - Self-contained, no network: a strict Content-Security-Policy (default-src 'none'; inline style and script only;
@@ -17,8 +18,12 @@ Rules (see docs/DATA_RULES.md "Result page"):
   the verbatim original behind a 'show original' button; without a translation the original, marked.
 - Fact / inference / gap / your call are labelled separately: the filing quote is a fact (with its link), the
   verdict is the AI's inference, missing text is a gap, card answers are the user's call.
-- Cards: the answer tokens come from calib.answer_tokens (Python); the page only joins them, so the line it builds
-  ("jevscreen answer \"1a 2no 3c 4?\" --deck deck-<run>-<n>") is exactly what `jevscreen answer` parses.
+- No card buttons and no answer bar (owner decision 2026-09-27): cards are a CLI tool for the user's AI. The card data
+  stays in the data block (its plain-word forms and translations serve the `cards` printout); it is not rendered.
+- While work runs the page carries <meta http-equiv="refresh"> (data['live']['refresh']); the quickstart worker
+  rewrites it (pagestatus.write) and the page restores its open rows, opened originals, chosen scope answers and
+  scroll position (sessionStorage). A worker heartbeat older than quickstart.HEARTBEAT_STALE_S (live['stale']) turns
+  the page to 'the background work stopped' even though no one rewrites it any more.
 - Before writing, the page is scanned for every configured secret (ops.scan_secrets); a hit means no page.
 - A page failure is a warning, never an exit code.
 """
@@ -74,7 +79,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "banner": "仅供你个人研究：本页含只限个人使用的 TradingView / Yahoo 数据和年报原文摘录。请勿转发、截图公开或上传。",
         "legend_title": "怎么读这一页",
         "legend_fact": "事实＝年报原文，附链接", "legend_inference": "推断＝AI 的判断",
-        "legend_gap": "缺口＝没拿到或没读到的", "legend_user": "你的判断＝你在卡片上答的",
+        "legend_gap": "缺口＝没拿到或没读到的", "legend_user": "你的判断＝你或你的 AI 回答校准问题时给的判断",
         "tag_fact": "事实", "tag_inference": "推断", "tag_gap": "缺口", "tag_user": "你的判断",
         "search": "按名字或代码查找…", "search_none": "这页没有它？让你的 AI 运行 jevscreen why <名字>，会告诉你原因",
         "filter_all": "全部", "filter_report": "有年报", "filter_edge": "边缘",
@@ -121,7 +126,7 @@ STRINGS: dict[str, dict[str, str]] = {
                           "不用注册账号，只发给 sec.gov）：{cmd}。",
         "gap_jp_profile": "日本 {k} 家只用简介核对（这台电脑没有日本年报数据包）。",
         "gap_ondemand": "这次临时补了 {n} 家的年报原文（{src}）。",
-        "footer": "运行 {run} · 卡组 {deck} · jev-screen {ver} · 仅供个人研究",
+        "footer": "运行 {run} · jev-screen {ver} · 仅供个人研究",
         "dur_ms": "{m} 分 {s} 秒", "dur_s": "{s} 秒",
         "no_js": "这个页面需要浏览器开启 JavaScript 才能完整显示。下面是纯文字名单：",
     },
@@ -149,7 +154,7 @@ STRINGS: dict[str, dict[str, str]] = {
                   "and verbatim annual-report excerpts. Do not forward, post screenshots or upload it.",
         "legend_title": "How to read this page",
         "legend_fact": "Fact = verbatim filing text, with link", "legend_inference": "Inference = the AI's judgment",
-        "legend_gap": "Gap = what we could not get or read", "legend_user": "Your call = what you answered on a card",
+        "legend_gap": "Gap = what we could not get or read", "legend_user": "Your call = a judgement you or your AI gave on a calibration question",
         "tag_fact": "Fact", "tag_inference": "Inference", "tag_gap": "Gap", "tag_user": "Your call",
         "search": "Find by name or ticker…",
         "search_none": "Not on this page? Ask your AI to run jevscreen why <name>; it will tell you why",
@@ -208,11 +213,37 @@ STRINGS: dict[str, dict[str, str]] = {
         "gap_jp_profile": "{k} Japanese {companies_were} checked from profiles only (no Japanese filing pack on this "
                           "computer).",
         "gap_ondemand": "Annual-report text was fetched on demand for {n} companies ({src}).",
-        "footer": "run {run} · deck {deck} · jev-screen {ver} · personal research only",
+        "footer": "run {run} · jev-screen {ver} · personal research only",
         "dur_ms": "{m} min {s} s", "dur_s": "{s} s",
         "no_js": "This page needs JavaScript for the full view. The plain-text list follows:",
     },
 }
+# The one page per idea (owner decision 2026-09-27): prerequisites, progress, scope questions, results.
+ONE_PAGE_STRINGS: dict[str, dict[str, str]] = {
+    "zh": {"sec_ready": "准备情况", "sec_optional": "可选项（{k}/{n} 已设置；这次结果不需要它们）", "show_checks": "看每一项",
+           "sec_progress": "进度", "sec_questions": "帮 AI 把范围定准（可选）",
+           "q_intro": "每题点一个答案，然后把下面这行复制给你的 AI。", "q_line": "复制给你的 AI：",
+           "q_empty": "（先在上面点选答案）", "sec_results": "结果",
+           "results_wait": "结果会在筛选完成后出现在这里。这页会自己刷新，不用管它。",
+           "results_none": "还没有结果。", "rows_title": "每家的证据（{n} 家，点开看）",
+           "refreshing": "这页每 3 秒自动刷新", "st_ok": "已完成", "st_run": "进行中", "st_wait": "还没开始",
+           "st_need": "需要你处理", "st_fail": "出错", "st_opt": "可选", "open_row": "点开看证据"},
+    "en": {"sec_ready": "Getting ready", "sec_optional": "Optional ({k} of {n} set; this result does not need them)",
+           "show_checks": "Show each check", "sec_progress": "Progress",
+           "sec_questions": "Help the AI get the scope right (optional)",
+           "q_intro": "Pick one answer per question, then copy the line below to your AI.",
+           "q_line": "Paste this to your AI:", "q_empty": "(pick the answers above first)", "sec_results": "Results",
+           "results_wait": "The results appear here when the screen is done. This page refreshes by itself; "
+                           "nothing to do.",
+           "results_none": "No results yet.", "rows_title": "Evidence for each company ({n}; tap to open)",
+           "refreshing": "This page refreshes itself every 3 seconds", "st_ok": "done", "st_run": "running",
+           "st_wait": "not started", "st_need": "needs you", "st_fail": "error", "st_opt": "optional",
+           "open_row": "Tap to see the evidence"},
+}
+for _lg, _t in ONE_PAGE_STRINGS.items():
+    STRINGS[_lg].update(_t)
+REFRESH_S = 3            # the page reloads itself this often while work runs (<meta http-equiv="refresh">)
+
 STATUS_KEYS = {"contradicted": "st_contradicted", "skipped_budget": "st_skipped_budget", "failed": "st_failed",
                "uncertain": "st_failed", "no_excerpt": "st_no_excerpt", "insufficient": "st_insufficient"}
 
@@ -759,10 +790,39 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
         "rows": rows, "unverified": unv, "unverified_total": len(result.get("unverified") or []),
         "unverified_groups": _unverified_groups(result.get("unverified") or []),
         "excluded": exc, "cards": cards, "chips": chip_text, "idea_terms": idea_words_shown(result, lang), "top_n": TOP_TABLE,
-        "answer_prefix": "jevscreen answer", "gaps": _gap_lines(result, country_of or {}, extra),
-        "strings": {lang: STRINGS[lang]},
+        "gaps": _gap_lines(result, country_of or {}, extra),
+        "strings": {lang: STRINGS[lang]}, "idea_key": _idea_key(idea),
+        # the one page's upper parts: prerequisites + progress (jevscreen.pagestatus; set by page_data / write),
+        # and the slot for scope questions (hidden until it has items)
+        "live": extra.get("live"), "questions": extra.get("questions") or {"items": []},
     }
     return tr_mod.apply(data, translations)
+
+
+def _idea_key(idea: str | None) -> str | None:
+    if not idea:
+        return None
+    from . import keywords
+    return keywords.idea_key(str(idea))
+
+
+def shell_data(idea: str, *, lang: str = "zh", idea_en: str | None = None,
+               status: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The page data of an idea without a result yet (the quickstart's first steps): the idea, the strings of its
+    one language, the status block; no rows."""
+    from . import __version__
+    lang = "en" if lang == "en" else "zh"
+    head_en = lang == "en" and bool(idea_en) and l10n.text_lang(idea) not in (None, "en")
+    return {"format": PAGE_FORMAT, "lang": lang, "idea": idea, "idea_en": idea_en,
+            "headline": idea_en if head_en else idea, "headline_is_idea_en": head_en, "run_id": None,
+            "version_tool": __version__, "rows": [], "unverified": [], "unverified_groups": [], "excluded": [],
+            "cards": [], "chips": {}, "gaps": [], "top_n": TOP_TABLE, "strings": {lang: STRINGS[lang]},
+            "idea_key": _idea_key(idea), "live": status, "questions": {"items": []}}
+
+
+def result_facts(data: dict[str, Any]) -> dict[str, Any]:
+    """What the status block needs from a page's result: its run, status and funnel."""
+    return {"run_id": data.get("run_id"), "status": data.get("status"), "funnel": data.get("funnel") or {}}
 
 
 def _status_key(status: str | None) -> str:
@@ -806,6 +866,14 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
     zh = lang == "zh"
     sep = "：" if zh else ": "
     out = [f"{S['title']} · {data.get('headline') or data.get('idea') or ''}"]
+    from . import pagestatus
+    st_lines = pagestatus.text_lines(data.get("live"), lang)
+    if st_lines:
+        out += st_lines + [""]
+    if not data.get("run_id"):
+        out.append(S["results_wait"] if (data.get("live") or {}).get("refresh") else S["results_none"])
+        text = "\n".join(out).rstrip() + "\n"
+        return text.replace("\u2028", " ").replace("\u2029", " ")
     if data.get("version", 1) > 1:
         change = data.get("change") if isinstance(data.get("change"), dict) else None
         if change and change.get(lang):                  # what changed (the page header says the same)
@@ -864,52 +932,90 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
 
 CSS = """
 :root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#6b6a64;--line:#e3e0d8;--card:#ffffff;--accent:#1f5f8b;--fact:#2f6b3a;
---infer:#7a4b12;--gap:#8a2d2d;--user:#4a3a8a;--badge:#f3ede0;--bar:#ffffffee;--on:#ffffff}
+--infer:#7a4b12;--gap:#8a2d2d;--user:#4a3a8a;--badge:#f3ede0;--on:#ffffff;--ok:#2e7d40;--bad:#b3261e;
+--badbg:#fdf0ee;--track:#ebe8e0}
 @media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe6;--muted:#a3a198;--line:#34332f;--card:#1f1f1c;
---accent:#7fb6de;--fact:#8fcf9a;--infer:#e2b36d;--gap:#ef9a9a;--user:#b9aef2;--badge:#2b2a26;--bar:#1f1f1cee;
---on:#111110}}
+--accent:#7fb6de;--fact:#8fcf9a;--infer:#e2b36d;--gap:#ef9a9a;--user:#b9aef2;--badge:#2b2a26;--on:#111110;
+--ok:#7fcb8e;--bad:#f28b82;--badbg:#2c1a18;--track:#34332f}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",
 "PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif}
-body.hasbar{padding-bottom:96px}
 main{max-width:980px;margin:0 auto;padding:16px}
-h1{font-size:1.35rem;margin:.2rem 0}h2{font-size:1.1rem;margin:1.6rem 0 .6rem}
+h1{font-size:1.35rem;margin:.1rem 0 .5rem;line-height:1.35}h2{font-size:1.08rem;margin:0 0 .5rem}
 .muted{color:var(--muted)}.small{font-size:.88rem}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
 button{font:inherit;min-height:44px;min-width:44px;padding:6px 14px;border-radius:10px;border:1px solid var(--line);
 background:var(--card);color:var(--fg);cursor:pointer}
 button.on{background:var(--accent);color:var(--on);border-color:var(--accent)}
 button:disabled{opacity:.5;cursor:default}
-.banner{border:1px solid var(--gap);color:var(--gap);border-radius:10px;padding:10px 12px;margin:12px 0}
-.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:.9rem;margin:8px 0}
+.pillrow{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 4px}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;border-radius:999px;
+padding:3px 12px;border:1px solid var(--accent);color:var(--accent);background:var(--card)}
+.pill.p-done{border-color:var(--ok);color:var(--ok)}.pill.p-bad{border-color:var(--bad);color:var(--bad)}
+.pill.p-idle{border-color:var(--line);color:var(--muted)}
+section.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:14px 0}
+.chk{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line)}
+.chk.first{border-top:0}
+.ic{flex:0 0 22px;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;
+justify-content:center;font-size:13px;font-weight:700;line-height:1;margin-top:2px}
+.ic-ok{background:var(--ok);color:var(--on)}.ic-need,.ic-fail{background:var(--bad);color:var(--on)}
+.ic-wait{border:2px solid var(--line)}.ic-opt{border:2px dashed var(--line)}
+.ic-run{border:3px solid var(--track);border-top-color:var(--accent);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ct{min-width:0;flex:1 1 auto}.fix{font-size:.9rem;color:var(--muted);margin-top:2px}
+.chk-need .fix,.chk-fail .fix{color:var(--bad)}.chk-need .tx,.chk-fail .tx{font-weight:600}
+.chk-wait .tx,.chk-opt .tx{color:var(--muted)}
+details.okline>summary{list-style:none;display:flex;gap:10px;align-items:center;cursor:pointer}
+details.okline>summary::-webkit-details-marker{display:none}
+.okt{color:var(--ok);font-weight:600;flex:1 1 auto;min-width:0}
+.more-link{font-size:.85rem;color:var(--muted);white-space:nowrap}
+.subhead{font-size:.85rem;color:var(--muted);margin:12px 0 0}
+details.opt>summary{cursor:pointer;font-size:.88rem;color:var(--muted);margin-top:10px}
+.alert{border:1px solid var(--bad);background:var(--badbg);color:var(--bad);border-radius:10px;padding:9px 12px;
+margin:0 0 10px}
+.alert.note{border-color:var(--line);background:transparent;color:var(--fg)}
+.pr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);
+align-items:baseline}
+.pr.first{border-top:0}.pr .lab{font-weight:600;min-width:0}.pr.s-wait .lab{color:var(--muted);font-weight:400}
+.pr .num{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-size:.9rem}
+.bar{grid-column:1/-1;height:8px;border-radius:99px;background:var(--track);overflow:hidden;position:relative}
+.bar .fill{height:100%;background:var(--accent);border-radius:99px}
+.pr.s-ok .bar .fill{background:var(--ok)}.pr.s-fail .lab,.pr.s-fail .num{color:var(--bad)}
+.pr.s-fail .bar{background:var(--badbg);border:1px solid var(--bad)}
+.bar.ind .fill{position:absolute;left:0;top:0;width:30%;animation:slide 1.3s ease-in-out infinite}
+@keyframes slide{0%{left:-30%}100%{left:100%}}
+.money{font-weight:600;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){.ic-run{animation:none;border-color:var(--accent)}
+.bar.ind .fill{animation:none;left:0;width:100%;opacity:.35}}
+.q{padding:8px 0;border-top:1px solid var(--line)}.q.first{border-top:0}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.qline{display:flex;gap:8px;align-items:center;margin-top:10px}
+.qline textarea{flex:1 1 auto;min-width:0;height:48px;font:13px/1.35 ui-monospace,Menlo,Consolas,monospace;
+padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:none}
+.banner{border:1px solid var(--gap);color:var(--gap);border-radius:10px;padding:9px 12px;margin:12px 0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.88rem;margin:8px 0}
 .tag{display:inline-block;font-size:.75rem;border-radius:6px;padding:0 6px;margin-right:6px;border:1px solid}
 .t-fact{color:var(--fact);border-color:var(--fact)}.t-inference{color:var(--infer);border-color:var(--infer)}
 .t-gap{color:var(--gap);border-color:var(--gap)}.t-user{color:var(--user);border-color:var(--user)}
 .t-ai{color:var(--accent);border-color:var(--accent)}.t-orig{color:var(--muted);border-color:var(--muted)}
 .orig{margin:4px 0;padding:4px 8px;border-left:3px solid var(--line);color:var(--muted)}
-input[type=search]{width:100%;min-height:44px;font:inherit;padding:8px 12px;border-radius:10px;
-border:1px solid var(--line);background:var(--card);color:var(--fg)}
-.filters{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
-.row,.cardq{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
-.head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+details.row{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:8px 0}
+details.row>summary{list-style:none;cursor:pointer;padding:10px 14px;display:flex;gap:4px 10px;flex-wrap:wrap;
+align-items:baseline}
+details.row>summary::-webkit-details-marker{display:none}
+details.row>summary::after{content:"+";margin-left:auto;color:var(--muted);font-weight:700}
+details.row[open]>summary::after{content:"\\2212"}
+details.row .body{padding:0 14px 12px}
 .rank{font-weight:700;color:var(--accent)}.name{font-weight:600}
 .badge{background:var(--badge);border-radius:6px;padding:1px 8px;font-size:.82rem}
 blockquote{margin:8px 0;padding:6px 10px;border-left:3px solid var(--fact);background:transparent}
-details{margin-top:6px}summary{cursor:pointer;color:var(--muted)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:.9rem}
-.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.bar{position:fixed;left:0;right:0;bottom:0;background:var(--bar);border-top:1px solid var(--line);padding:8px 16px}
-.bar .in{max-width:980px;margin:0 auto;display:flex;gap:8px;align-items:center}
-.bar textarea{flex:1 1 auto;min-width:0;height:44px;font:13px/1.35 ui-monospace,Menlo,Consolas,monospace;padding:5px 8px;
-border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);resize:none}
-.bar .msg{position:absolute;left:16px;bottom:62px}
-a{color:var(--accent)}
 blockquote.gapq{border-left-color:var(--gap)}
+details.tech{margin-top:6px}details.tech>summary{cursor:pointer;color:var(--muted);font-size:.9rem}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:.9rem}
+a{color:var(--accent)}
 .clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 button.more{min-height:32px;padding:2px 0;border:0;background:transparent;color:var(--accent);font-size:.88rem}
 .tablewrap{max-width:100%;overflow-x:auto}
-table.top10{width:100%;border-collapse:collapse;font-size:.92rem;background:var(--card);border:1px solid var(--line);
-border-radius:12px}
+table.top10{width:100%;border-collapse:collapse;font-size:.92rem;background:var(--card);border:1px solid var(--line)}
 table.top10 th,table.top10 td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid var(--line);
 overflow-wrap:anywhere}
 table.top10 th{color:var(--muted);font-weight:600;font-size:.82rem;overflow-wrap:normal}
@@ -917,20 +1023,31 @@ table.top10 td:first-child,table.top10 th:first-child{white-space:nowrap;width:1
 table.top10 td:nth-child(3),table.top10 td:nth-child(4){word-break:keep-all;overflow-wrap:normal}
 table.top10 td.t-gap{color:var(--gap)}table.top10 td.t-user{color:var(--user)}
 table.top10 tr.edge td:first-child a{color:var(--gap)}
-details.unv .names{margin:0 0 10px 0}
-main,blockquote,.row,.cardq{overflow-wrap:anywhere}
+details.unv{margin:12px 0}details.unv>summary{cursor:pointer}details.unv .names{margin:0 0 10px 0}
+main,blockquote,.row,section.box{overflow-wrap:anywhere}
 pre.plain{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.5;font-family:inherit;padding:0 16px}
 footer{margin:28px 0 8px;font-size:.82rem;color:var(--muted)}
-@media (max-width:720px){.grid{grid-template-columns:1fr}main{padding:12px 16px}.bar .lbl{display:none}
-.bar{padding:6px 12px}.bar textarea{height:40px}body.hasbar{padding-bottom:80px}}
-@media print{.bar,.filters,input[type=search],button{display:none}body{padding:0}}
+@media (max-width:520px){.pr{grid-template-columns:1fr}.pr .num{text-align:left}}
+@media (max-width:720px){.grid{grid-template-columns:1fr}main{padding:12px 16px}
+table.top10 td:nth-child(4),table.top10 th:nth-child(4){display:none}}
+@media print{button,.qline{display:none}body{padding:0}}
 """
 
 JS = r"""
 (function(){
 var D=JSON.parse(document.getElementById('data').textContent);
-var L=D.lang==='en'?'en':'zh', Q='', F='all', A={}, DBG=false;
+var L=D.lang==='en'?'en':'zh', DBG=false, ST=D.live||null, KEY='jevscreen-page:'+(D.idea_key||D.idea||''), OPEN={}, A={};
 try{DBG=/[?&]debug\b/.test(String(window.location.search||''));}catch(e){}
+// the worker rewrites this page every few seconds; a heartbeat that got old means it was killed (sleep, crash)
+try{if(ST&&ST.stale){var hb0=Date.parse(ST.stale.since);if(!isNaN(hb0)&&Date.now()-hb0>ST.stale.after_s*1000){
+ ST.phase='failed';ST.phase_words=ST.stale.phase_words;ST.alerts=[{kind:'block',text:ST.stale.text}].concat(ST.alerts||[]);
+ if(ST.progress)(ST.progress.items||[]).forEach(function(it){if(it.state==='run'){it.state='wait';it.eta=null;}});}}}catch(e){}
+try{OPEN=JSON.parse(window.sessionStorage.getItem(KEY)||'{}')||{};}catch(e){OPEN={};}
+if(!OPEN||typeof OPEN!=='object')OPEN={};
+// the page reloads every 3 s while work runs: the chosen scope answers and the opened originals live in OPEN too
+if(OPEN._a&&typeof OPEN._a==='object'){var qa=(D.questions||{}).items||[];qa.forEach(function(it){var v=OPEN._a[it.id];
+ if((it.options||[]).some(function(o){return o.value===v;}))A[it.id]=v;});}
+function save(){try{OPEN._y=Math.round(window.scrollY||0);OPEN._a=A;window.sessionStorage.setItem(KEY,JSON.stringify(OPEN));}catch(e){}}
 function S(k){var t=(D.strings[L]||{})[k];return (t===undefined||t===null)?k:t;}
 function fmt(t,o){return t.replace(/\{(\w+)\}/g,function(m,k){return (o&&o[k]!==undefined&&o[k]!==null)?String(o[k]):'';});}
 function E(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined&&text!==null)e.textContent=String(text);return e;}
@@ -947,125 +1064,141 @@ function nmFull(o){var s=sub(o);return nm(o)+(s?'（'+s+'）':'');}
 function lbl(v){if(v===null||v===undefined||v==='')return null;var t=(D.strings[L]||{})['lbl_'+v];return t||String(v);}
 function pct(v){return (v===null||v===undefined||isNaN(v))?null:Math.round(Number(v)*100)+'%';}
 function gapq(q){return !!q&&q.mentions===false;}
-function origToggle(orig){var w=E('div','small');var o=E('div','orig');o.style.display='none';o.appendChild(tag('fact',S('orig_label')));o.appendChild(T(orig));
- var bt=E('button','more',S('show_orig'));bt.onclick=function(){var shut=o.style.display==='none';o.style.display=shut?'block':'none';bt.textContent=S(shut?'hide_orig':'show_orig');};
+function colon(){return L==='zh'?'：':': ';}
+var HASH='';try{HASH=String(window.location.hash||'').replace(/^#/,'');}catch(e){}
+function fold(id,cls,dflt){var d=E('details',cls);d.id=id;var o=OPEN[id];d.open=(o===undefined)?(HASH===id||!!dflt):!!o;
+ d.ontoggle=function(){OPEN[id]=d.open?1:0;save();};return d;}
+function origToggle(orig,id){var w=E('div','small');var o=E('div','orig');var on=!!(id&&OPEN[id]);o.style.display=on?'block':'none';o.appendChild(tag('fact',S('orig_label')));o.appendChild(T(orig));
+ var bt=E('button','more',S(on?'hide_orig':'show_orig'));bt.onclick=function(){var shut=o.style.display==='none';o.style.display=shut?'block':'none';bt.textContent=S(shut?'hide_orig':'show_orig');
+  if(id){OPEN[id]=shut?1:0;save();}};
  w.appendChild(bt);w.appendChild(o);return w;}
-function trLine(cls,prefix,orig,tr,foreign){var d=E('div',cls);if(prefix)d.appendChild(T(prefix));
- if(foreign&&tr){d.appendChild(T(tr+' '));d.appendChild(tag('ai',S('ai_tr')));d.appendChild(origToggle(orig));}
+function trLine(cls,prefix,orig,tr,foreign,id){var d=E('div',cls);if(prefix)d.appendChild(T(prefix));
+ if(foreign&&tr){d.appendChild(T(tr+' '));d.appendChild(tag('ai',S('ai_tr')));d.appendChild(origToggle(orig,id));}
  else{if(foreign){d.appendChild(tag('orig',S('untranslated')));}d.appendChild(T(orig));}return d;}
 function clampBox(b,tx){if(String(tx.textContent).length<=60)return;tx.className='clamp';var mb=E('button','more',S('more'));
  mb.onclick=function(){var shut=tx.className==='clamp';tx.className=shut?'':'clamp';mb.textContent=S(shut?'less':'more');};b.appendChild(mb);
  setTimeout(function(){try{if(tx.className==='clamp'&&tx.scrollHeight>0&&tx.scrollHeight<=tx.clientHeight+2)mb.style.display='none';}catch(e){}},0);}
-function quote(q,profile,byUser){var b=E('div');
+function quote(q,profile,byUser,id){var b=E('div');
  if(!q||!q.text){b.appendChild(tag('fact'));b.appendChild(E('span','muted',S('no_quote')));return b;}
  var miss=gapq(q),pr=profile||q.profile||q.source==='profile',trd=!!(q.text_x&&q.text_tr);
  if(miss)b.appendChild(tag('gap',S(pr?'quote_gap_profile':'quote_gap')));else if(!trd)b.appendChild(tag('fact'));
  if(trd)b.appendChild(tag('ai',S('ai_tr_quote')));else if(q.text_x)b.appendChild(tag('orig',S('untranslated')));
  var bq=E('blockquote',miss?'gapq':null);var tx=E('div',null,trd?q.text_tr:q.text);bq.appendChild(tx);b.appendChild(bq);clampBox(b,tx);
- if(trd)b.appendChild(origToggle(q.text));
+ if(trd)b.appendChild(origToggle(q.text,id));
  if(miss)b.appendChild(E('div','small muted',fmt(S(byUser?'quote_gap_why_user':'quote_gap_why'),{terms:(D.idea_terms||[]).slice(0,8).join(L==='zh'?'、':', ')})));
  var src=[q.where||(pr?S('evidence_profile'):null),q.date_text].filter(Boolean).join(' · ');
- if(src||isHttp(q.url)){var m=E('div','small muted',src?S('quote_from')+(L==='zh'?'：':': ')+src+' ':'');if(isHttp(q.url))m.appendChild(link(q.url));b.appendChild(m);}return b;}
-function answerLine(){var parts=[];(D.cards||[]).forEach(function(c){var a=A[c.n];if(!a||!a.v)return;
- var t=c.tokens||{};var k=a.chip||(a.v==='?'?'?':a.v);if(t[k])parts.push(t[k]);});
- if(!parts.length)return '';return D.answer_prefix+' "'+parts.join(' ')+'" --deck '+D.deck_id+(L==='en'?' --lang en':'');}
+ if(src||isHttp(q.url)){var m=E('div','small muted',src?S('quote_from')+colon()+src+' ':'');if(isHttp(q.url))m.appendChild(link(q.url));b.appendChild(m);}return b;}
 function evCell(r){if(r.user_only)return [S('tag_user'),'t-user'];
  if(gapq(r.quote)&&!r.user)return [S(r.evidence==='profile'?'ev_short_gap_profile':'ev_short_gap'),'t-gap'];
  return [S('ev_short_'+(r.evidence||'profile'))+(r.user?' · '+S('tag_user'):''),null];}
+function icon(state){var s=E('span','ic ic-'+state,state==='ok'?'✓':((state==='need'||state==='fail')?'✕':''));s.setAttribute('aria-label',S('st_'+state));s.setAttribute('role','img');return s;}
+function checkRow(c,first){var r=E('div','chk chk-'+c.state+(first?' first':''));r.appendChild(icon(c.state));var b=E('div','ct');
+ b.appendChild(E('div','tx',c.text));if(c.fix)b.appendChild(E('div','fix',c.fix));r.appendChild(b);return r;}
+// 1) prerequisites: one green line when everything is ready, else every check with its fix
+function secReady(m){if(!ST||!(ST.checks||[]).length)return;var box=E('section','box ready');
+ function list(into){(ST.checks||[]).forEach(function(c,i){into.appendChild(checkRow(c,i===0));});
+  var op=ST.optional||[];if(op.length){var od=fold('ready-optional','opt',false);od.appendChild(E('summary',null,fmt(S('sec_optional'),{n:op.length,k:op.filter(function(c){return c.state==='ok';}).length})));
+   op.forEach(function(c){od.appendChild(checkRow(c,false));});into.appendChild(od);}}
+ if(ST.all_ok){var d=fold('ready-list','okline',false);var sm=E('summary');sm.appendChild(icon('ok'));sm.appendChild(E('span','okt',ST.ok_line));
+  sm.appendChild(E('span','more-link',S('show_checks')));d.appendChild(sm);var inner=E('div');inner.style.marginTop='8px';list(inner);d.appendChild(inner);box.appendChild(d);}
+ else{box.appendChild(E('h2',null,S('sec_ready')));list(box);}
+ m.appendChild(box);}
+// 2) live progress: per data item done/total with bars, MB, ETA, money; blocks and cooldowns in red
+function secProgress(m){if(!ST)return;var al=ST.alerts||[],p=ST.progress;if(!al.length&&!p)return;var box=E('section','box progress');
+ box.appendChild(E('h2',null,S('sec_progress')));
+ al.forEach(function(a){box.appendChild(E('div','alert'+(a.kind==='note'?' note':''),a.text));});
+ if(p){(p.items||[]).forEach(function(it,i){var r=E('div','pr s-'+it.state+(i===0?' first':''));r.appendChild(E('div','lab',it.label));
+   r.appendChild(E('div','num',[it.text,it.eta].filter(Boolean).join(' · ')));
+   var bar=E('div','bar'+(it.state==='run'&&(it.pct===null||it.pct===undefined)?' ind':''));var f=E('div','fill');
+   f.style.width=(it.state==='run'&&(it.pct===null||it.pct===undefined))?'30%':((it.pct||0)+'%');bar.appendChild(f);r.appendChild(bar);box.appendChild(r);});
+  if(p.money)box.appendChild(E('div','money',p.money));
+  if(p.updated||ST.refresh)box.appendChild(E('div','small muted',[p.updated,ST.refresh?S('refreshing'):null].filter(Boolean).join(' · ')));}
+ m.appendChild(box);}
+// 3) scope questions: hidden until the data has some; the answers build the line to paste to the AI
+function qLine(q){var parts=[];(q.items||[]).forEach(function(it){if(A[it.id])parts.push(A[it.id]);});
+ if(!parts.length)return '';return String(q.template||'{answers}').replace('{answers}',parts.join(' '));}
+function secQuestions(m){var q=D.questions||{};if(!(q.items||[]).length)return;var box=E('section','box questions');
+ box.appendChild(E('h2',null,S('sec_questions')));box.appendChild(E('p','small muted',S('q_intro')));
+ var ta=E('textarea');ta.readOnly=true;ta.rows=2;ta.setAttribute('aria-label',S('q_line'));var cp=E('button',null,S('copy'));var msg=E('span','small muted');
+ function refresh(){var line=qLine(q);ta.value=line;ta.placeholder=S('q_empty');cp.disabled=!line;cp.textContent=S('copy');}
+ q.items.forEach(function(it,i){var d=E('div','q'+(i===0?' first':''));d.appendChild(E('div',null,(i+1)+'. '+it.text));var bt=E('div','btns');
+  (it.options||[]).forEach(function(o){var b=E('button',A[it.id]===o.value?'on':null,o.label);b.onclick=function(){A[it.id]=(A[it.id]===o.value?null:o.value);
+   var kids=bt.children||[];for(var k=0;k<kids.length;k++){kids[k].className=(kids[k]===b&&A[it.id])?'on':'';}refresh();save();};bt.appendChild(b);});
+  d.appendChild(bt);box.appendChild(d);});
+ var row=E('div','qline');row.appendChild(ta);
+ cp.onclick=function(){var text=ta.value;function ok(){cp.textContent=S('copied');}
+  function manual(){ta.focus();ta.select();try{if(document.execCommand('copy')){ok();return;}}catch(e){}msg.textContent=S('copy_failed');}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(ok,manual);}else{manual();}};
+ row.appendChild(cp);box.appendChild(E('div','small',S('q_line')));box.appendChild(row);box.appendChild(msg);refresh();m.appendChild(box);}
+// 4) results: the top 10 at a glance, then one expandable row per company with its evidence
 function topTable(m){var rows=(D.rows||[]).slice(0,D.top_n||10);if(!rows.length)return;
  m.appendChild(E('h2',null,fmt(S('top_title'),{n:rows.length})));var t=E('table','top10');var th=E('tr');
  ['col_rank','col_name','col_verdict','col_evidence'].forEach(function(k){th.appendChild(E('th',null,S(k)));});t.appendChild(th);
- rows.forEach(function(r){var tr=E('tr',r.edge?'edge':null);var a=E('a',null,'#'+r.rank);a.href='#r'+r.rank;var c0=E('td');c0.appendChild(a);tr.appendChild(c0);
+ rows.forEach(function(r){var tr=E('tr',r.edge?'edge':null);var a=E('a',null,'#'+r.rank);a.href='#r'+r.rank;
+  a.onclick=function(){var d=document.getElementById('r'+r.rank);if(d&&d.tagName&&String(d.tagName).toLowerCase()==='details'){d.open=true;OPEN['r'+r.rank]=1;save();}};
+  var c0=E('td');c0.appendChild(a);tr.appendChild(c0);
   var c1=E('td');c1.appendChild(E('div','name',nm(r)));if(sub(r))c1.appendChild(E('div','small muted',sub(r)));c1.appendChild(E('div','small muted',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));tr.appendChild(c1);
   tr.appendChild(E('td',null,S('verdict_'+(r.verdict||'partial'))+(r.edge?' · '+S('filter_edge'):'')));
   var ev=evCell(r);tr.appendChild(E('td',ev[1],ev[0]));t.appendChild(tr);});
  var w=E('div','tablewrap');w.appendChild(t);m.appendChild(w);}
-function render(){
- document.documentElement.lang=L==='zh'?'zh-CN':'en';document.title=S('title')+' · '+(D.headline||D.idea||'');
- var app=document.getElementById('app');app.textContent='';var m=E('main');app.appendChild(m);
- var top=E('div','top');var h=E('div');h.appendChild(E('div','muted small',S('idea')));h.appendChild(E('h1',null,D.headline||D.idea));
- var alt=D.headline_is_idea_en?[S('idea_orig'),D.idea]:((D.idea_en&&D.idea_en!==(D.headline||D.idea))?[S('idea_en'),D.idea_en]:null);
- if(alt){var ad=E('details','small muted');ad.appendChild(E('summary',null,alt[0]));ad.appendChild(E('div','orig',alt[1]));h.appendChild(ad);}
- top.appendChild(h);m.appendChild(top);
- m.appendChild(E('div','small',D.version>1?(D.change&&D.change[L]?fmt(S('version_change'),{n:D.version,change:D.change[L],prev:D.prev_run_id||'?'}):fmt(S(D.answers?'version_n':'version_n0'),{n:D.version,k:D.answers,prev:D.prev_run_id||'?'})):S('version_first')));
+function rowBox(r){var d=fold('r'+r.rank,'row',false);var sm=E('summary');sm.appendChild(E('span','rank','#'+r.rank));sm.appendChild(E('span','name',nm(r)));
+ sm.appendChild(E('span','muted small',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));
+ sm.appendChild(E('span','small',S('verdict_'+(r.verdict||'partial'))));
+ if((r.badges||[]).length)sm.appendChild(E('span','badge',S('badge_'+r.badges[0])));d.appendChild(sm);
+ var b=E('div','body');if(sub(r))b.appendChild(E('div','small muted',sub(r)));
+ if(r.one_line)b.appendChild(trLine('small',S('what')+colon(),r.one_line,r.one_line_tr,r.one_line_x,'o:r'+r.rank+':what'));
+ var v=E('div');v.appendChild(tag('inference'));v.appendChild(E('strong',null,S('verdict_'+(r.verdict||'partial'))));
+ v.appendChild(T(' · '+S(r.user_only?'evidence_user':'evidence_'+(r.evidence||'profile'))));
+ if(r.user){v.appendChild(T(' '));v.appendChild(tag('user'));}b.appendChild(v);
+ b.appendChild(quote(r.quote,r.evidence==='profile',r.user,'o:r'+r.rank+':quote'));
+ var det=E('details','tech');det.appendChild(E('summary',null,S('details')));var g=E('div','grid');
+ function kv(k,val){if(val===null||val===undefined||val==='')return;g.appendChild(E('div','muted',S(k)));g.appendChild(E('div',null,val));}
+ var rd=r.details||{};kv('reads_label',rd.reads?(rd.reads.n>1?fmt(S('reads'),rd.reads):S('reads_one')):null);
+ kv('l1',lbl(rd.l1));kv('l2',lbl(rd.l2));kv('p_pos',pct(rd.p_pos));if(DBG)kv('p_core',rd.p_core);kv('mcap',r.mcap_text);
+ kv('badges',(r.badges||[]).map(function(x){return S('badge_'+x);}).join(L==='zh'?'；':'; '));det.appendChild(g);b.appendChild(det);
+ d.appendChild(b);return d;}
+function secResults(m){var box=E('section','results');m.appendChild(box);
+ if(!D.run_id){box.appendChild(E('h2',null,S('sec_results')));box.appendChild(E('p','muted',S(ST&&ST.refresh?'results_wait':'results_none')));return;}
+ box.appendChild(E('h2',null,S('sec_results')));
+ box.appendChild(E('div','small',D.version>1?(D.change&&D.change[L]?fmt(S('version_change'),{n:D.version,change:D.change[L],prev:D.prev_run_id||'?'}):fmt(S(D.answers?'version_n':'version_n0'),{n:D.version,k:D.answers,prev:D.prev_run_id||'?'})):S('version_first')));
  var st=S('status_'+D.status);if(st==='status_'+D.status)st=S('status_other');
- m.appendChild(E('div','small muted',fmt(S(D.totals?'meta_total':'meta'),{date:D.date_text||D.date,status:st,cost:money(D.cost_usd),
+ box.appendChild(E('div','small muted',fmt(S(D.totals?'meta_total':'meta'),{date:D.date_text||D.date,status:st,cost:money(D.cost_usd),
   cny:(L==='zh'&&D.cost_cny!==null&&D.cost_cny!==undefined)?fmt(S(D.cost_usd>0&&D.cost_cny<0.005?'cny_tiny':'cny'),{y:D.cost_cny.toFixed(2)}):'',time:dur(D.seconds)}).replace(/^ · /,'')));
- var f=D.funnel||{};m.appendChild(E('p',null,fmt(S('funnel'),{universe:f.universe,floor:f.floor_text||'?',described:f.described,l1:f.l1,listed:f.listed})));
- topTable(m);
- m.appendChild(E('p','small',S('rank_note')));
- m.appendChild(E('div','banner',S('banner')));
+ var f=D.funnel||{};box.appendChild(E('p',null,fmt(S('funnel'),{universe:f.universe,floor:f.floor_text||'?',described:f.described,l1:f.l1,listed:f.listed})));
+ box.appendChild(E('div','banner',S('banner')));
+ topTable(box);
+ box.appendChild(E('p','small muted',S('rank_note')));
  var lg=E('div','legend');['fact','inference','gap','user'].forEach(function(k){var s=E('span');s.appendChild(tag(k));s.appendChild(T(S('legend_'+k)));lg.appendChild(s);});
  if(D.translation&&D.translation.foreign){var sa=E('span');sa.appendChild(tag('ai',S('ai_tr')));sa.appendChild(T(S('legend_ai')));lg.appendChild(sa);}
- m.appendChild(lg);
- var sb=E('input');sb.type='search';sb.placeholder=S('search');sb.value=Q;sb.setAttribute('aria-label',S('search'));m.appendChild(sb);
- var fl=E('div','filters');['all','report','edge'].forEach(function(k){var b=E('button',F===k?'on':null,S('filter_'+k));b.onclick=function(){F=k;render();};fl.appendChild(b);});m.appendChild(fl);
- m.appendChild(E('h2',null,fmt(S('list_title'),{n:(D.rows||[]).length})));
- var list=E('div');m.appendChild(list);var none=E('p','muted',S('search_none'));none.style.display='none';m.appendChild(none);
- function draw(){list.textContent='';var q=Q.trim().toLowerCase(),shown=0;
-  (D.rows||[]).forEach(function(r){
-   if(F==='report'&&r.evidence!=='annual_report')return;if(F==='edge'&&!r.edge)return;
-   if(q&&[r.name,r.name_zh,r.name_tr,r.ticker].every(function(x){return String(x||'').toLowerCase().indexOf(q)<0;}))return;
-   shown++;var d=E('div','row');d.id='r'+r.rank;var hd=E('div','head');hd.appendChild(E('span','rank','#'+r.rank));hd.appendChild(E('span','name',nm(r)));
-   hd.appendChild(E('span','muted small',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));
-   if((r.badges||[]).length)hd.appendChild(E('span','badge',S('badge_'+r.badges[0])));d.appendChild(hd);
-   if(sub(r)){var sn=E('div','small muted',sub(r));d.appendChild(sn);}
-   if(r.one_line)d.appendChild(trLine('small',null,r.one_line,r.one_line_tr,r.one_line_x));
-   var v=E('div');v.appendChild(tag('inference'));v.appendChild(E('strong',null,S('verdict_'+(r.verdict||'partial'))));
-   v.appendChild(T(' · '+S(r.user_only?'evidence_user':'evidence_'+(r.evidence||'profile'))));
-   if(r.user){v.appendChild(T(' '));v.appendChild(tag('user'));}d.appendChild(v);
-   d.appendChild(quote(r.quote,r.evidence==='profile',r.user));
-   var det=E('details');det.appendChild(E('summary',null,S('details')));var g=E('div','grid');
-   function kv(k,val){if(val===null||val===undefined||val==='')return;g.appendChild(E('div','muted',S(k)));g.appendChild(E('div',null,val));}
-   var rd=r.details||{};kv('reads_label',rd.reads?(rd.reads.n>1?fmt(S('reads'),rd.reads):S('reads_one')):null);
-   kv('l1',lbl(rd.l1));kv('l2',lbl(rd.l2));kv('p_pos',pct(rd.p_pos));if(DBG)kv('p_core',rd.p_core);kv('mcap',r.mcap_text);
-   kv('badges',(r.badges||[]).map(function(b){return S('badge_'+b);}).join(L==='zh'?'；':'; '));det.appendChild(g);d.appendChild(det);
-   list.appendChild(d);});
-  if(!(D.rows||[]).length&&!q)list.appendChild(E('p','muted',S('list_empty')));
-  none.style.display=(q&&!shown)?'block':'none';}
- sb.oninput=function(){Q=sb.value;draw();};draw();
- m.appendChild(E('h2',null,S('cards_title')));
- if(!(D.cards||[]).length){m.appendChild(E('p','muted',S('no_cards')));}else{m.appendChild(E('p','small',S('cards_intro')));}
- var colon=L==='zh'?'：':': ';
- (D.cards||[]).forEach(function(c){var a=A[c.n]||{};var d=E('div','cardq');var hd=E('div','head');
-  hd.appendChild(E('span','rank','['+c.n+']'));hd.appendChild(E('span','name',nm(c)));
-  hd.appendChild(E('span','muted small',[c.ticker,c.rank?fmt(S('card_rank'),{rank:c.rank}):S('card_not_listed')].filter(Boolean).join(' · ')));
-  if(c.edge)hd.appendChild(E('span','badge',S('badge_edge')));d.appendChild(hd);
-  if(sub(c))d.appendChild(E('div','small muted',sub(c)));
-  if(L==='en'&&c.why_en)d.appendChild(E('div','small',S('card_why')+colon+c.why_en));
-  else if(L==='en'&&c.why_zh)d.appendChild(trLine('small',S('card_why')+colon,c.why_zh,c.why_zh_tr,c.why_zh_x));
-  else if(c.why_zh)d.appendChild(E('div','small',S('card_why')+colon+c.why_zh));
-  if(c.what)d.appendChild(trLine('small',S('card_what')+colon,c.what,c.what_tr,c.what_x));
-  d.appendChild(quote(c.quote));d.appendChild(E('div','small muted',S('card_explain')));
-  var bt=E('div','btns');[['yes','yes'],['no','no'],['?','unsure']].forEach(function(p){var b=E('button',a.v===p[0]?'on':null,S(p[1]));
-   b.onclick=function(){A[c.n]={v:p[0],chip:null};render();};bt.appendChild(b);});
-  var cl=E('button',null,S('clear'));cl.onclick=function(){delete A[c.n];render();};bt.appendChild(cl);d.appendChild(bt);
-  var chips=a.v==='yes'?['a','b']:(a.v==='no'?Object.keys(D.chips||{}).filter(function(k){return k!=='a'&&k!=='b';}).sort():[]);chips=chips.filter(function(k){return c.tokens&&c.tokens[k]&&D.chips[k];});
-  if(chips.length){d.appendChild(E('div','small muted',S(a.v==='yes'?'yes_more':'no_more')));var cb=E('div','btns');
-   chips.forEach(function(k){var b=E('button',a.chip===k?'on':null,k+' · '+(D.chips[k][L]||D.chips[k].zh));
-    b.onclick=function(){A[c.n]={v:a.v,chip:(a.chip===k?null:k)};render();};cb.appendChild(b);});d.appendChild(cb);}
-  m.appendChild(d);});
- if((D.unverified||[]).length){var ud=E('details','unv');ud.appendChild(E('summary',null,fmt(S('unverified_title'),{n:D.unverified_total})));
+ box.appendChild(lg);
+ var rows=D.rows||[];
+ if(!rows.length){box.appendChild(E('p','muted',S('list_empty')));}
+ else{box.appendChild(E('h2',null,fmt(S('rows_title'),{n:rows.length})));rows.forEach(function(r){box.appendChild(rowBox(r));});}
+ if((D.unverified||[]).length){var ud=fold('unverified','unv',false);ud.appendChild(E('summary',null,fmt(S('unverified_title'),{n:D.unverified_total})));
   var SK={contradicted:'st_contradicted',skipped_budget:'st_skipped_budget',failed:'st_failed',uncertain:'st_failed',no_excerpt:'st_no_excerpt',insufficient:'st_insufficient'};
   var groups=D.unverified_groups||[];var byKey={};D.unverified.forEach(function(u){var k=SK[u.status]||'st_other';(byKey[k]=byKey[k]||[]).push(u);});
   if(!groups.length)groups=Object.keys(byKey).map(function(k){return {key:k,n:byKey[k].length};});
   groups.forEach(function(gr){var p=E('p','small');p.appendChild(tag('gap'));p.appendChild(T(fmt(S('unverified_group'),{n:gr.n,why:S(gr.key)})));ud.appendChild(p);
    var us=byKey[gr.key]||[];if(us.length)ud.appendChild(E('div','small muted names',us.map(function(u){return nmFull(u)+(u.ticker?' '+u.ticker:'');}).join(L==='zh'?'、':', ')+(us.length<gr.n?' …':'')));});
-  m.appendChild(ud);}
- if((D.excluded||[]).length){m.appendChild(E('h2',null,fmt(S('excluded_title'),{n:D.excluded.length})));
-  D.excluded.forEach(function(x){var p=E('div','small');p.appendChild(tag('user'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')));m.appendChild(p);});}
- if((D.gaps||[]).length){m.appendChild(E('h2',null,S('gaps_title')));D.gaps.forEach(function(g){var p=E('p','small');p.appendChild(tag('gap'));
-  p.appendChild(T(L==='en'?g.text_en:g.text_zh));m.appendChild(p);});}
- m.appendChild(E('footer',null,fmt(S('footer'),{run:D.run_id,deck:D.deck_id||'-',ver:D.version_tool})));
- document.body.className=(D.cards||[]).length?'hasbar':'';if(!(D.cards||[]).length)return;
- var bar=E('div','bar');var bi=E('div','in');bi.appendChild(E('span','small lbl',S('bar_label')));var ta=E('textarea');ta.readOnly=true;ta.rows=2;
- var line=answerLine();ta.value=line||'';ta.placeholder=(D.cards||[]).length?S('bar_empty'):S('no_cards');bi.appendChild(ta);
- var cp=E('button',null,S('copy'));var msg=E('span','small muted msg');cp.disabled=!line;
- cp.onclick=function(){var text=S('copy_prefix')+line;function ok(){cp.textContent=S('copied');}
-  function manual(){ta.focus();ta.select();try{if(document.execCommand('copy')){ok();return;}}catch(e){}msg.textContent=S('copy_failed');}
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(ok,manual);}else{manual();}};
- bi.appendChild(cp);bi.appendChild(msg);bar.appendChild(bi);app.appendChild(bar);
- if(Q){var s2=document.querySelector('input[type=search]');if(s2){s2.focus();}}
+  box.appendChild(ud);}
+ if((D.excluded||[]).length){box.appendChild(E('h2',null,fmt(S('excluded_title'),{n:D.excluded.length})));
+  D.excluded.forEach(function(x){var p=E('div','small');p.appendChild(tag('user'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')));box.appendChild(p);});}
+ if((D.gaps||[]).length){box.appendChild(E('h2',null,S('gaps_title')));D.gaps.forEach(function(g){var p=E('p','small');p.appendChild(tag('gap'));
+  p.appendChild(T(L==='en'?g.text_en:g.text_zh));box.appendChild(p);});}
+ box.appendChild(E('footer',null,fmt(S('footer'),{run:D.run_id,deck:D.deck_id||'-',ver:D.version_tool})));}
+function render(){
+ document.documentElement.lang=L==='zh'?'zh-CN':'en';
+ document.title=(ST&&ST.phase!=='done'&&ST.phase_words?ST.phase_words+' · ':'')+S('title')+' · '+(D.headline||D.idea||'');
+ var app=document.getElementById('app');app.textContent='';var m=E('main');app.appendChild(m);
+ var h=E('header');h.appendChild(E('div','muted small',S('idea')));h.appendChild(E('h1',null,D.headline||D.idea));
+ var alt=D.headline_is_idea_en?[S('idea_orig'),D.idea]:((D.idea_en&&D.idea_en!==(D.headline||D.idea))?[S('idea_en'),D.idea_en]:null);
+ if(alt){var ad=E('details','small muted');ad.appendChild(E('summary',null,alt[0]));ad.appendChild(E('div','orig',alt[1]));h.appendChild(ad);}
+ if(ST&&ST.phase_words){var pr=E('div','pillrow');var cls={done:'p-done',blocked:'p-bad',failed:'p-bad',key:'p-bad',declined:'p-bad',wait_you:'p-bad',fresh:'p-idle',busy:'p-idle',wait_ai:'p-idle'}[ST.phase]||'';
+  var pill=E('span','pill '+cls);if(ST.refresh&&['done','blocked','failed','key','declined','wait_you','fresh','busy','wait_ai'].indexOf(ST.phase)<0)pill.appendChild(icon('run'));
+  pill.appendChild(T(ST.phase_words));pr.appendChild(pill);h.appendChild(pr);}
+ m.appendChild(h);
+ secReady(m);secProgress(m);secQuestions(m);secResults(m);
+ try{if(OPEN._y)window.scrollTo(0,OPEN._y);window.onscroll=function(){if(!window.__jevT){window.__jevT=setTimeout(function(){window.__jevT=null;save();},300);}};}catch(e){}
 }
 render();
 })();
@@ -1128,11 +1261,14 @@ def render_page(data: dict[str, Any]) -> str:
     S = STRINGS[lg]
     title = _html.escape(f"{S['title']} · {data.get('headline') or data.get('idea') or ''}", quote=False)
     text = _html.escape(render_text(data), quote=False)
+    # while work runs, the page reloads itself (the worker rewrites it); the tag is gone once it is done
+    refresh = f'<meta http-equiv="refresh" content="{REFRESH_S}">\n' if (data.get("live") or {}).get("refresh") \
+        else ""
     return ("<!DOCTYPE html>\n"
             f'<html lang="{"en" if lg == "en" else "zh-CN"}">\n<head>\n<meta charset="utf-8">\n'
             f'<meta http-equiv="Content-Security-Policy" content="{CSP}">\n'
             '<meta name="referrer" content="no-referrer">\n'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n' + refresh +
             f"<title>{title}</title>\n<style>{CSS}</style>\n</head>\n<body>\n"
             f'<div id="app"><noscript><p>{S["no_js"]}</p><pre class="plain">{text}</pre></noscript></div>\n'
             f'<script type="application/json" id="data">{_json_for_script(data)}</script>\n'
@@ -1356,8 +1492,23 @@ def _newest_for_stable(cfg, result: dict[str, Any]) -> bool:
     return str(result.get("started_at") or "") >= str(owner.get("started_at") or "")
 
 
+def status_of(cfg, idea: str | None, lang: str, data: dict[str, Any] | None = None,
+              job: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The one page's status block (prerequisites, progress) of an idea: from its quickstart job when there is one
+    (`job`, else the job file), else from local files only (a plain screen). None when it cannot be built."""
+    from . import pagestatus, quickstart
+    try:
+        if job is None and idea:
+            job = quickstart.load_job(cfg, quickstart.idea_key(idea))
+        return pagestatus.build(cfg, lang=lang, job=job,
+                                result=result_facts(data) if data and data.get("run_id") else None)
+    except Exception:  # noqa: BLE001 - the results still show without the status part
+        return None
+
+
 def page_data(cfg, result: dict[str, Any], deck: dict[str, Any] | None, *, lang: str = "zh",
-              extra: dict[str, Any] | None = None, strict: bool = False) -> dict[str, Any]:
+              extra: dict[str, Any] | None = None, strict: bool = False,
+              job: dict[str, Any] | None = None) -> dict[str, Any]:
     """The page data of a run with everything the store adds (descriptions, countries, lineage, official Chinese
     names, the idea's totals, the agent translations), without writing anything. A store that stays busy:
     store.StoreLocked when `strict` (the export must not work from a partial page), else the page without those
@@ -1382,6 +1533,8 @@ def page_data(cfg, result: dict[str, Any], deck: dict[str, Any] | None, *, lang:
             ex["totals"] = quickstart.idea_totals(cfg, result["idea"], wait_s=5.0)
     data = build_page_data(result, deck, lang=lang, lineage=lineage, descriptions=descs, country_of=countries,
                            extra=ex, local_names=local)
+    if data.get("live") is None:
+        data["live"] = status_of(cfg, result.get("idea"), data["lang"], data, job)
     if busy:
         data["store_busy"] = True
         return data
@@ -1390,10 +1543,12 @@ def page_data(cfg, result: dict[str, Any], deck: dict[str, Any] | None, *, lang:
 
 def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str, Any] | None, *, lang: str = "zh",
                extra: dict[str, Any] | None = None, stable: bool = True,
-               warn: Callable[[str], None] | None = None) -> tuple[Path | None, dict[str, Any] | None]:
+               warn: Callable[[str], None] | None = None,
+               job: dict[str, Any] | None = None) -> tuple[Path | None, dict[str, Any] | None]:
     """Write <out_dir>/page.html (and the stable copy <home>/pages/<idea_key>.html when this is the idea's newest
     run, see _newest_for_stable). Returns (path, data), or (None, None) after a warning when it could not be written
-    (a configured secret in it, an I/O error)."""
+    (a configured secret in it, an I/O error). `job`: the idea's quickstart job as the caller holds it (default:
+    its job file), for the page's status part."""
     def say(msg: str) -> None:
         (warn or (lambda m: print(m, file=sys.stderr)))(msg)
     try:
@@ -1401,7 +1556,7 @@ def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str,
         from . import translations
         out = Path(out_dir)
         path = out / "page.html"
-        data = page_data(cfg, result, deck, lang=lang, extra=extra)
+        data = page_data(cfg, result, deck, lang=lang, extra=extra, job=job)
         busy = bool(data.pop("store_busy", False))
         if busy:
             # the store stayed busy: never replace a page with a poorer one (no descriptions, no translations).
@@ -1425,14 +1580,16 @@ def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str,
         tmp.write_text(html, encoding="utf-8")
         os.replace(tmp, path)
         if stable and result.get("idea") and _newest_for_stable(cfg, result):
+            from . import pagestatus
             sp = stable_path(cfg, result["idea"])
             sp.parent.mkdir(parents=True, exist_ok=True)
-            tmp = sp.with_suffix(f".{os.getpid()}.tmp")
-            shutil.copyfile(path, tmp)
-            os.replace(tmp, sp)
-            owner = _stable_owner_path(cfg, result["idea"])
-            owner.write_text(json.dumps({"run_id": result.get("run_id"), "started_at": result.get("started_at")}),
-                             encoding="utf-8")
+            with pagestatus.page_lock(cfg, result["idea"]):      # the status ticks rewrite the same file
+                tmp = sp.with_suffix(f".{os.getpid()}.tmp")
+                shutil.copyfile(path, tmp)
+                os.replace(tmp, sp)
+                owner = _stable_owner_path(cfg, result["idea"])
+                owner.write_text(json.dumps({"run_id": result.get("run_id"),
+                                             "started_at": result.get("started_at")}), encoding="utf-8")
         if busy:
             data["store_busy"] = True
         return path, data
@@ -1443,10 +1600,11 @@ def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str,
 
 def can_open_browser(env: dict[str, str] | None = None, platform: str | None = None,
                      browser_name: Callable[[], str | None] | None = None) -> bool:
-    """macOS / Windows, or Linux with a display and a browser that is not a console one; never under CI."""
+    """macOS / Windows, or Linux with a display and a browser that is not a console one; never under CI, nor in the
+    test suite (JEVSCREEN_TESTING=1: a path that forgot its fake opener never opens a real browser)."""
     env = os.environ if env is None else env
     platform = platform or sys.platform
-    if env.get("CI"):
+    if env.get("CI") or env.get("JEVSCREEN_TESTING") == "1":
         return False
     if platform == "darwin" or platform.startswith("win"):
         return True

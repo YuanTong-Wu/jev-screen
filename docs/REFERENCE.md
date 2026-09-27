@@ -70,7 +70,7 @@ output free). One key is enough:
 |---|---|---|---|
 | `typesafe` | `POST https://api.typesafe.ai/v1/systemone` | `jev-1.13.0` (pinned; never `jev-latest`) | `TYPESAFE_API_KEY` / `data/typesafe_api_key` |
 | `openrouter` | `POST https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` | `OPENROUTER_API_KEY` / `data/openrouter_api_key` |
-| `vercel` | `POST https://ai-gateway.vercel.sh/typesafe/v1/systemone` (TypeSafe-compatible API) | `typesafe-ai/jev` (Vercel's only id: no version) | `AI_GATEWAY_API_KEY` / `data/vercel_api_key` |
+| `vercel` | `POST https://ai-gateway.vercel.sh/typesafe/v1/systemone` (TypeSafe-compatible API) | `typesafe-ai/jev` (Vercel's only id: no version, so the version cannot be pinned) | `AI_GATEWAY_API_KEY` / `data/vercel_api_key` |
 
 The active provider is `JEVSCREEN_JEV_PROVIDER` when set; else the human's saved choice (`data/jev_provider`: the
 last Jev key set with `keys set`, or `keys use <provider>`; `keys clear` of that provider forgets it); else the first
@@ -128,7 +128,7 @@ Every command prints a short JSON summary whose `status` is the adapter's own re
 provider blocked the run (HTTP 403/429 or a challenge page), `3` when the database stayed locked by another process
 for longer than the command waits, `4` when another jevscreen process is already using the same host's rate budget
 (`sec.gov`, `www.tradingview.com`, `scanner.tradingview.com`, `cninfo`, `edinet`, `dart`, `mops`, `bse`,
-`api.github.com` for `pack pull`, and `openrouter-jev` for `screen` / `answer`; lock files under `data/locks/`), `130` when interrupted (Ctrl-C, or SIGTERM for the crawl and sync
+`api.github.com` for `pack pull`, and `jev` for `screen` / `answer`; lock files under `data/locks/`), `130` when interrupted (Ctrl-C, or SIGTERM for the crawl and sync
 commands). `screen` adds `5` (Jev budget exhausted) and `6` (Jev unavailable). A blocked run stops completely. The tool does not retry it and never works around bot protection.
 After a blocked run, the same command refuses to send any request for 24 hours (exit `2`, status `cooldown`)
 unless you pass `--after-block`. The cooldown is tracked per command, so a blocked `sync-sec` does not stop
@@ -209,7 +209,8 @@ Paid calls are journaled per physical request in `jev_requests` (a resend is a n
 overwritten) and per item in `jev_items`, which is also the reuse cache: an item answered once (same question, same
 text) is free on every later run, whatever packet it lands in. An item whose earlier send had an unknown outcome
 (timeout, gateway 502/504/524, crash) is not resent unless you pass `--retry-uncertain`. Only one process uses Jev at
-a time, whatever the provider (`data/locks/openrouter-jev.lock`; the name predates the other providers). The budget
+a time, whatever the provider (`data/locks/jev.lock`; it also holds `data/locks/openrouter-jev.lock`, the lock's name
+before the other providers existed, so an older jev-screen running beside a newer one never pays at the same time). The budget
 is hard: one request is in flight until the first priced answer, reservations scale with the observed
 actual/estimated cost, and a price change is reported. Each ledger row names its provider (`jev_requests.provider`;
 empty on rows from before providers existed, which were all OpenRouter).
@@ -315,9 +316,11 @@ never do (read or echo your keys, spend more than $1 without your yes, work arou
    the key never passes through the chat).
 2. Downloads start in the background while you make the key (about 1 minute); the AI screen and the annual-report
    fetch run next (about 3 minutes); the agent tells you the progress about once a minute.
-3. A page opens in your browser: a ranked list where every company carries its evidence (annual-report quote with a
-   link, or the profile), labelled fact / inference / gap / your call, with optional cards to sharpen it. It is one
-   page per idea (`data/pages/<key>.html`): every later version (your card answers, a profile fill) updates it.
+3. A page opens in your browser at the first step and refreshes itself while the work runs: a checklist of what is
+   ready (green checks; a red cross with one plain sentence and the fix when something needs you), live progress
+   (downloads, the AI's reads, the money spent), then a ranked list where every company carries its evidence
+   (annual-report quote with a link, or the profile), labelled fact / inference / gap / your call. It is one page
+   per idea (`data/pages/<key>.html`): every later version (a profile fill, answers your AI applied) updates it.
 4. When many companies of your idea's market have no profile, the agent asks once whether to fill them (optional,
    free, in the background; then a re-rank of a few cents within your cap).
 
@@ -328,7 +331,7 @@ The commands behind it:
 | `jevscreen doctor [--json] [--check-jev]` | Checks Python, dependencies, the store, universe freshness, description and annual-report coverage, which keys are set (never their values), consent and cooldowns, then prints the next command. Exit 0 when a screen can run. `--check-jev` asks the active Jev provider whether the key works (one free request, no paid call) |
 | `jevscreen keys set NAME` / `keys check [NAME]` / `keys clear NAME` / `keys use typesafe\|openrouter\|vercel` | Stores `typesafe`, `openrouter`, `vercel`, `sec-email`, `edinet` or `opendart` from a hidden prompt into `data/` with mode 0600; never prints them |
 | `jevscreen quickstart "<idea>" [--idea-en TEXT] [--approve-budget USD] [--fill-descriptions yes\|no] [--json]` / `--status [--wait S]` | The fast path: returns in seconds, asks one round of questions (`pending`), runs the downloads, the key check, the estimate, the screen, the annual-report fetch (the same one as `screen --fetch-docs auto`) and the page in a detached worker; the agent polls `--status --wait`. `--fill-descriptions yes` answers the optional profile-fill question (crawl-descriptions for the idea's market, then an incremental re-rank). Exit code = JSON `status` (0 running/done, 10 needs you, 11 needs the agent, …) |
-| `jevscreen page [RUN_ID\|latest] [--open] [--text]` | Rebuilds the result page `page.html` (self-contained, one language: zh or en, cards that build the `answer` line); `--text` also prints the ranked list as plain text for an agent without a browser |
+| `jevscreen page [RUN_ID\|latest] [--open] [--text]` | Rebuilds the idea's one page (self-contained, one language: zh or en; prerequisites, progress and the results; no card buttons: cards are a CLI tool for your AI); `--text` also prints the status lines and the ranked list as plain text for an agent without a browser |
 | `jevscreen page RUN --export-strings FILE [--lang zh\|en] [--batch N]` / `--import-translations FILE` | The page's texts in another language than the page (at most 60 per file) for your AI agent to translate, and storing its translations (`translations` table, reused by later runs); free, no model call |
 | `jevscreen keys set typesafe\|openrouter\|vercel --dialog` | Opens a hidden input box on your screen for the key (macOS / Linux desktop) |
 | `jevscreen keys set typesafe\|openrouter\|vercel --from-file PATH` | Records where you saved the key yourself (only the location is stored; the key is never copied or printed, and the file must hold only the key: one line; OpenRouter keys start with `sk-or-`). A running quickstart uses it from its next paid step |

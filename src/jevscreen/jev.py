@@ -48,8 +48,10 @@ Ported from the earlier research tools (outputs/jev-research/jev.py, packed_scre
   (their payloads differ at least in the model id, so they are never byte-identical): the first screen after a switch
   reads again and pays again. The ledger records the provider of every send (jev_requests.provider; NULL on rows
   written before, which were all OpenRouter).
-- One process at a time: classify holds guard.budget_lock(cfg, 'openrouter-jev') from the cache lookup to the last
-  ledger write, so two concurrent runs never both pay for the same items. A second process gets JevBusy at once.
+- One process at a time: classify holds guard.budget_lock(cfg, 'jev') from the cache lookup to the last ledger write,
+  so two concurrent runs never both pay for the same items. A second process gets JevBusy at once. The lock was
+  named 'openrouter-jev' before the other providers existed: classify also holds that old lock (LEGACY_LOCK_BUDGETS),
+  so an older jev-screen still running beside a newer one can never pay at the same time either.
 - Budget: accounted spend = provider usage.cost when present, else a token estimate. Each in-flight request holds a
   reservation (calibrated estimate x max(reserve_factor, observed actual/estimate ratio x 1.1)); no packet is
   dispatched when spent + reservations + its own reservation would exceed budget_usd. Only one request is in flight
@@ -81,6 +83,7 @@ priced answer, so the budget still holds.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import hashlib
 import http.client
@@ -186,6 +189,32 @@ def active_provider(cfg: Config) -> Provider:
     return resolve_provider(cfg)[0]
 
 
+VERSION_NOT_PINNED = {"en": "version cannot be pinned", "zh": "版本无法锁定"}
+
+
+def provider_title(pr: Provider | str, lang: str = "en") -> str:
+    """A provider's name as shown wherever the active provider is named (page, doctor, the key step, the account
+    question): Vercel AI Gateway, whose only Jev id names no version, carries 'version cannot be pinned' /
+    '版本无法锁定'."""
+    pr = provider_named(pr)
+    zh = lang == "zh"
+    label = pr.label_zh if zh else pr.label
+    if pr.pinned:
+        return label
+    return f"{label}（{VERSION_NOT_PINNED['zh']}）" if zh else f"{label} ({VERSION_NOT_PINNED['en']})"
+
+
+@contextlib.contextmanager
+def paying_lock(cfg: Config):
+    """The one-paying-process lock: 'jev' plus the older name 'openrouter-jev' (LEGACY_LOCK_BUDGETS), so an older
+    jev-screen holding only the old lock and a newer one never pay at the same time. guard.Busy when either is held
+    by another process (nothing is held then)."""
+    with contextlib.ExitStack() as stack:
+        for name in (LOCK_BUDGET, *LEGACY_LOCK_BUDGETS):
+            stack.enter_context(guard.budget_lock(cfg, name, reentrant=True))
+        yield
+
+
 def paid_via(cfg: Config, provider: str) -> dict[str, Any] | None:
     """What the ledger says was paid through `provider` ({'requests', 'usd'}; rows before providers existed count as
     OpenRouter), or None when there is no store or it cannot be read right now (never waits, never creates it). Used
@@ -231,7 +260,8 @@ UNCERTAIN_HTTP = frozenset({502, 504, 520, 524})
 PRICE_DRIFT_WARN = 2.0                 # actual/estimated cost above this -> price_drift_ratio is set
 DRIFT_MARGIN = 1.1                     # reservation factor >= observed actual/estimate ratio x this
 DRAIN_S = REQUEST_TIMEOUT_S + 5.0   # bounded wait for in-flight requests after an interrupt
-LOCK_BUDGET = "openrouter-jev"         # guard.budget_lock name: one paying process at a time
+LOCK_BUDGET = "jev"                    # guard.budget_lock name: one paying process at a time, whatever the provider
+LEGACY_LOCK_BUDGETS = ("openrouter-jev",)   # the lock's name before other providers existed: also held (compatibility)
 ERROR_EXCERPT_CHARS = 300
 MAX_RETRY_AFTER_S = 10.0
 ERROR_STORM = 5                        # consecutive failed requests -> stop dispatching
@@ -257,7 +287,8 @@ class JevUnavailable(RuntimeError):
 
 
 class JevBusy(JevUnavailable):
-    """Another process is using Jev (holds the openrouter-jev budget lock). Nothing was sent."""
+    """Another process is using Jev (holds the jev budget lock, or an older version's openrouter-jev lock). Nothing
+    was sent."""
 
 
 class JevHTTPError(RuntimeError):
@@ -1014,10 +1045,10 @@ class JevClient:
             return list(results)  # type: ignore[arg-type]
 
         try:
-            lock = guard.budget_lock(self.cfg, LOCK_BUDGET, reentrant=True)
+            lock = paying_lock(self.cfg)
             lock.__enter__()
         except guard.Busy:
-            raise JevBusy("another process is using Jev (openrouter-jev lock held); nothing was sent") from None
+            raise JevBusy("another process is using Jev (jev lock held); nothing was sent") from None
         exc_info: tuple = (None, None, None)
         try:
             dup_of = self._classify_locked(items, question, labels, keys, put)

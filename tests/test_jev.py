@@ -713,18 +713,42 @@ class ReviewFixTests(JevTestBase):
         self.assertEqual((len(t2.calls), {r["cached"] for r in res}), (0, {True}))
 
     def test_second_process_is_refused(self):
+        """The paying lock is 'jev'; an older version's 'openrouter-jev' lock blocks too (and is held by us, so the
+        older version is blocked in turn)."""
         import fcntl
-        lock = self.home / "locks" / "openrouter-jev.lock"
-        lock.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock, "a+") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)   # as another process would hold it
-            t = FakeTransport()
-            with self.assertRaises(jev.JevBusy):
-                self.client(t).classify(items(3), QUESTION)
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        self.assertEqual(len(t.calls), 0)
-        self.assertFalse((self.home / "jevscreen.duckdb").exists() and self.ledger())
+        self.assertEqual((jev.LOCK_BUDGET, jev.LEGACY_LOCK_BUDGETS), ("jev", ("openrouter-jev",)))
+        for name in ("jev", "openrouter-jev"):
+            lock = self.home / "locks" / f"{name}.lock"
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            with open(lock, "a+") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)   # as another process would hold it
+                t = FakeTransport()
+                with self.assertRaises(jev.JevBusy):
+                    self.client(t).classify(items(3), QUESTION)
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            self.assertEqual(len(t.calls), 0, name)
+            self.assertFalse((self.home / "jevscreen.duckdb").exists() and self.ledger())
         self.assertTrue(issubclass(jev.JevBusy, jev.JevUnavailable))
+
+    def test_the_paying_lock_holds_both_names(self):
+        """While classify pays, an older jev-screen asking for 'openrouter-jev' is refused, and a new one asking for
+        'jev' too; both are free afterwards."""
+        from jevscreen import guard
+        seen = {}
+
+        def probe(p, n):
+            for name in ("jev", "openrouter-jev"):
+                try:
+                    with guard.budget_lock(self.cfg, name):
+                        seen[name] = "free"
+                except guard.Busy:
+                    seen[name] = "held"
+            return ok_response(p)
+        self.client(FakeTransport(probe)).classify(items(1), QUESTION)
+        self.assertEqual(seen, {"jev": "held", "openrouter-jev": "held"})
+        for name in ("jev", "openrouter-jev"):
+            with guard.budget_lock(self.cfg, name):
+                pass
 
     def test_duplicate_items_are_sent_once(self):
         its = items(3) + [jev.Item("dup", "Company 1", items(3)[1].text)]

@@ -158,8 +158,9 @@ def _switch_notes(cfg: Config, before: tuple[str | None, bool], out: dict[str, A
         cost_zh = "AI 的回答按渠道分别缓存，以前筛过的想法会重新读一遍、重新付费。"
     out["provider_switch"] = {
         "from": old.name, "to": new.name, "paid_before": paid, "switch_back_command": back,
-        "notice_en": f"Jev now goes through {new.label} instead of {old.label}.{cost_en} To go back: `{back}`.",
-        "notice_zh": f"Jev 现在改用 {new.label_zh}（原来是 {old.label_zh}）。{cost_zh}想换回去：`{back}`。"}
+        "notice_en": f"Jev now goes through {jev.provider_title(new, 'en')} instead of {old.label}.{cost_en} "
+                     f"To go back: `{back}`.",
+        "notice_zh": f"Jev 原来用 {old.label_zh}，现在改用 {jev.provider_title(new, 'zh')}。{cost_zh}想换回去：`{back}`。"}
 
 
 def use_provider(cfg: Config, name: str) -> dict[str, Any]:

@@ -41,11 +41,14 @@ On the page, every row carries its evidence, and four kinds of statement are kep
 | **Fact** | The passage from the company's latest annual report (with the filing date and a link to the filing), or its profile when no report is available |
 | **Inference** | The AI's verdict: **Clearly fits** (`explicit`: the text says it plainly) or **Related** (`partial`: related, or only part of the business) |
 | **Gap** | What is missing: no annual report, a stale filing, or no description at all |
-| **Your call** | Your answers on the calibration cards (below) |
+| **Your call** | A judgement you, or your AI on your behalf, gave on a calibration question (below) |
 
-Below the list you find the companies that passed the first read but could not be confirmed (**unverified**), the
-gaps, and up to 8 cards. The page is a local HTML file, all in your language (Chinese or English), and opening it
-makes no network requests. Profiles and excerpts in other languages are translated by your own AI agent, marked
+It is one page per idea, and it opens in your browser at the first step: on top a checklist of what is ready (green
+checks, or a red cross with one plain sentence and the fix; it folds into one green line once everything passes),
+then the live progress (downloads, the AI's reads, the money spent) while the work runs, then the ranked list. It
+refreshes itself while the work runs. Below the list you find the companies that passed the first read but could
+not be confirmed (**unverified**) and the gaps. The page is a local HTML file, all in your language (Chinese or
+English), and opening it makes no network requests. Profiles and excerpts in other languages are translated by your own AI agent, marked
 "AI translation", with the original one tap away.
 
 **How it works, in five steps.**
@@ -57,7 +60,7 @@ makes no network requests. Profiles and excerpts in other languages are translat
    sites; [which markets](#which-markets-get-an-annual-report-check)), and the AI checks short excerpts from it.
 4. It ranks the companies. A label confirmed by an annual report counts twice as much as the same label read from a
    profile, and the model's confidence adds to that.
-5. You get the page and the cards, plus `jevscreen why` to answer "why is X (not) in the list?".
+5. You get the page, plus `jevscreen why` to answer "why is X (not) in the list?".
 
 ### About Jev, the model
 
@@ -70,7 +73,7 @@ The AI is **Jev** 1.13, made by [TypeSafe](https://docs.typesafe.ai). The projec
   |---|---|---|---|
   | [TypeSafe official API](https://console.typesafe.ai/keys) (sign-ups are sometimes paused) | `jev-1.13.0` | pinned | `jevscreen keys set typesafe` |
   | [OpenRouter](https://openrouter.ai/settings/keys) | `typesafe/jev-1.13` | pinned to 1.13 | `jevscreen keys set openrouter` |
-  | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe) | `typesafe-ai/jev` | not pinned: Vercel offers only this unversioned id | `jevscreen keys set vercel` |
+  | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe) | `typesafe-ai/jev` | **version cannot be pinned**: Vercel offers only this unversioned id | `jevscreen keys set vercel` |
 
   With several keys set, the one set last is used (`jevscreen keys use typesafe|openrouter|vercel` switches without a
   new key; `jevscreen keys clear <provider>` removes one). Answers are cached per provider, so switching provider
@@ -100,8 +103,8 @@ The AI is **Jev** 1.13, made by [TypeSafe](https://docs.typesafe.ai). The projec
 - **An account that pays for Jev**, with credit: TypeSafe's official API, OpenRouter or Vercel AI Gateway, same
   price. The first top-up usually has a minimum (a few dollars, plus a payment fee; check the provider's payment page)
   and needs a card that pays in US dollars. That top-up is your first real outlay; each idea then takes about
-  $0.25–0.30 of it. No account yet? OpenRouter is the quickest to set up; TypeSafe's own sign-ups are sometimes paused,
-  and on Vercel, Jev may not be in the free tier.
+  $0.25–0.30 of it. No account yet? Try TypeSafe's official API first; when its sign-ups are paused, use OpenRouter.
+  On Vercel AI Gateway the Jev version cannot be pinned, and Jev may not be in the free tier.
 - **On a Mac,** the first `git` command may open a box that offers to install the command line developer tools.
   Click Install; it takes a few minutes. If your computer has neither `uv` nor Python 3.10 or newer, the agent asks
   you to run one command that installs `uv`, which brings its own Python. jev-screen itself needs no admin rights.
@@ -321,12 +324,12 @@ Your agent runs these for you. `quickstart`, `doctor`, `why`, `answer`, `fetch-d
 
 An AI reading text makes the same few kinds of mistake over and over: it takes a buyer for a supplier, matches a
 word that means something else, or reads a one-line plan as a business. Only you know where your idea's borders
-are. So after each run the page shows up to 8 **cards**. Each card is a company near the border, with a short quote
-from its evidence (the passage that best matches your idea's keywords).
+are. So after each run jev-screen prepares up to 8 **cards** (`jevscreen cards`). Each card is a company near the
+border, with a short quote from its evidence (the passage that best matches your idea's keywords).
 
-On the page you click **keep** or **drop**, plus a reason if you like (for example "a buyer, not a supplier"). The
-page then builds one line such as `jevscreen answer "1a 2h 3c" --deck deck-...` for you to copy to your agent. It
-costs about $0.01–0.03. Your answers are remembered for this idea, and the list is re-ranked without reading the
+Cards are not a chore for you: they are a tool for your AI agent. When you ask it to sharpen the list, it reads the
+cards, answers **keep** or **drop** with a reason (for example "a buyer, not a supplier") and applies them with one
+line such as `jevscreen answer "1a 2h 3c" --deck deck-...`. It costs about $0.01–0.03. Your answers are remembered for this idea, and the list is re-ranked without reading the
 profiles again. The next run of the same idea uses them too. In the test above, cards cut the wrong rows from 53 to
 36; they cannot invent right rows that the data does not show.
 
