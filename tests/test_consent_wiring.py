@@ -55,7 +55,8 @@ class TestConsentV2(Case):
         self.assertEqual((rec["statement_version"], rec["lang"]), (consent.STATEMENT_VERSION, "zh"))
         self.assertEqual(rec["statement"], consent.STATEMENTS["gray-sources"]["zh"])
         self.assertEqual(rec["statement_en"], consent.STATEMENTS["gray-sources"]["en"])
-        self.assertIn("OpenRouter", rec["statement_en"])                 # v2 discloses the AI service
+        self.assertIn("sent to Jev (the AI service)", rec["statement_en"])   # v2+ discloses the AI service
+        self.assertIn("发给 Jev（AI 服务）", rec["statement"])
         self.assertEqual(consent.get(self.cfg)["statement_version"], consent.STATEMENT_VERSION)
         self.assertEqual(doctor.GRAY_QUESTION, consent.STATEMENTS["gray-sources"]["en"])
         with self.assertRaises(ValueError):

@@ -10,9 +10,12 @@ Types below: `str?` means string or `null`. Unknown extra fields may be added la
 
 Read-only: it opens the store read-only for a few seconds and never writes or creates anything (not even the data
 folder or its `raw/` subfolder). Dependencies are detected without importing them. Without `--check-jev`
-it sends no request. `--check-jev` sends one free `GET https://openrouter.ai/api/v1/key` (key validity and what is
-left of the key's own spending limit; the account balance is not in that answer and is not checked; no model call,
-nothing is charged). Key presence is checked with `stat` only; key files are not read.
+it sends no request. `--check-jev` sends one free request to the active Jev provider (no model call, nothing is
+charged): OpenRouter `GET https://openrouter.ai/api/v1/key` (key validity and what is left of the key's own spending
+limit; the account balance is not in that answer and is not checked), Vercel AI Gateway
+`GET https://ai-gateway.vercel.sh/v1/credits` (key validity and the team's credit balance), TypeSafe
+`GET https://api.typesafe.ai/v1/models` (key validity and whether `jev-1.13.0` is listed; TypeSafe publishes no
+balance). Key presence is checked with `stat` only; key files are not read.
 
 Every `fix_command` and `next_command` is a complete command, safe to run exactly as written: no placeholders, no
 shell operators, and never a consent write. (The one angle-bracket text, `"<idea in plain words>"` in the
@@ -68,19 +71,25 @@ Exit code: `0` when `ok` is true (no check failed), else `1`. Without `--json` i
 | `universe` | fail: schema incomplete or universe empty; warn: market data older than 7 days (with consent `no` the detail says the human declined; no fix) | `companies`, `market_as_of` (YYYY-MM-DD?), `age_days` (int?) |
 | `descriptions` | warn: under 80% of companies >= $1B have a description | `companies`, `with_description` |
 | `official_text` | warn: no company >= $1B has official annual-report text | `companies`, `with_official_text` |
-| `key_openrouter` | fail: not configured, or its variable is blank / its first file is empty (real screens need it); warn: key file readable by other users | `configured`, `source` |
+| `key_typesafe`, `key_openrouter`, `key_vercel` | skip when not configured (one Jev key is enough; `jev_provider` fails when there is none); warn: its variable is blank / its first file is empty, or the key file is readable by other users | `configured`, `source` |
+| `jev_provider` | fail: no Jev key at all (`ask_human`, `human_question` / `human_question_zh`: the one account question, `key_commands` {provider: `jevscreen keys set <provider> --dialog`}, `fix_command` null; the text output prints the question and the commands too), the chosen provider (`JEVSCREEN_JEV_PROVIDER` or `keys use`) has no key (`fix_command` `jevscreen keys set <provider>`) or an unknown provider | `provider` (str?), `label`, `model`, `pinned` (bool), `endpoint`, `reason` (`saved`\|`key`\|`explicit`\|`default`: `saved` = the last Jev key set or `keys use`), `configured` ([str]) |
 | `key_sec_email` | warn: not configured, blank or empty (only `sync-sec` needs it) | `configured`, `source` |
 | `key_edinet`, `key_opendart` | skip when not configured (off by default); warn on a blank variable, an empty file or loose file mode | `configured`, `source` |
-| `consent_gray_sources` | warn: unset or unreadable (treated as no; `human_question` + `record_answer_commands`); fail: recorded `no` (today the universe and descriptions are gray-private, so no screen) — `fix_command` is always null | `state` (`yes`\|`no`\|`unset`\|`unreadable`), `recorded_at` (str?) |
+| `consent_gray_sources` | warn: unset or unreadable (treated as no; `human_question` + `record_answer_commands`, `recipient_note` / `recipient_note_zh` to say right after the question, `answer_words` {yes: [...], no: [...]}: the clear replies); fail: recorded `no` (today the universe and descriptions are gray-private, so no screen) — `fix_command` is always null | `state` (`yes`\|`no`\|`unset`\|`unreadable`), `recorded_at` (str?) |
 | `cooldown` | warn: a command is inside its 24 h cooldown after a provider block | `cooldowns` ({command: blocked_at ISO}) |
 | `on_demand_docs` | warn: no PDF reader (`fix_command` `python3 -m pip install pypdf`), or no SEC contact email (`ask_human`, `human_question`, `record_answer_commands`, `fix_command` null); skip after a recorded `consent set sec-email-ask no`; ok otherwise | |
 | `mops_annual` | skip: Taiwan annual-report downloads off (default; `human_question` only while unset, ask it only when a screen's `questions[]` has `mops_annual`); ok after a recorded yes. Never drives `next_command` | |
-| `jev` | skip unless `--check-jev`; fail: no key, key rejected (401/403), or no credit (402: the human must add credit, `ask_human`); warn: unreachable, other HTTP status, or less than $1 left on the key's limit. `ok` does not prove the account has credit | `http_status`, `limit_remaining` (number?), `usage_usd`, `is_free_tier` |
+| `jev` | skip unless `--check-jev`; fail: no key, key rejected (401/403), or no credit (402: the human must add credit, `ask_human`); warn: unreachable, other HTTP status, or less than $1 left (OpenRouter: on the key's limit; Vercel: AI Gateway balance). `ok` does not prove an OpenRouter or TypeSafe account has credit | `provider`, `http_status`; OpenRouter: `limit_remaining` (number?), `usage_usd`, `is_free_tier`; Vercel: `balance_usd` (number?); TypeSafe: `model_listed` (bool) |
 
-`source` of a key: `env` (environment variable), `file` (under the data folder, or for `openrouter` the file named
-by `JEVSCREEN_OPENROUTER_KEY_FILE`), `none`. Resolution mirrors the adapters: a non-empty variable wins, else the
-key's file, even when it is empty (then `configured` is false). For `openrouter`, a set `JEVSCREEN_OPENROUTER_KEY_FILE`
-is the only file read: when it names a missing file, `data/openrouter_api_key` is not tried.
+`source` of a key: `env` (environment variable), `file` (under the data folder, or for a Jev key the file named by
+its `JEVSCREEN_*_KEY_FILE` variable or recorded with `--from-file`), `none`. Resolution mirrors the adapters: a
+non-empty variable wins, else the key's file, even when it is empty (then `configured` is false). For a Jev key, a set
+`JEVSCREEN_TYPESAFE_KEY_FILE` / `JEVSCREEN_OPENROUTER_KEY_FILE` / `JEVSCREEN_VERCEL_KEY_FILE` is the only file read:
+when it names a missing file, `data/<name>_api_key` is not tried.
+
+The active Jev provider (`jev.resolve_provider`): `JEVSCREEN_JEV_PROVIDER` (`typesafe` | `openrouter` | `vercel`)
+when set, even when that provider has no key; else the first of typesafe, openrouter, vercel with a configured key;
+else openrouter (and `jev_provider` fails: no key).
 
 The universe fix (empty or stale universe) depends on the recorded gray-sources answer, because today the universe
 comes from a gray-private source:
@@ -97,28 +106,32 @@ comes from a gray-private source:
 
 ## `jevscreen keys ...`
 
-Names: `openrouter`, `sec-email`, `edinet`, `opendart`.
+Names: `typesafe`, `openrouter`, `vercel` (the Jev keys: Jev via TypeSafe's official API, OpenRouter or Vercel AI
+Gateway, same price; one is enough), `sec-email`, `edinet`, `opendart`.
 
 | Name | File under the data folder | Environment variable (wins over the file) | Shape check |
 |---|---|---|---|
+| `typesafe` | `typesafe_api_key` | `TYPESAFE_API_KEY` | >= 16 printable ASCII chars, no spaces; an OpenRouter (`sk-or-`) or Vercel (`vck_`) key is refused with a pointer to the right name |
 | `openrouter` | `openrouter_api_key` | `OPENROUTER_API_KEY` | starts with `sk-or-`, >= 20 chars, no spaces |
+| `vercel` | `vercel_api_key` | `AI_GATEWAY_API_KEY` | >= 16 printable ASCII chars, no spaces (usually `vck_...`); an OpenRouter key is refused |
 | `sec-email` | `sec_user_agent` | `JEVSCREEN_SEC_USER_AGENT` | a name and an email, ASCII, <= 200 chars |
 | `edinet` | `edinet_api_key` | `JEVSCREEN_EDINET_API_KEY` | 16-64 letters and digits |
 | `opendart` | `opendart_api_key` | `JEVSCREEN_OPENDART_API_KEY` | exactly 40 letters and digits |
 
-For `openrouter`, `JEVSCREEN_OPENROUTER_KEY_FILE` (when set) names the only file read: `data/openrouter_api_key` is
-not tried while it is set, even when the named file is missing. Next comes a file recorded with `keys set openrouter
---from-file PATH` (below), then `data/openrouter_api_key`. All of these are read at every call, so a quickstart
+For a Jev key, its `JEVSCREEN_<NAME>_KEY_FILE` variable (`JEVSCREEN_TYPESAFE_KEY_FILE`,
+`JEVSCREEN_OPENROUTER_KEY_FILE`, `JEVSCREEN_VERCEL_KEY_FILE`; when set) names the only file read: `data/<name>_api_key`
+is not tried while it is set, even when the named file is missing. Next comes a file recorded with `keys set <name>
+--from-file PATH` (below), then `data/<name>_api_key`. All of these are read at every call, so a quickstart
 worker that is already running uses a key recorded (or typed) after it started; an environment variable set in the
 agent's shell after the worker started never reaches it (use `--from-file` instead).
 
-### `keys set openrouter --from-file PATH`
+### `keys set typesafe|openrouter|vercel --from-file PATH`
 
-For a human who saved the key in a file themselves. Only the location is recorded (`data/openrouter_key_location`
+For a human who saved the key in a file themselves. Only the location is recorded (`data/<name>_key_location`
 holds the path); the key is never copied or printed, and neither is the path (`doctor` says "the recorded key
-file"). The file is read inside the process only to check that it holds just the key (one line starting with
-`sk-or-`): an `.env` line (`OPENROUTER_API_KEY=...`), quotes or notes around it are refused (exit 1) with a plain
-message, since the file's text is sent as it is. `keys set` (prompt / dialog) and `keys clear` forget the recorded
+file"). The file is read inside the process only to check that it holds just the key (one line; for OpenRouter
+starting with `sk-or-`): an `.env` line (`OPENROUTER_API_KEY=...`), quotes or notes around it are refused (exit 1)
+with a plain message, since the file's text is sent as it is. `keys set` (prompt / dialog) and `keys clear` forget the recorded
 location.
 
 ```jsonc
@@ -167,8 +180,27 @@ Exit `1` when a NAMED key is not configured or fails the shape check, else `0` (
 ```
 
 `removed` is false when there was no file. A `warning` says so when another source (the environment variable, or
-for `openrouter` a named file) still provides the key. `keys set` likewise warns when the variable, or a set
-`JEVSCREEN_OPENROUTER_KEY_FILE`, is read instead of the file it just wrote.
+for a Jev key a named file) still provides the key. `keys set` likewise warns when the variable, or a set
+`JEVSCREEN_<NAME>_KEY_FILE`, is read instead of the file it just wrote.
+
+### Which Jev provider: `keys set` of a Jev key, `keys use PROVIDER`, `keys clear`
+
+Every successful `keys set typesafe|openrouter|vercel` (prompt, `--dialog`, `--stdin` or `--from-file`) saves that
+provider as the human's choice (`data/jev_provider`): the last Jev key set is the one used. `keys use` switches
+without a new key (no key is read or written); `keys clear` of the chosen provider forgets the choice. Their JSON
+adds `active_provider` and, when the active provider changed, `provider_switch`:
+
+```jsonc
+{"command": "keys use", "status": "ok", "name": "openrouter", "saved": true, "configured": true,
+ "active_provider": "openrouter",
+ "provider_switch": {"from": "typesafe", "to": "openrouter",
+                     "paid_before": {"requests": 312, "usd": 0.84},   // ok requests through "from"; null: no store
+                     "switch_back_command": "jevscreen keys use typesafe",
+                     "notice_zh": "…", "notice_en": "…"}}             // tell the human in one line
+```
+
+`warning` says when the chosen provider has no key yet; `provider_warning` when `JEVSCREEN_JEV_PROVIDER` overrides
+the choice.
 
 ## `jevscreen consent ...`
 
@@ -185,7 +217,7 @@ terms-restricted, personal use only). Only record an answer the human gave.
 
 `interactive` records whether stdin was a terminal (a human typing) or not (an agent running the command).
 `--lang zh|en` (default en) names the language the question was asked in: the record keeps `statement` (the exact
-text shown, from `consent.STATEMENTS`), `statement_en`, `statement_version` (currently 3) and `lang`. `consent show` reports
+text shown, from `consent.STATEMENTS`), `statement_en`, `statement_version` (currently 4) and `lang`. `consent show` reports
 `statement_version` per topic (1 for an answer recorded before versions existed; quickstart asks once more whenever it is below the current version).
 
 ### `consent show`
@@ -353,6 +385,7 @@ jevscreen quickstart "<idea>" [--idea-en TEXT] [--approve-budget USD] [--min-mca
         [--lang auto|zh|en] [--fd-file PATH] [--no-open] [--retry] [--new-run] [--fill-descriptions yes|no] [--json]
 jevscreen quickstart --status [IDEA | --key K] [--wait S] [--json]
 jevscreen page [RUN_ID|OUT_DIR|latest] [--lang zh|en] [--open] [--text] [--json] # $0, rebuilds page.html
+jevscreen page RUN --export-strings FILE | --import-translations FILE [--json]   # $0, your translations
 ```
 
 The front command returns in under 5 s and never sends a request itself. It reads or creates the job file
@@ -395,7 +428,10 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
      "refused_idea_en": null, "suggested_idea_en": null,   // the refused sentence; a rewrite without the names
      "rerun_command": "jevscreen quickstart '…' --idea-en '<sentence>' --approve-budget 1"},   // complete command
     {"id": "consent_gray_sources", "ask_human": true, "question_zh": "…", "question_en": "…",
-     "statement_version": 3,
+     "statement_version": 4,
+     "note_zh": "…", "note_en": "…",   // say right after the question: who receives the text sent to Jev
+                                       // (the active provider, and the company in between if any)
+     "answer_words": {"yes": ["yes", "ok", "可以", "同意", "好", …], "no": ["no", "不要", "不同意", "不行", …]},
      "record_answer_commands": ["jevscreen consent set gray-sources yes --lang zh",
                                 "jevscreen consent set gray-sources no --lang zh"]},
     {"id": "approve_budget", "ask_human": true, "kind": "first",   // first | over | topup | uncertain
@@ -408,10 +444,19 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
      "decline_with": "--idea-en '<the old sentence>'" /* a no: keeps the old English, drops the question */,
      "old_refused": false},        // true: the old sentence was refused; decline_with is null and a no means the
                                    // agent writes another sentence (on_no_en)
-    {"id": "key_openrouter", "human_action": true, "agent_try": "jevscreen keys set openrouter --dialog",
-     "agent_try_file": "jevscreen keys set openrouter --from-file <the file the human saved it in>",
-     "human_command": "/abs/path/.venv/bin/jevscreen keys set openrouter", "rejected": false,
-     "text_zh": "…", "text_en": "…"},
+    {"id": "key_jev", "human_action": true, "rejected": false,
+     "provider": null,              // no Jev key yet: the one account question (TypeSafe / OpenRouter / Vercel)
+     "question_zh": "…", "question_en": "…", "text_zh": "…", "text_en": "…",   // text = question + terminal fallback
+     "choices": [{"provider": "typesafe", "label": "TypeSafe (official API)", "label_zh": "TypeSafe 官方",
+                  "signup_url": "https://console.typesafe.ai", "key_url": "https://console.typesafe.ai/keys",
+                  "agent_try": "jevscreen keys set typesafe --dialog",
+                  "agent_try_file": "jevscreen keys set typesafe --from-file <the file the human saved it in>",
+                  "human_command": "/abs/path/.venv/bin/jevscreen keys set typesafe"},
+                 {"provider": "openrouter", …}, {"provider": "vercel", …}]},
+    // provider known (its key was rejected: rejected true, or the human chose it and its key is missing): the item
+    // itself carries "provider", "label", "label_zh", "agent_try", "agent_try_file", "human_command", "text_zh",
+    // "text_en", plus "choices" (the OTHER providers: setting one of their keys switches to it) and "clear_command"
+    // ("jevscreen keys clear <provider>"). With JEVSCREEN_JEV_PROVIDER set: no choices, no clear_command
     {"id": "fill_descriptions", "ask_human": true, "optional": true,   // only with a done result (status stays done)
      "country": "CN", "missing": 1114, "companies": 3200, "share": 0.35, "minutes": 10, "estimate_usd": 0.06,
      "biggest": [{"name": "…", "ticker": "301018", "security_id": "SZSE:301018", "market_cap_usd": 5.4e9}],
@@ -450,17 +495,29 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
                                     // mops_annual: a Taiwan one, opendart: a Korean one); then_command names run_id
   "summary": {"listed": 40, "annual_report": 22, "profile_only": 18, "edge": 5, "no_mention": 2, "cards": 8},
                                     // no_mention: rows whose read text names none of the idea's words (gap)
-  "top": [{"rank": 1, "name": "…",  // the name the page's reader knows (the CNINFO 简称 on a Chinese page)
-           "name_en": "…", "name_zh": "…",   // name_zh: null without a local short name
+  "top": [{"rank": 1, "name": "…",  // the name the page shows: on a Chinese page the official Chinese short name
+                                    // (CNINFO 简称, MOPS 公司簡稱), else your translation, else the English name;
+                                    // on an English page always the English name
+           "name_en": "…", "name_zh": "…",   // name_zh: the official short name, null without one
+           "name_translated": false,         // true: "name" is your (the agent's) translation
            "ticker": "…", "country": "China", "country_zh": "中国", "verdict_words_zh": "明确符合",
            "verdict_words_en": "Clearly fits", "evidence_kind": "annual_report",
-           "one_line": "first sentence of the profile, in its own language",
+           "one_line": "…",                 // what the page shows: your translation once imported, else the
+                                            // first sentence of the profile in its own language
+           "one_line_translated": false, "one_line_original": null,   // the verbatim text when translated
+           "one_line_needs_translation": true,   // still in another language than the page
            "excerpt_mentions_idea": true,   // false: none of the text the AI read names the idea (say "gap");
                                             // null: nothing to check
            "edge": false,                   // borderline (may change on re-reading, or a gap)
            "user": false,                   // the human answered this company on a card
            "verdict_from_user": false}],    // listed only because of that answer: say "your call", not
                                             // "annual report" (up to 10 rows)
+  "translation_pending": 37,        // texts on the page in another language than the page's, not translated yet
+  "translation": {"lang": "zh", "pending": 37, "translated": 0, "batch_max": 60,   // null: nothing to translate
+                  "file": "/…/translate/scr-…-zh.json",
+                  "export_command": "jevscreen page scr-… --export-strings /…/translate/scr-…-zh.json --lang zh --json",
+                  "import_command": "jevscreen page scr-… --import-translations /…/translate/scr-…-zh.json --lang zh --json"},
+                                    // do this right after relaying the first result ("Translating the page")
   "next_steps": [{"text_zh": "…", "text_en": "…", "command": null, "cost_usd": 0.25, "minutes": 4}],   // 3
   "gaps": [{"id": "no_description", "count": 1111, "text_zh": "…", "text_en": "…",
             "command": "jevscreen crawl-descriptions --countries CN --min-mcap 1e9"}],
@@ -539,6 +596,49 @@ version 2 on, what changed ("补抓 14 家年报后重排", "应用了你的 3 �
 when you have no browser. The same text sits in the page's `<noscript>` block, so reading `page.html` as a file gives
 the list too. Without `--lang` the page uses the idea's quickstart job language, else the idea's. `screen` (unless `--no-page`), `answer` and `cards` write it too, after the cards, so the page
 always carries the current `deck_id`.
+
+**One language per page.** A `zh` page is fully Chinese and an `en` page fully English: labels, sources (巨潮资讯 /
+CNINFO, 美国年报 10-K / SEC 10-K, 日本有价证券报告书 / Japan annual securities report), dates (2026年4月1日 / 1 Apr
+2026), market caps (21 亿美元 / $2.1B), countries, the `--text` list and `<noscript>`. There is no language toggle;
+`--lang` rebuilds it in the other language. Company names: a Chinese page shows the official Chinese short name
+(CNINFO 简称 for A-shares, MOPS 公司簡稱 for Taiwan when `sync-mops` stored the basic data), else your translation
+with the original name small, else the English name; an English page always shows the English (TradingView) name.
+The JSON also carries `lang`, `translation` (as in quickstart, above) and `translation_pending`.
+
+#### Translating the page (`--export-strings` / `--import-translations`)
+
+The data holds text in other languages (English profiles, Chinese / Japanese / Korean annual-report excerpts,
+company names without an official Chinese name). You, the human's own AI agent, translate it; no other model is
+called and nothing is paid.
+
+```bash
+jevscreen page RUN --export-strings FILE --lang zh --json    # FILE: a JSON list, at most 60 items, most important first
+# fill every item's "translation" (leave null when unsure), keep the other fields as they are
+jevscreen page RUN --import-translations FILE --lang zh --json   # stores them and rebuilds the page in that language
+```
+
+Item: `{"id": "d-1a2b…", "kind": "name|description|excerpt|reason", "text": "…", "source_lang": "en",
+"target_lang": "zh", "sha": "<sha256 of text>", "context": "ROBO · United States", "translation": null}`. Export
+prints `{action: "export_strings", status: "ok" | "nothing_to_translate", file, items, pending_total,
+remaining_after, kinds, instructions_en, import_command}`; the page is not changed. Import prints the page JSON plus
+`{action: "import_translations", imported, skipped, rejected: [{id, problem}]}` and the new `translation_pending`:
+while it is above 0 and the round imported something, export again (the same command) for the next batch (an
+import without `--lang` rebuilds the page in the items' `target_lang`). A text that has no translation (a product
+code, a brand) is resolved with `"keep_original": true` instead of a translation; a `name` may stay in Latin letters
+(the name unchanged, or its short form: "Zscaler"): it is then no longer pending and the page shows the original.
+A `null` translation is skipped and comes back in the next export. A translation is refused when it is not in the
+target language (except a Latin name), is the text itself (use `keep_original`), carries markup, is much longer
+than the text, or its `sha` no longer matches `text`; exit 1 only when the file is unreadable or nothing could be
+imported, 3 (`store_busy`) when the database stayed busy: nothing is exported then, and a page is never rebuilt
+without its stored translations (the earlier page stays; run the same command again in a minute). Translations go to the
+store table `translations` (key: sha + target language, provenance `agent translation`) and are reused by every
+later run and idea showing the same text. The original text is never changed: the page shows the translation first
+with an "AI 翻译 / AI translation" tag and a "看原文 / Show original" button that reveals the verbatim original (the
+original stays the fact: a translated excerpt is tagged "AI 翻译（不是原文） / AI translation (not the filing
+text)", never "事实 / Fact"); an untranslated text shows the original marked "原文（未翻译） / original (not
+translated)". A translated company name always carries the original name (small below it, or in brackets in the
+lists and in `text_zh`). `jevscreen cards` prints the stored translations of the cards' texts, marked AI 翻译 / AI
+translation.
 
 ### `jevscreen keys set NAME --dialog`
 

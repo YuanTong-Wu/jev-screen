@@ -16,7 +16,7 @@ problem is without pasting the secret or the material itself. You should get an 
 
 | Secret | Where it is read from (first hit wins) | Notes |
 |---|---|---|
-| OpenRouter key (Jev) | env `OPENROUTER_API_KEY`; the file named by `JEVSCREEN_OPENROUTER_KEY_FILE`; `<JEVSCREEN_HOME>/openrouter_api_key` | Read at call time only. A set `JEVSCREEN_OPENROUTER_KEY_FILE` is authoritative: if the file it names is missing, `<JEVSCREEN_HOME>/openrouter_api_key` is not tried. There is no built-in fallback path |
+| Jev key: TypeSafe, OpenRouter or Vercel AI Gateway (one is enough) | env `TYPESAFE_API_KEY` / `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY`; the file named by `JEVSCREEN_TYPESAFE_KEY_FILE` / `JEVSCREEN_OPENROUTER_KEY_FILE` / `JEVSCREEN_VERCEL_KEY_FILE`; a file recorded with `keys set <name> --from-file` (only its path is stored); `<JEVSCREEN_HOME>/<name>_api_key` | Read at call time only, sent only to that provider's endpoint in the Authorization header, redacted as `<jev-api-key>` from every error text and saved response. A set `JEVSCREEN_*_KEY_FILE` is authoritative: if the file it names is missing, `<JEVSCREEN_HOME>/<name>_api_key` is not tried. There is no built-in fallback path |
 | EDINET Subscription-Key | env `JEVSCREEN_EDINET_API_KEY`; `<JEVSCREEN_HOME>/edinet_api_key` | Travels in the query string; every recorded URL, error and note shows `<edinet-api-key>` |
 | OpenDART `crtfc_key` | env `JEVSCREEN_OPENDART_API_KEY`; `<JEVSCREEN_HOME>/opendart_api_key` | Same redaction, as `<opendart-api-key>` |
 | SEC User-Agent (`Name email`) | env `JEVSCREEN_SEC_USER_AGENT`; `<JEVSCREEN_HOME>/sec_user_agent` | Sent to SEC only; redacted as `<sec-user-agent>` everywhere else |
@@ -37,6 +37,7 @@ binary files, undeclared test fixtures and third-party domains in fixtures. See
 
 ## Network behaviour
 
-jev-screen talks only to the sources listed in `src/jevscreen/provenance.py` and to OpenRouter (Jev, paid, only in
-`screen` without `--dry-run`). It keeps at least 1 s between requests per host by default and stops a whole run on
+jev-screen talks only to the sources listed in `src/jevscreen/provenance.py` and to the one Jev provider whose key is
+active: api.typesafe.ai, openrouter.ai or ai-gateway.vercel.sh (Jev, paid, only in `screen` / `quickstart` without
+`--dry-run`, plus the free `doctor --check-jev`). It keeps at least 1 s between requests per host by default and stops a whole run on
 the first HTTP 403/429 or challenge page, without retrying.

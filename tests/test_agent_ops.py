@@ -31,7 +31,8 @@ FAKE_EDINET = "0123456789abcdef0123456789ABCDEF"
 FAKE_DART = "f" * 40
 FAKE_SEC = "Test Person test.person@example.org"
 KEY_ENVS = ("OPENROUTER_API_KEY", "JEVSCREEN_EDINET_API_KEY", "JEVSCREEN_OPENDART_API_KEY", "JEVSCREEN_SEC_USER_AGENT",
-            "JEVSCREEN_OPENROUTER_KEY_FILE")
+            "JEVSCREEN_OPENROUTER_KEY_FILE", "TYPESAFE_API_KEY", "JEVSCREEN_TYPESAFE_KEY_FILE", "AI_GATEWAY_API_KEY",
+            "JEVSCREEN_VERCEL_KEY_FILE", "JEVSCREEN_JEV_PROVIDER")
 TODAY = dt.date(2026, 9, 27)
 SEC_COLS = ("security_id", "exchange", "symbol", "name", "isin", "country", "tv_type", "tv_subtype", "is_primary",
             "company_key", "last_seen_snapshot", "active")
@@ -325,7 +326,7 @@ class ConsentTest(TempHome):
         self.assertFalse(consent.gray_sources_allowed(self.cfg))
         data = json.loads((self.home / "consent.json").read_text())
         self.assertEqual([h["value"] for h in data["history"]], ["yes", "no"])
-        self.assertIn("personal research", data["topics"]["gray-sources"]["statement"])
+        self.assertIn("your own research", data["topics"]["gray-sources"]["statement"])
 
     def test_malformed_file_fails_closed_and_is_kept_aside(self) -> None:
         self.home.mkdir(parents=True)
@@ -389,8 +390,9 @@ class DoctorTest(TempHome):
         self.assertEqual(r["next_command"], "jevscreen init")
         c = self.by_id(r)
         self.assertEqual(c["store"]["status"], "fail")
-        self.assertEqual(c["key_openrouter"]["status"], "fail")
-        self.assertTrue(c["key_openrouter"]["ask_human"])
+        self.assertEqual(c["key_openrouter"]["status"], "skip")       # one Jev key is enough ...
+        self.assertEqual(c["jev_provider"]["status"], "fail")         # ... and there is none
+        self.assertTrue(c["jev_provider"]["ask_human"])
         self.assertEqual(c["key_edinet"]["status"], "skip")   # off by default
         self.assertFalse(self.cfg.db_path.exists())           # doctor never creates the store
 
@@ -488,8 +490,8 @@ class DoctorTest(TempHome):
         self.assertIn("open data pack", c["universe"]["detail"])
         self.assertNotIn("record_answer_commands", c["universe"])
         self.assertNotIn("record_answer_commands", c["consent_gray_sources"])
-        self.assertIsNone(r["next_command"])                         # also with no OpenRouter key (a failed check)
-        self.assertEqual(c["key_openrouter"]["status"], "fail")
+        self.assertIsNone(r["next_command"])                         # also with no Jev key (a failed check)
+        self.assertEqual(c["jev_provider"]["status"], "fail")
         self.assertEqual(consent.get(self.cfg)["state"], "no")
         self.assertNotIn("next:", doctor.format_text(r))
 
@@ -611,8 +613,9 @@ class DoctorTest(TempHome):
         self.make_ready()
         (self.home / "openrouter_api_key").write_text("")
         c = self.by_id(doctor.run(self.cfg, today=TODAY))
-        self.assertEqual(c["key_openrouter"]["status"], "fail")
+        self.assertEqual(c["key_openrouter"]["status"], "warn")
         self.assertIn("empty", c["key_openrouter"]["detail"])
+        self.assertEqual(c["jev_provider"]["status"], "fail")          # an empty file is no key
 
     def test_cli_doctor_creates_nothing(self) -> None:
         code, out, _ = self.run_cli("doctor", "--json")

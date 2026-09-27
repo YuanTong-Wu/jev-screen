@@ -77,7 +77,7 @@ JSON lines, written deterministically (sorted keys, gzip mtime 0): the same cont
 `pack.assert_redistributable()` enforces the rule for every file at build time and for every manifest entry at
 pull time: the source must be in `PACK_SOURCES`, registered in `provenance.SOURCES`, never gray-private, and a
 non-official-open tier needs an explicit allowlist grant. A build also refuses to write a pack in which a configured
-secret (SEC User-Agent, EDINET/OpenDART/OpenRouter keys) appears.
+secret (SEC User-Agent, EDINET/OpenDART keys, the Jev keys of TypeSafe/OpenRouter/Vercel) appears.
 
 ## Pull: verification and import
 

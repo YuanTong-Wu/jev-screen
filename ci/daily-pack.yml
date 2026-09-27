@@ -7,7 +7,7 @@
 # Repository secrets (optional; a missing one skips its source cleanly, never fails the job):
 #   JEVSCREEN_SEC_USER_AGENT  SEC fair-access User-Agent '<name> <email>' (SEC ticker list)
 #   EDINET_API_KEY            EDINET API v2 Subscription-Key (事業の内容)
-# No TradingView, FinanceDatabase, CNINFO, DART or SEC 10-K text is fetched here, and no Jev/OpenRouter call is made.
+# No TradingView, FinanceDatabase, CNINFO, DART or SEC 10-K text is fetched here, and no Jev call is made.
 name: daily-pack
 
 on:

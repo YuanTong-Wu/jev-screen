@@ -36,7 +36,8 @@ IDEA = "humanoid robots"
 FAKE_KEY = "sk-or-v1-" + "fake" * 12
 FAKE_UA = "Test Person tester@example.test"
 CLEAR_ENV = ("OPENROUTER_API_KEY", "JEVSCREEN_OPENROUTER_KEY_FILE", "JEVSCREEN_SEC_USER_AGENT", "CI",
-             "JEVSCREEN_PACK_REPO", "JEVSCREEN_EDINET_API_KEY", "JEVSCREEN_OPENDART_API_KEY")
+             "JEVSCREEN_PACK_REPO", "JEVSCREEN_EDINET_API_KEY", "JEVSCREEN_OPENDART_API_KEY", "TYPESAFE_API_KEY",
+             "JEVSCREEN_TYPESAFE_KEY_FILE", "AI_GATEWAY_API_KEY", "JEVSCREEN_VERCEL_KEY_FILE", "JEVSCREEN_JEV_PROVIDER")
 
 
 def fd_bz2(path: Path, rows: list[dict]) -> Path:
@@ -199,7 +200,7 @@ class TestFront(QuickCase):
             out = self.front()
         self.assertLess(time.monotonic() - t, 1.0)
         self.assertEqual((out["status"], out["exit_code"]), ("needs_human", 10))
-        self.assertEqual(self.ids(out), ["consent_gray_sources", "approve_budget", "key_openrouter"])
+        self.assertEqual(self.ids(out), ["consent_gray_sources", "approve_budget", "key_jev"])
         self.assertIn("OpenRouter", out["before_you_start_en"])
         self.assertIn("AI", out["intro_en"])
         self.assertIn("约 $0.3", out["intro_zh"])
@@ -211,8 +212,13 @@ class TestFront(QuickCase):
         self.assertIn("'humanoid robots'", b["question_en"])
         self.assertEqual(b["rerun_with"], "--approve-budget 1")
         k = out["pending"][2]
-        self.assertEqual(k["agent_try"], "jevscreen keys set openrouter --dialog")
-        self.assertIn("keys set openrouter", k["human_command"])
+        self.assertIsNone(k["provider"])                                  # no key yet: which account?
+        self.assertEqual([c["provider"] for c in k["choices"]], ["typesafe", "openrouter", "vercel"])
+        self.assertEqual(k["choices"][1]["agent_try"], "jevscreen keys set openrouter --dialog")
+        self.assertIn("keys set openrouter", k["choices"][1]["human_command"])
+        for name in ("TypeSafe", "OpenRouter", "Vercel"):
+            self.assertIn(name, k["text_en"])
+            self.assertIn(name, out["before_you_start_en"])
         self.assertEqual(self.spawned, [])
         self.assertNotIn("--approve-budget", out["next_command"])
         self.assertNotIn("consent", out["next_command"])
@@ -317,12 +323,12 @@ class TestWorker(QuickCase):
         self.consent_yes()
         out = self.front()
         self.assertEqual(out["status"], "needs_human")
-        self.assertEqual(self.ids(out), ["approve_budget", "key_openrouter"])
+        self.assertEqual(self.ids(out), ["approve_budget", "key_jev"])
         self.assertEqual(self.spawned, [qs.idea_key(IDEA)])
         self.work()
         self.assertEqual((self.refresh.calls, self.calls.download), (1, 1))
         job = self.job()
-        self.assertEqual((job["state"], job["waiting_on"]), ("waiting", "key_openrouter"))
+        self.assertEqual((job["state"], job["waiting_on"]), ("waiting", "key_jev"))
         self.assertEqual([s["id"] for s in job["steps"]], ["check", "universe", "descriptions", "pack", "idea_en"])
         with store.session(self.cfg, read_only=True) as con:
             kinds = [r[0] for r in con.execute("SELECT DISTINCT n.kind FROM descriptions d JOIN snapshots n "
@@ -374,7 +380,7 @@ class TestWorker(QuickCase):
         self.canary_result = {"status": 401, "cost_usd": 0.0}
         out = self.done_flow()
         self.assertEqual(out["status"], "ai_unavailable")
-        self.assertEqual(self.ids(out), ["key_openrouter"])
+        self.assertEqual(self.ids(out), ["key_jev"])
         self.assertTrue(out["pending"][0]["rejected"])
         n = len(self.spawned)
         self.assertEqual(self.front()["status"], "ai_unavailable")          # same key: nothing restarts
@@ -589,12 +595,12 @@ class TestMoney(QuickCase):
         out = self.front(idea)
         self.assertEqual(out["status"], "needs_agent")
         out = self.front(idea, idea_en="Humanoid robot reducers")
-        self.assertEqual(self.ids(out), ["consent_gray_sources", "approve_budget", "key_openrouter"])
+        self.assertEqual(self.ids(out), ["consent_gray_sources", "approve_budget", "key_jev"])
         self.assertIn("两件事", out["intro_zh"])
         self.assertIn("Two decisions and one key", out["intro_en"])
         self.consent_yes()
         out = self.front(idea, idea_en="Humanoid robot reducers", approve_budget=1)
-        self.assertEqual(self.ids(out), ["key_openrouter"])
+        self.assertEqual(self.ids(out), ["key_jev"])
         for k in ("intro_zh", "text_zh"):
             self.assertNotIn("两件事", out[k])
             self.assertIn("key", out[k])
@@ -776,7 +782,7 @@ class TestCooldownAndBackoff(QuickCase):
         self.assertEqual((self.front(retry=True)["status"], len(self.spawned)), ("blocked", n))  # no request
         out = self.front(fd_file=str(self.bz2))
         self.assertEqual(len(self.spawned), n + 1)                     # the free steps run again at once
-        self.assertEqual(self.ids(out), ["approve_budget", "key_openrouter"])
+        self.assertEqual(self.ids(out), ["approve_budget", "key_jev"])
         self.work()
         self.assertEqual(self.calls.download, 1)
         self.assertTrue(qs.step_done(self.job(), "descriptions"))
@@ -1084,7 +1090,7 @@ class TestRealDetachedWorker(QuickCase):
         while time.monotonic() < deadline and (self.job() or {}).get("state") != "waiting":
             time.sleep(0.3)
         job = self.job()
-        self.assertEqual((job["state"], job["waiting_on"]), ("waiting", "key_openrouter"),
+        self.assertEqual((job["state"], job["waiting_on"]), ("waiting", "key_jev"),
                          qs.log_path(self.cfg, job["idea_key"]).read_text() if qs.log_path(
                              self.cfg, job["idea_key"]).exists() else job)
         self.assertEqual({s["id"]: s["status"] for s in job["steps"]},
@@ -1122,9 +1128,9 @@ class TestResume(QuickCase):
     def test_key_set_after_the_worker_waited_then_polling_reaches_done(self):
         self.consent_yes()
         out = self.front(approve_budget=1)
-        self.assertEqual(self.ids(out), ["key_openrouter"])
+        self.assertEqual(self.ids(out), ["key_jev"])
         self.work()
-        self.assertEqual((self.job()["state"], self.job()["waiting_on"]), ("waiting", "key_openrouter"))
+        self.assertEqual((self.job()["state"], self.job()["waiting_on"]), ("waiting", "key_jev"))
         self.set_key()
         n = len(self.spawned)
         st = qs.status(self.cfg, qs.idea_key(IDEA), spawn=self.spawn)

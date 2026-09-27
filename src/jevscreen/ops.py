@@ -111,7 +111,8 @@ def run_networked(command: str, cfg, work: Callable[[], Any], *, client: Any = N
 def secret_values(cfg) -> list[tuple[str, str]]:
     """(name, value) of every configured secret, read at call time and never returned to a caller that prints."""
     out: list[tuple[str, str]] = []
-    getters = (("openrouter", cfg.openrouter_key), ("sec-email", cfg.sec_user_agent),
+    getters = (("typesafe", lambda: cfg.jev_key("typesafe")), ("openrouter", cfg.openrouter_key),
+               ("vercel", lambda: cfg.jev_key("vercel")), ("sec-email", cfg.sec_user_agent),
                ("edinet", cfg.edinet_api_key), ("opendart", cfg.opendart_api_key))
     for name, fn in getters:
         try:

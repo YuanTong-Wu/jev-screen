@@ -18,8 +18,8 @@ Every stored row points to a snapshot, every snapshot to a source, and every sou
 | `official-private` | Official source, but no redistribution grant for the text (issuer-authored narrative, exchange-disclosed documents) | No. Personal use; keep the verbatim text and anything derived from it (labels, lists, screens, pages) local |
 | `gray-private` | Publicly reachable, but the site's terms restrict reuse or automated use | **Never.** Personal use only; nothing derived from it is published |
 
-Profile text and short annual-report excerpts are sent to the AI service (OpenRouter and the provider that serves
-Jev) to be read; that is how the screen works, and nothing is published. What you may share: the code, your idea,
+Profile text and short annual-report excerpts are sent to Jev (through TypeSafe's official API, OpenRouter or Vercel
+AI Gateway, whichever key you set) to be read; that is how the screen works, and nothing is published. What you may share: the code, your idea,
 and outputs built only from the open data pack.
 
 `jevscreen coverage` shows the tier behind every company's data, and every screen report carries a licence note
@@ -41,8 +41,8 @@ listing the tiers its evidence came from.
 | `tradingview_profile` | TradingView symbol-page business descriptions | gray-private | same | Terms restrict reuse of page content |
 | `financedatabase_local` | A local FinanceDatabase snapshot | gray-private | <https://github.com/JerBouma/FinanceDatabase> | The repository is MIT, but its company summaries originate from Yahoo Finance |
 
-Jev (the model behind layer 1 and layer 2) is called through OpenRouter with **your** key and at your cost. Its
-answers are yours; the issuer text you send it (profile text and short excerpts) stays subject to the tier above.
+Jev (the model behind layer 1 and layer 2) is called with **your** key and at your cost: Jev via TypeSafe's official
+API, OpenRouter or Vercel AI Gateway, same price. Its answers are yours; the issuer text you send it (profile text and short excerpts) stays subject to the tier above.
 
 ## What this project redistributes
 

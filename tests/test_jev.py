@@ -378,7 +378,7 @@ class LedgerTests(JevTestBase):
         with store.session(self.cfg) as con:
             store.upsert_many(con, "jev_requests", jev.LEDGER_COLS, [
                 (rid, "old-run", "l1", pk.payload_sha256, jev.MODEL, 2, 2, "sent", None, None, None,
-                 None, None, store.now_utc(), None, None, None)])
+                 None, None, store.now_utc(), None, None, None, "openrouter")])
             store.upsert_many(con, "jev_items", jev.ITEM_COLS, [
                 (jev.item_key(QUESTION, it.issuer, it.text), rid, "old-run", "l1", i, "sent", None, None, None,
                  store.now_utc(), 0, None) for i, it in enumerate(items(2))])
@@ -510,7 +510,7 @@ class UnavailableAndSecretTests(JevTestBase):
             self.assertNotIn(FAKE_KEY, text)
         row = [r for r in self.ledger() if r["payload_sha256"] == pk2.payload_sha256][0]
         self.assertEqual((row["status"], row["http_status"]), ("failed", 401))
-        self.assertIn("<openrouter-key>", row["error"])
+        self.assertIn(jev.KEY_PLACEHOLDER, row["error"])
 
     def test_timeout_after_send_is_uncertain(self):
         opener = FakeOpener([TimeoutError("read timed out")])
@@ -608,7 +608,7 @@ class ReviewFixTests(JevTestBase):
             res500 = self.client(jev.UrllibTransport(self.cfg, opener=opener), run_id="r500").classify(
                 items(2, text="five hundred"), QUESTION)
         self.assertEqual({r["status"] for r in res400}, {"failed"})
-        self.assertIn("<openrouter-key>", res400[0]["error"])
+        self.assertIn(jev.KEY_PLACEHOLDER, res400[0]["error"])
         texts = [str(cm.exception), json.dumps(res400), json.dumps(res500)]
         texts += [json.dumps(r, default=str) for r in self.ledger()]
         with store.session(self.cfg, read_only=True) as con:

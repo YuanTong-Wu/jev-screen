@@ -3,7 +3,7 @@
 Execution model (see docs/AGENT_API.md "quickstart"):
 - front(): the command the agent runs. It returns in seconds, makes no network request, reads or creates the job
   file <home>/quickstart/<idea_key>.json, applies the flags (--idea-en, --approve-budget, ...), computes `pending`
-  (agent item idea_en first, then the human items: consent, budget approval, OpenRouter key) and, when the worker
+  (agent item idea_en first, then the human items: consent, budget approval, the Jev key) and, when the worker
   has something it can do, spawns it detached (python -m jevscreen.quickstart --worker <idea_key>) and returns.
 - worker(): runs every step it can (check, universe, descriptions, pack, idea_en, ai_check + canary, estimate,
   screen, cards + page) while holding guard.budget_lock(cfg, 'quickstart'), under cli.sigterm_as_interrupt(). It
@@ -120,11 +120,11 @@ PHASE_EN = {1: "Check", 2: "Download data", 3: "Prepare", 4: "AI screen", 5: "Re
 
 STRINGS: dict[str, dict[str, str]] = {
     "zh": {
-        "before": "开始前说明：①要你同意使用两个数据源（TradingView 的股票清单、Yahoo 的公司简介）：它们的条款限制程序取用，"
-                  "只能你个人研究用、不能分享；②要一个有余额的 OpenRouter 账号：第一次要先充值（最低充值额通常是几美元，另有"
-                  "支付手续费，以 openrouter.ai 付款页为准），需要能付美元的卡或 OpenRouter 支持的其他付款方式；这次筛选只从余额"
-                  "里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟（含注册 OpenRouter）。Mac 第一次用可能弹出"
-                  "「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。",
+        "before": "开始前说明：①会问你可不可以用两个数据源（TradingView 的股票清单、Yahoo 的公司简介）：它们的条款限制程序取用，"
+                  "只能你个人研究用、不能分享；②要一个能付费用 Jev（读简介和年报的 AI 服务）的账号：TypeSafe 官方 API、OpenRouter "
+                  "或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家"
+                  "付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟"
+                  "（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。",
         "intro": "接下来：先下载股票清单和公司简介（免费，约 1 分钟），再让 AI 读这些简介、用年报核对（约 3 分钟，约 $0.3），"
                  "最后在浏览器里给你一个排好序的名单，每家都附原文证据。",
         "bg_started": "免费下载已经在后台开始了，你准备 key 的时候不耽误。",
@@ -136,8 +136,20 @@ STRINGS: dict[str, dict[str, str]] = {
         "uncertain_q": "上次中断时有 {n} 条请求结果不明，重发约 ${c}（超过 1 美分）。同意把总上限提高到 ${total} 吗？",
         "reprice_q": "发给 AI 的英文要从 '{old}' 改成 '{new}'。这会重新计费（AI 初读约 ${l1}）。同意改用新的英文，并重新确认"
                      "预算上限 ${x} 吗？不同意就继续用原来的英文。",
-        "key": "请在 https://openrouter.ai/settings/keys 创建一个 key（建议给它设几美元的额度上限）。我会弹出一个输入框让你粘贴，"
+        "key": "请在 {key_url} 创建一个 {label} 的 key{limit}。我会弹出一个输入框让你粘贴，"
                "输入内容不会显示，也不会经过我。弹不出来的话：{terminal}，运行 `{abs_cmd}`，粘贴后按回车。千万不要把 key 发到聊天里。",
+        "key_limit": "（建议给它设几美元的额度上限）",
+        "key_credits": "（先在 {credits_url} 买一点 AI Gateway credits，Jev 可能不在免费额度里）",
+        "account_q": "Jev（读简介和年报的 AI 服务）要用你自己的付费账号。下面三家卖的是同一个 Jev，价格一样（这次约 $0.3）。"
+                     "你有哪一家的账号？"
+                     "① TypeSafe 官方（Jev 的开发公司）：在 {ts_signup} 注册（官方注册有时会暂停），然后在 {ts_keys} 创建 key；"
+                     "② OpenRouter：在 {or_signup} 注册并充值几美元，然后在 {or_keys} 创建 key（建议给 key 设几美元的额度上限）；"
+                     "③ Vercel：在 {vc_signup} 注册，在 AI Gateway 买一点 credits（Jev 可能不在免费额度里），然后在 AI Gateway 的 "
+                     "API Keys 页面 {vc_keys} 点 Create key。"
+                     "都没有的话，OpenRouter 最省事。告诉我是哪一家；key 准备好了说一声，我会弹出一个输入框让你粘贴，输入内容不会显示，"
+                     "也不会经过我。千万不要把 key 发到聊天里。",
+        "account_fallback": "输入框弹不出来的话：{terminal}，运行你那一家对应的命令：{cmds}，粘贴后按回车。",
+        "key_other": "想改用另一家的账号？设置那一家的 key 就会改用它（{cmds}）。",
         "declined": "你选择了不使用这些来源。目前筛选离不开它们，所以先停在这里，不会再问。改主意了？告诉你的 AI『我同意使用这些来源』，"
                     "它会重新记录。",
         "running": "[{phase}/5] {what}…",
@@ -154,7 +166,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "p_l1": "[4/5] AI 初读 {done}/{total} 家简介…", "p_fetch": "[4/5] 补年报原文 {done}/{total}（上限 {s} 秒）…",
         "p_l2": "[4/5] AI 核对 {done}/{total} 家…", "p_finish": "[5/5] 生成结果页…",
         "done": "完成：{n} 家入选（年报确认 {a}，只有简介 {p}）。这个想法从你同意起共用时 {t}（不算等你回答的时间），"
-                "共花费 ${c}（约 ¥{y}）。结果页：{where}。仅供你个人研究，请勿分享。",
+                "共花费 ${c}（{y}）。结果页：{where}。仅供你个人研究，请勿分享。",
         "done_version": "这是第 {v} 版：{change}。",
         "fill_q": "可选，问你一件事：这次有 {n} 家{market}公司（市值 ≥ {floor}，占{market}公司的 {pct}%）没有公司简介，AI 没读到"
                   "{names}。要补吗？补简介免费、在后台跑，约 {m} 分钟；补完只让 AI 初读新补的这些公司并重新排序，"
@@ -197,8 +209,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "fd_blocked": "公司简介的下载地址暂时拒绝了我们的请求。为了守规矩，24 小时内不再请求它们（{retry_after} 后可再试）。不想等："
                       "用浏览器下载 {url}（打不开就试 {url2}），再让你的 AI 用 --fd-file <下载的文件> 重跑。",
         "tv_blocked": "TradingView 暂时拒绝了我们的请求。为了守规矩，24 小时内不再请求它（{retry_after} 后可再试）。",
-        "no_credit": "OpenRouter 说账户没有余额。请去 https://openrouter.ai/settings/credits 充值，然后告诉我『好了』。",
-        "key_rejected": "OpenRouter 不接受这个 key，请重新创建并设置。",
+        "no_credit": "{label} 说账户没有余额。请去 {credits_url} 充值，然后告诉我『好了』。",
+        "key_rejected": "{label} 不接受这个 key，请重新创建并设置。",
+        "key_rejected_head": "{label} 不接受这个 key。",
+        "key_rejected_vercel": "Vercel 不接受这个 key 用 Jev（HTTP 403）：多半是还没买 AI Gateway credits（Jev 可能不在免费额度里），"
+                               "或者 key 不对。请在 {credits_url} 买一点 credits，或重新创建 key 并设置。",
         "store_busy": "另一个 jev-screen 任务正在用数据库。过几分钟重跑同一条命令就会接着做（做完的步骤不会重做）。",
         "queued": "另一个想法的筛选正在后台运行，这个想法排在它后面。你的回答已经记下；过几分钟查一下进度或重跑同一条命令，"
                   "它就会开始。",
@@ -206,7 +221,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "python_old": "这台电脑的 Python 太旧。最简单的办法：安装 uv（一条命令），它会自带合适的 Python。",
         "failed": "后台任务出错停下了。重跑同一条命令会从断点继续；如果还是出错，把这段技术信息给你的 AI 看：{error}",
         "fail_duckdb": "缺少数据库组件 duckdb。让你的 AI 按安装步骤重新安装（pip install -e '.[pdf]'），然后重跑同一条命令。",
-        "fail_consent": "还没有记录你对两个数据源的同意。回答同意问题后，重跑同一条命令。",
+        "fail_consent": "还没有记录你对两个数据源的回答。回答那个问题（可以 / 不要）后，重跑同一条命令。",
         "fail_canary": "用来测试 key 能不能付费的那一次小请求没有成功（不是余额或 key 的问题）。过几分钟重跑同一条命令再试。",
         "fail_results": "筛选做完了，但结果暂时读不出来（数据库可能正被别的任务占用）。过几分钟重跑同一条命令，不会重复收费。",
         "fail_screen_args": "筛选的设置有问题，没有发出任何请求、没有花钱。让你的 AI 看一下 error 字段里的原因并改正后重跑。",
@@ -214,12 +229,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "interrupted": "后台任务中断了：重跑同一条命令会从断点继续（已付费的结果不会重复收费）。",
     },
     "en": {
-        "before": "Before we start: (1) you agree to use two data sources (TradingView's stock list, Yahoo company "
-                  "profiles) whose terms restrict automated use: for your personal research only, never shared; (2) you "
-                  "need an OpenRouter account with credit. The first top-up has a minimum (usually a few dollars, plus a "
-                  "payment fee; see the payment page on openrouter.ai) and needs a card that pays in US dollars or another "
-                  "method OpenRouter accepts; this screen uses about $0.30 of it and the rest stays for later. (3) About "
-                  "15–25 minutes the first time, including the OpenRouter sign-up. On a Mac, a box may offer to install "
+        "before": "Before we start: (1) I will ask if you are OK with two data sources (TradingView's stock list, "
+                  "Yahoo company profiles) whose terms restrict automated use: for your personal research only, never "
+                  "shared; (2) you "
+                  "need an account that pays for Jev (the AI service that reads profiles and annual reports): TypeSafe's "
+                  "official API, OpenRouter or Vercel AI Gateway, whichever you have; the price is the same. The first "
+                  "top-up usually has a minimum (a few dollars, plus a payment fee; see the provider's payment page) and "
+                  "needs a card that pays in US dollars; this screen uses about $0.30 of it and the rest stays for later. "
+                  "(3) About 15–25 minutes the first time, including the sign-up. On a Mac, a box may offer to install "
                   "the command line developer tools: click Install (a few minutes). You answer one round of questions.",
         "intro": "Next: download the stock list and company profiles (free, about 1 min), have an AI read them and check "
                  "against annual reports (about 3 min, about $0.30), then show you a ranked list with evidence in your "
@@ -240,9 +257,25 @@ STRINGS: dict[str, dict[str, str]] = {
         "reprice_q": "The English sent to the AI would change from '{old}' to '{new}'. That is charged again (first read "
                      "about ${l1}). Switch to the new English and confirm the budget cap of ${x} again? If not, the old "
                      "English stays.",
-        "key": "Create a key at https://openrouter.ai/settings/keys (a limit of a few dollars on the key is a good idea). "
-               "I will open a box where you paste it; the text stays hidden and never passes through me. If no box "
-               "appears: {terminal} and run `{abs_cmd}`, paste, press Enter. Never paste the key into the chat.",
+        "key": "Create an API key for {label} at {key_url}{limit}. I will open a box where you paste it; the text stays hidden "
+               "and never passes through me. If no box appears: {terminal} and run `{abs_cmd}`, paste, press Enter. "
+               "Never paste the key into the chat.",
+        "key_limit": " (a limit of a few dollars on the key is a good idea)",
+        "key_credits": " (first buy some AI Gateway credits at {credits_url}; Jev may not be in the free tier)",
+        "account_q": "Jev (the AI service that reads profiles and annual reports) runs on your own paid account. These "
+                     "three sell the same Jev at the same price (about $0.30 for this screen). Which one do you have? "
+                     "(1) TypeSafe, the official API (Jev's maker): sign up at {ts_signup} (sign-ups are sometimes "
+                     "paused), then create a key at {ts_keys}; "
+                     "(2) OpenRouter: sign up at {or_signup} and add a few dollars of credit, then create a key at "
+                     "{or_keys} (a limit of a few dollars on the key is a good idea); "
+                     "(3) Vercel: sign up at {vc_signup}, buy some AI Gateway credits (Jev may not be in the free tier), "
+                     "then click Create key on the AI Gateway API Keys page {vc_keys}. "
+                     "None yet? OpenRouter is the quickest. Tell me which one; when the key is ready, say so and I will "
+                     "open a box where you paste it: the text stays hidden and never passes through me. Never paste the "
+                     "key into the chat.",
+        "account_fallback": "If no box appears: {terminal} and run the command for your provider: {cmds}; paste, press "
+                            "Enter.",
+        "key_other": "Using another account instead? Setting its key switches to it ({cmds}).",
         "declined": "You chose not to use these sources. Screening needs them today, so we stop here and will not ask "
                     "again. Changed your mind? Tell your AI 'I agree to use these sources' and it will record that.",
         "running": "[{phase}/5] {what}…",
@@ -321,9 +354,12 @@ STRINGS: dict[str, dict[str, str]] = {
                       "in a browser and have your AI rerun with --fd-file <file>.",
         "tv_blocked": "TradingView refused our requests for now. To stay polite we will not ask it again for 24 hours "
                       "(retry after {retry_after}).",
-        "no_credit": "OpenRouter says the account has no credit. Top up at https://openrouter.ai/settings/credits, then "
-                     "tell me 'done'.",
-        "key_rejected": "OpenRouter rejected the key. Create a new one and set it again.",
+        "no_credit": "{label} says the account has no credit. Top up at {credits_url}, then tell me 'done'.",
+        "key_rejected": "{label} rejected the key. Create a new one and set it again.",
+        "key_rejected_head": "{label} rejected the key.",
+        "key_rejected_vercel": "Vercel refused this key for Jev (HTTP 403): most likely no AI Gateway credits were bought "
+                               "yet (Jev may not be in the free tier), or the key is wrong. Buy some credits at "
+                               "{credits_url}, or create a new key and set it again.",
         "store_busy": "Another jev-screen task is using the database. Rerun the same command in a few minutes to "
                       "continue (finished steps are not redone).",
         "queued": "Another idea is being screened in the background; this one is next in line. Your answers are "
@@ -400,6 +436,13 @@ def _command(*argv: Any) -> str:
 
 def _num(v: float) -> str:
     return f"{v:g}" if v < 1e5 else f"{v:.0e}".replace("e+0", "e").replace("e+", "e")
+
+
+def _cny_words(usd: float) -> str:
+    """The yuan figure beside a cost in Chinese text: '约 ¥0.72'; a non-zero cost that rounds to ¥0.00 reads
+    '不到 ¥0.01' (never a zero next to a non-zero dollar amount)."""
+    y = usd * CNY_PER_USD
+    return "不到 ¥0.01" if 0 < y < 0.005 else f"约 ¥{y:.2f}"
 
 
 def _usd(v: float | None, digits: int = 2) -> str:
@@ -522,9 +565,15 @@ def consent_current(c: dict[str, Any]) -> bool:
 
 
 def key_state(cfg) -> dict[str, Any]:
-    """{'configured', 'fingerprint'}: presence by stat only; the fingerprint is file mtime + size (never the value)."""
-    from . import keys
-    p = keys.presence(cfg, "openrouter")
+    """{'configured', 'fingerprint', 'provider', 'reason'} of the active Jev provider (jev.resolve_provider):
+    presence by stat only; the fingerprint is provider + file mtime + size (never the value), so a new key or a
+    switch of provider is tested again. reason 'default' = no Jev key at all (the account question is asked)."""
+    from . import jev, keys
+    try:
+        prov, reason = jev.resolve_provider(cfg)
+    except jev.ProviderError as e:
+        return {"configured": False, "fingerprint": None, "provider": None, "reason": "error", "error": str(e)}
+    p = keys.presence(cfg, prov.name)
     fp = None
     if p.get("configured"):
         if p.get("source") == "env":
@@ -533,7 +582,99 @@ def key_state(cfg) -> dict[str, Any]:
             with contextlib.suppress(OSError):
                 st = Path(p["path"]).stat()
                 fp = f"{st.st_mtime_ns}:{st.st_size}"
-    return {"configured": bool(p.get("configured")), "fingerprint": fp}
+        if fp is not None and prov.name != "openrouter":     # OpenRouter keeps its old fingerprints valid
+            fp = f"{prov.name}:{fp}"
+    return {"configured": bool(p.get("configured")), "fingerprint": fp, "provider": prov.name, "reason": reason}
+
+
+def _provider(name: str | None):
+    from . import jev
+    try:
+        return jev.provider_named(name) if name else jev.PROVIDERS[jev.DEFAULT_PROVIDER]
+    except jev.ProviderError:
+        return jev.PROVIDERS[jev.DEFAULT_PROVIDER]
+
+
+def account_question(lang: str) -> str:
+    """The one plain question asked when no Jev key is configured: which account the human has."""
+    from . import jev
+    P = jev.PROVIDERS
+    return STRINGS["zh" if lang == "zh" else "en"]["account_q"].format(
+        ts_signup=P["typesafe"].signup_url, ts_keys=P["typesafe"].key_url, or_signup=P["openrouter"].signup_url,
+        or_keys=P["openrouter"].key_url, vc_signup=P["vercel"].signup_url, vc_keys=P["vercel"].key_url)
+
+
+def zh_tidy(text: str) -> str:
+    """Chinese text built from templates: no half-width space between two Chinese characters or after a full-width
+    stop ('TypeSafe 官方 说' -> 'TypeSafe 官方说'); the space between a Latin word and a Chinese one stays."""
+    return _ZH_SPACE.sub("", text)
+
+
+_ZH_SPACE = re.compile(r"(?<=[\u4e00-\u9fff。，；：！？）」』]) +(?=[\u4e00-\u9fff（「『])")
+
+
+def provider_label(pr, lang: str) -> str:
+    """A provider's name in the human's language (TypeSafe 官方 in Chinese text, never English words there)."""
+    return pr.label_zh if lang == "zh" else pr.label
+
+
+def key_item(cfg, k: dict[str, Any], rejected: bool, http_status: Any = None) -> dict[str, Any]:
+    """The pending Jev key item. No key at all: the account question with one choice per provider (the agent runs
+    the chosen one's agent_try once the human names it and says the key is ready). A known provider (its key was
+    rejected, or the human chose it and its key is missing): that provider's key step, plus `choices` for another
+    account (setting another provider's key switches to it; `clear_command` forgets this one) - except when
+    JEVSCREEN_JEV_PROVIDER pins the provider."""
+    from . import agent_cli, jev
+    item: dict[str, Any] = {"id": "key_jev", "human_action": True, "rejected": rejected}
+    choices = []
+    for n in jev.PROVIDER_ORDER:
+        pr = jev.PROVIDERS[n]
+        choices.append({"provider": n, "label": pr.label, "label_zh": pr.label_zh, "signup_url": pr.signup_url,
+                        "key_url": pr.key_url, "agent_try": f"jevscreen keys set {n} --dialog",
+                        "agent_try_file": f"jevscreen keys set {n} --from-file <the file the human saved it in>",
+                        "human_command": f"{_abs_jevscreen()} keys set {n}"})
+
+    def cmds(lang: str, skip: str | None = None) -> str:
+        sep = "；" if lang == "zh" else "; "
+        colon = "：" if lang == "zh" else ": "
+        return sep.join(f"{c['label_zh' if lang == 'zh' else 'label']}{colon}`{c['human_command']}`"
+                        for c in choices if c["provider"] != skip)
+
+    if k.get("reason") in ("default", "error") and not rejected:
+        for lang in ("zh", "en"):
+            q = account_question(lang)
+            item[f"question_{lang}"] = q
+            item[f"text_{lang}"] = q + (" " if lang == "en" else "") + STRINGS[lang]["account_fallback"].format(
+                terminal=agent_cli.terminal_hint(lang), cmds=cmds(lang))
+        item.update(provider=None, choices=choices)
+        if k.get("error"):
+            item["provider_error"] = k["error"]
+        return item
+    pr = _provider(k.get("provider"))
+    absc = f"{_abs_jevscreen()} keys set {pr.name}"
+    pinned = k.get("reason") == "explicit"          # JEVSCREEN_JEV_PROVIDER: another key would not switch
+    item.update(provider=pr.name, label=pr.label, label_zh=pr.label_zh,
+                agent_try=f"jevscreen keys set {pr.name} --dialog", agent_try_file=f"jevscreen keys set {pr.name} --from-file <the file the human saved it in>",
+                human_command=absc)
+    if not pinned:
+        item.update(choices=[c for c in choices if c["provider"] != pr.name],
+                    clear_command=f"jevscreen keys clear {pr.name}")
+    for lang in ("zh", "en"):
+        T = STRINGS[lang]
+        label = provider_label(pr, lang)
+        head, sp = "", (" " if lang == "en" else "")
+        vercel_403 = pr.name == "vercel" and http_status == 403
+        if rejected:
+            key = "key_rejected_vercel" if vercel_403 else "key_rejected_head"
+            head = T[key].format(label=label, credits_url=pr.credits_url) + sp
+        hint = (T["key_limit"] if pr.name == "openrouter" else
+                T["key_credits"].format(credits_url=pr.credits_url) if pr.name == "vercel" and not vercel_403 else "")
+        text = head + T["key"].format(
+            label=label, key_url=pr.key_url, limit=hint,
+            terminal=agent_cli.terminal_hint(lang), abs_cmd=absc) + (
+            "" if pinned else sp + T["key_other"].format(cmds=cmds(lang, pr.name)))
+        item[f"text_{lang}"] = zh_tidy(text) if lang == "zh" else text
+    return item
 
 
 def _sieve(cfg, idea: str) -> dict[str, Any] | None:
@@ -809,7 +950,7 @@ def remaining_usd(cfg, job: dict[str, Any], *, spent: float | None = None, stric
 def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[str, Any]]:
     """Every open item, the agent's first (idea_en), then the human's (consent, budget, key). `spent`: the
     approval's spend when the caller already read it (one ledger read per response)."""
-    from . import agent_cli, doctor
+    from . import doctor
     items: list[dict[str, Any]] = []
     if exhausted(job) and approval_valid(job):
         return [budget_item(cfg, job, spent, kind="topup")]
@@ -843,8 +984,11 @@ def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[s
     c = consent_state(cfg)
     if not consent_current(c):
         if c["state"] != "no":
+            from . import consent as _consent
             items.append({"id": "consent_gray_sources", "ask_human": True, "question_zh": doctor.GRAY_QUESTION_ZH,
                           "question_en": doctor.GRAY_QUESTION, "statement_version": doctor.GRAY_STATEMENT_VERSION,
+                          "note_zh": doctor.recipient_note(cfg, "zh"), "note_en": doctor.recipient_note(cfg, "en"),
+                          "answer_words": _consent.ANSWER_WORDS,
                           "record_answer_commands": [f"jevscreen consent set gray-sources {v} --lang {lang}"
                                                      for v in ("yes", "no")]})
     if job.get("reprice"):
@@ -857,14 +1001,7 @@ def pending(cfg, job: dict[str, Any], spent: float | None = None) -> list[dict[s
     canary = job.get("canary") or {}
     rejected = canary.get("status") in (401, 403) and canary.get("fingerprint") == k["fingerprint"]
     if not k["configured"] or rejected:
-        absc = f"{_abs_jevscreen()} keys set openrouter"
-        items.append({"id": "key_openrouter", "human_action": True, "agent_try": "jevscreen keys set openrouter --dialog",
-                      "agent_try_file": "jevscreen keys set openrouter --from-file <the file the human saved it in>",
-                      "human_command": absc, "rejected": rejected,
-                      "text_zh": ((STRINGS["zh"]["key_rejected"] + " ") if rejected else "")
-                      + STRINGS["zh"]["key"].format(terminal=agent_cli.terminal_hint("zh"), abs_cmd=absc),
-                      "text_en": ((STRINGS["en"]["key_rejected"] + " ") if rejected else "")
-                      + STRINGS["en"]["key"].format(terminal=agent_cli.terminal_hint("en"), abs_cmd=absc)})
+        items.append(key_item(cfg, k, rejected, canary.get("status")))
     return items
 
 
@@ -1150,6 +1287,8 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
                        if not (job.get("fill_offer") and str(n.get("command") or "").startswith(
                            "jevscreen crawl-descriptions"))],
         "gaps": res.get("gaps") or [], "fetch": res.get("fetch"),
+        "translation": res.get("translation"),
+        "translation_pending": int((res.get("translation") or {}).get("pending") or 0),
         "error": failure.get("error") if status not in ("running",) else None, "notes": job.get("notes") or [],
     }
     if status in ("needs_human", "needs_agent"):
@@ -1248,7 +1387,7 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
         if status == "budget_exhausted":
             lines.append(T["budget_exhausted"].format(n=s.get("listed", 0), x=_usd(job.get("topup_usd") or 0.25)))
         lines.append(T["done"].format(n=s.get("listed", 0), a=s.get("annual_report", 0), p=s.get("profile_only", 0),
-                                      c=_usd(c), y=f"{c * CNY_PER_USD:.2f}", t=t, where=where))
+                                      c=_usd(c), y=_cny_words(c), t=t, where=where))
         if (res.get("version") or 1) > 1 and res.get(f"change_{lang}"):
             lines.append(T["done_version"].format(v=res["version"], change=res[f"change_{lang}"]))
         lines += fixes
@@ -1260,15 +1399,20 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
         for it in items:
             if it.get("id") == "fill_descriptions":
                 lines.append(it[f"question_{lang}"])
+        from .page import STRINGS as PAGE_STRINGS
         for r in res.get("top") or []:
-            lines.append(T["top_line"].format(rank=r["rank"], name=r["name"], ticker=r["ticker"],
+            # an agent-translated name keeps the original beside it; a translated line is marked, as on the page
+            ticker = (f"{r['name_en']}{'，' if lang == 'zh' else ', '}{r['ticker']}"
+                      if r.get("name_translated") and r.get("name_en") else r["ticker"])
+            one = (r.get("one_line") or "-") + (PAGE_STRINGS[lang]["text_ai"] if r.get("one_line_translated") else "")
+            lines.append(T["top_line"].format(rank=r["rank"], name=r["name"], ticker=ticker,
                                               country=(lang == "zh" and r.get("country_zh")) or r.get("country")
-                                              or "?", one=r.get("one_line") or "-",
+                                              or "?", one=one,
                                               verdict=r[f"verdict_words_{lang}"], evidence=top_evidence(T, r)))
         steps = [n for n in res.get("next_steps") or []
                  if not (job.get("fill_offer") and str(n.get("command") or "").startswith("jevscreen crawl-descriptions"))]
         for i, ns in enumerate(steps, 1):
-            lines.append(f"{'下一步' if lang == 'zh' else 'Next'} {i}: {ns[f'text_{lang}']}"
+            lines.append(f"{'下一步' if lang == 'zh' else 'Next'} {i}{'：' if lang == 'zh' else ': '}{ns[f'text_{lang}']}"
                          + (f"  ({ns['command']})" if ns.get("command") else ""))
         return "\n".join(lines)
     if status in ("needs_human", "needs_agent"):
@@ -1278,7 +1422,8 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
             if it.get("ask_agent"):
                 continue
             n += 1
-            lines.append(f"{n}. " + (it.get(f"question_{lang}") or it.get(f"text_{lang}") or ""))
+            lines.append(f"{n}. " + (it.get(f"question_{lang}") or it.get(f"text_{lang}") or "")
+                         + ((" " if lang == "en" else "") + it[f"note_{lang}"] if it.get(f"note_{lang}") else ""))
         lines += fixes
         if job.get("state") == "running" and not job.get("result"):
             lines.append(T["bg_started"])
@@ -1301,7 +1446,11 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
     if kind == "busy":
         return T["store_busy"]
     if kind == "ai_unavailable":
-        return T["no_credit"] if failure.get("http_status") == 402 else T["key_rejected"]
+        pr = _provider(failure.get("provider"))
+        key = ("no_credit" if failure.get("http_status") == 402 else
+               "key_rejected_vercel" if pr.name == "vercel" and failure.get("http_status") == 403 else "key_rejected")
+        text = T[key].format(label=provider_label(pr, lang), credits_url=pr.credits_url)
+        return zh_tidy(text) if lang == "zh" else text
     if kind == "fd":
         return T["fd_failed"].format(**_fd_urls(lang))
     if kind == "network":
@@ -2062,7 +2211,7 @@ class Worker:
         T = STRINGS
         k = key_state(self.cfg)
         if not k["configured"]:
-            return self.wait("key_openrouter")
+            return self.wait("key_jev")
         canary = self.job.get("canary") or {}
         if canary.get("status") == "ok" and canary.get("fingerprint") == k["fingerprint"]:
             self.record("ai_check", "skipped", t0, "key 已验证", "key already checked")
@@ -2074,8 +2223,8 @@ class Worker:
                 self.job["canary"] = {"at": iso(now_utc()), "status": hs or "no_key", "cost_usd": 0.0,
                                       "fingerprint": k["fingerprint"]}
             if hs in (401, 403) or not hs:
-                return self.fail("ai_unavailable", chk.get("detail"), http_status=hs or 401)
-            return self.fail("ai_unavailable", chk.get("detail"), http_status=hs)
+                return self.fail("ai_unavailable", chk.get("detail"), http_status=hs or 401, provider=k["provider"])
+            return self.fail("ai_unavailable", chk.get("detail"), http_status=hs, provider=k["provider"])
         if not approval_valid(self.job):
             return self.wait("approve_budget", "first")
         self.progress(3, T["zh"]["running"].format(phase=3, what=T["zh"]["p_ai"]),
@@ -2093,7 +2242,7 @@ class Worker:
             self.progress(3, T["zh"]["p_ai_ok"], T["en"]["p_ai_ok"], force=True)
             return "ok"
         if st in (401, 402, 403):
-            return self.fail("ai_unavailable", res.get("error"), http_status=st)
+            return self.fail("ai_unavailable", res.get("error"), http_status=st, provider=k["provider"])
         if st == "busy":
             return self.fail("busy", "another process is using Jev")
         return self.fail("failed", f"the test request failed ({st})", reason="canary")
@@ -2618,7 +2767,13 @@ def result_block(cfg, job: dict[str, Any], res: dict[str, Any], deck: dict[str, 
             "version": (data or {}).get("version") or 1, "change_zh": change.get("zh"), "change_en": change.get("en"),
             "sieve_version": (sv or {}).get("version"), "idea_en": job.get("idea_en"),
             "min_mcap_usd": job.get("min_mcap_usd"), "countries": job.get("countries"),
-            "fetch": _retarget_fetch(_fetch_brief((res.get("layers") or {}).get("fetch")), res["run_id"], top)}
+            "fetch": _retarget_fetch(_fetch_brief((res.get("layers") or {}).get("fetch")), res["run_id"], top),
+            "translation": _translation_of(cfg, res["run_id"], data)}
+
+
+def _translation_of(cfg, run_id: str, data: dict[str, Any] | None) -> dict[str, Any] | None:
+    from . import quickstart_cli
+    return quickstart_cli.translation_block(cfg, run_id, data)
 
 
 def follow_update(cfg, replaced_run_id: str, res: dict[str, Any], deck: dict[str, Any] | None,
@@ -2672,6 +2827,14 @@ def read_page_data(path: str | Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _page_view(cfg, data: dict[str, Any]) -> dict[str, Any]:
+    """What a finished job reads from its page every time: the top rows (with the agent's translations once they
+    are imported) and the translation step still to do (quickstart_cli.translation_block)."""
+    from . import page, quickstart_cli
+    return {"top": page.top_rows(data, 10),
+            "translation": quickstart_cli.translation_block(cfg, data.get("run_id"), data)}
+
+
 def newest_view(cfg, job: dict[str, Any]) -> dict[str, Any]:
     """The job as the human should see it: its result always points at the one stable page of the idea
     (<home>/pages/<idea_key>.html), and when a newer run of the idea owns that page (the human's card answers,
@@ -2685,7 +2848,9 @@ def newest_view(cfg, job: dict[str, Any]) -> dict[str, Any]:
     if owner is None or not sp.exists():
         return job
     if owner.get("run_id") == res.get("run_id"):
-        return {**job, "result": {**res, "page": str(sp)}}
+        data = read_page_data(sp)          # the page may have changed since (the agent's translations)
+        fresh = _page_view(cfg, data) if data and data.get("run_id") == res.get("run_id") else {}
+        return {**job, "result": {**res, "page": str(sp), **fresh}}
     if res.get("started_at") and owner.get("started_at") and str(owner["started_at"]) < str(res["started_at"]):
         return job                   # this run's page could not be written: the stable page is older, not newer
     data = read_page_data(sp)
@@ -2698,7 +2863,7 @@ def newest_view(cfg, job: dict[str, Any]) -> dict[str, Any]:
            "top": page.top_rows(data, 10), "gaps": gaps, "next_steps": _next_steps(gaps),
            "version": data.get("version"), "change_zh": (data.get("change") or {}).get("zh"),
            "change_en": (data.get("change") or {}).get("en"), "newer_than_job": True,
-           "cost_usd": data.get("cost_usd"), "seconds": data.get("seconds")}
+           "cost_usd": data.get("cost_usd"), "seconds": data.get("seconds"), **_page_view(cfg, data)}
     if res.get("fetch"):
         new["fetch"] = _retarget_fetch(res["fetch"], data["run_id"], page.top_rows(data, 10))
     return {**job, "result": new}

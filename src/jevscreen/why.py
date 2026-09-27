@@ -21,7 +21,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from . import screen
+from . import l10n, screen
 
 WAIT_S = 5.0
 RECENT_DAYS = 7
@@ -55,6 +55,23 @@ SPAC_LIKE_EN = ("It looks like a blank-check company, but it has revenue or is n
 LABEL_ZH = {"core": "核心", "adjacent": "相关", "unrelated": "无关", "insufficient": "说不清",
             "explicit": "明确符合", "partial": "部分相关", "contradicted": "年报否认"}
 EVIDENCE_ZH = {"annual_report": "年报原文", "profile": "公司简介"}
+LABEL_EN = {"core": "central", "adjacent": "related", "unrelated": "unrelated", "insufficient": "unclear",
+            "explicit": "clearly fits", "partial": "related", "contradicted": "contradicted by the text"}
+EVIDENCE_EN = {"annual_report": "annual report", "profile": "company profile"}
+# run states of one company in plain words (never an internal code such as skipped_budget in the text)
+STATE_WORDS = {"skipped_budget": ("预算用完没读", "budget ran out"), "failed": ("出错", "failed"),
+               "uncertain": ("结果不确定", "outcome unknown"), "not_sent": ("没发出", "not sent"),
+               "no_excerpt": ("年报里没找到相关段落", "no relevant passage in the filing"),
+               "insufficient": ("说不清", "unclear"), "not_run": ("没读", "not read"), "ok": ("完成", "done")}
+LANG_WORDS = {"zh": ("中文", "Chinese"), "ja": ("日文", "Japanese"), "ko": ("韩文", "Korean"), "en": ("英文", "English")}
+
+
+def _lab_zh(v: Any) -> str:
+    return LABEL_ZH.get(v, STATE_WORDS.get(v, (v,))[0]) if v else "-"
+
+
+def _lab_en(v: Any) -> str:
+    return LABEL_EN.get(v, STATE_WORDS.get(v, (None, v))[1]) if v else "-"
 
 
 class WhyError(ValueError):
@@ -828,10 +845,10 @@ def _forced_extra(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match) -
     _set(out, "forced_extra", f"它在你的校准文件里，但{stage_zh}：只读了证据写在报告「你关心的公司」里，不进名单"
          + (f"（第二步：{LABEL_ZH.get(lab, lab)}）" if lab else ""),
          f"It is in your sieve but outside the filters ({ln['x']}): its evidence was read and reported under "
-         "\"companies you care about\", not listed" + (f" (step 2: {lab})" if lab else ""))
+         "\"companies you care about\", not listed" + (f" (step 2: {_lab_en(lab)})" if lab else ""))
     out["stages"].append({"id": "l2", "ok": lab in ("explicit", "partial"),
-                          "text_zh": f"第二步：{LABEL_ZH.get(lab, lab or l2.get('st') or '-')}",
-                          "text_en": f"step 2: {lab or l2.get('st') or '-'}"})
+                          "text_zh": f"第二步：{_lab_zh(lab or l2.get('st'))}",
+                          "text_en": f"step 2: {_lab_en(lab or l2.get('st'))}"})
     return out
 
 
@@ -845,7 +862,8 @@ def _l1_not_sent(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match) ->
     st = (ln.get("l1") or {}).get("st") or "not_sent"
     _set(out, "l1_not_sent", "第一步没有问到它（预算用完或服务出错），所以没有结果",
          "Step 1 never answered for it (budget ran out or the provider failed), so it has no result")
-    out["stages"].append({"id": "l1", "ok": False, "text_zh": f"第一步：没问到（{st}）", "text_en": f"step 1: {st}"})
+    out["stages"].append({"id": "l1", "ok": False, "text_zh": f"第一步：没问到（{_lab_zh(st)}）",
+                          "text_en": f"step 1: {_lab_en(st)}"})
     missing = sum(1 for x in ctx.lines.values() if x.get("s") == "l1_not_sent")
     cost = missing * l1u
     out["changes"].append(_change(
@@ -918,8 +936,8 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
         if l2.get("st") or pool:
             lab2 = l2.get("lab") or pool.get("l2_label")
             out["stages"].append({"id": "l2", "ok": lab2 in ("explicit", "partial"),
-                                  "text_zh": f"第二步：因为在你的检查名单里照读了：{LABEL_ZH.get(lab2, lab2 or '-')}",
-                                  "text_en": f"step 2: read anyway (your check): {lab2 or '-'}"})
+                                  "text_zh": f"第二步：因为在你的检查名单里照读了：{_lab_zh(lab2)}",
+                                  "text_en": f"step 2: read anyway (your check): {_lab_en(lab2)}"})
         else:
             out["stages"].append({"id": "l2", "ok": None, "text_zh": "第二步：没读（第一步没通过）",
                                   "text_en": "step 2: not read (step 1 failed)"})
@@ -940,7 +958,8 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
     if st2 != "ok":
         _set(out, "l2_failed", "第一步通过了，但第二步没读成（预算用完或服务出错）",
              "It passed step 1, but step 2 did not complete (budget or provider)")
-        out["stages"].append({"id": "l2", "ok": False, "text_zh": f"第二步：没读成（{st2}）", "text_en": f"step 2: {st2}"})
+        out["stages"].append({"id": "l2", "ok": False, "text_zh": f"第二步：没读成（{_lab_zh(st2)}）",
+                              "text_en": f"step 2: {_lab_en(st2)}"})
         out["changes"].append(_change("rerun_from_run", "从这次运行再跑一次（第一步免费复用）",
                                       "Run again from this run (step 1 reused for free)",
                                       [_from_run(ctx, cost=l2u)], "第二步会补读它", "Step 2 reads it"))
@@ -949,18 +968,19 @@ def _after_l1(ctx: RunCtx, out: dict[str, Any], ln: dict[str, Any], match, *, sh
     pp = pool.get("l2_p_pos") if pool else l2.get("pp")
     out["stages"].append({"id": "l2", "ok": lab2 in ("explicit", "partial"),
                           "text_zh": f"第二步：读了{evd}，判为「{LABEL_ZH.get(lab2, lab2)}」（明确+部分 {_pct(pp)}）",
-                          "text_en": f"step 2: read the {pool.get('l2_evidence') or l2.get('ev')}, said {lab2} "
-                                     f"(explicit+partial {_pct(pp)})",
+                          "text_en": f"step 2: read the {EVIDENCE_EN.get(pool.get('l2_evidence') or l2.get('ev'), 'text')}"
+                                     f", said \"{_lab_en(lab2)}\" (clearly fits + related {_pct(pp)})",
                           "data": {"label": lab2, "p_pos": pp, "reads": pool.get("l2_reads"),
                                    "p_pos_sd": pool.get("l2_p_pos_sd"), "edge": pool.get("l2_edge")}})
     inp = ctx.inputs.get(k) or {}
     if inp.get("evidence") == "annual_report":
         terms = "、".join(inp.get("matched_terms") or [])
-        out["facts"].append({"zh": f"第二步读的：年报原文（{screen.source_label(inp.get('source_id'))}，语言 "
-                                   f"{inp.get('lang') or '-'}）；关键词段落：{'有' if inp.get('keyword_hit') else '没有'}"
+        lw = LANG_WORDS.get(inp.get("lang") or "", (inp.get("lang") or "-",) * 2)
+        out["facts"].append({"zh": f"第二步读的：年报原文（{l10n.source_words(inp.get('source_id'), 'zh') or '-'}，"
+                                   f"{lw[0]}）；关键词段落：{'有' if inp.get('keyword_hit') else '没有'}"
                                    + (f"（{terms}）" if terms else ""),
-                             "en": f"step 2 read: annual report ({screen.source_label(inp.get('source_id'))}, "
-                                   f"{inp.get('lang') or '-'}); keyword paragraph: "
+                             "en": f"step 2 read: annual report ({l10n.source_words(inp.get('source_id'), 'en') or '-'}, "
+                                   f"{lw[1]}); keyword paragraph: "
                                    f"{'yes' if inp.get('keyword_hit') else 'no'}" + (f" ({terms})" if terms else "")})
     if lab2 == "contradicted":
         _set(out, "l2_contradicted", "第二步读到的资料明确说它不做（或已经不做）这件事，所以被去掉了",
@@ -995,7 +1015,8 @@ def _quote(inp: dict[str, Any], row: dict[str, Any] | None) -> dict[str, Any] | 
     ev = inp.get("evidence") or (row or {}).get("l2_evidence")
     tier = "official-private" if ev == "annual_report" else "gray-private"
     t = screen.truncate(text, QUOTE_MAX_CHARS)
-    return {"zh": f"原文（{tier}，仅限个人使用）：{t}", "en": f"quote ({tier}, personal use only): {t}", "tier": tier}
+    zh, en = ("年报", "annual report") if tier == "official-private" else ("简介", "profile")
+    return {"zh": f"原文（{zh}，仅限个人使用）：{t}", "en": f"quote ({en}, personal use only): {t}", "tier": tier}
 
 
 def _pin_change(ctx: RunCtx, match, want: str) -> dict[str, Any]:
@@ -1082,7 +1103,7 @@ def _in_output(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any]) -> dict[st
     _set(out, "in_output", f"它在名单里，排第 {row['rank']}{extra_zh}",
          f"It is in the list at #{row['rank']}" + (" (your pin)" if vs == "user" else ""))
     out["stages"].append({"id": "rank", "ok": True, "text_zh": f"名单：第 {row['rank']}，第二步「{LABEL_ZH.get(lab, lab)}」",
-                          "text_en": f"list: #{row['rank']}, step 2 {lab}",
+                          "text_en": f"list: #{row['rank']}, step 2 \"{_lab_en(lab)}\"",
                           "data": {"rank": row["rank"], "l2_label": lab, "verdict_source": vs,
                                    "backfill": row.get("backfill"), "edge": row.get("l2_edge")}})
     if row.get("backfill"):
@@ -1101,8 +1122,8 @@ def _excluded(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], match) -> d
     ex = exs[n - 1] if n else {}
     if row.get("l2_label") or row.get("l2_status"):
         lab = row.get("l2_label") or row.get("l2_status")
-        out["stages"].append({"id": "l2", "ok": lab in ("explicit", "partial"), "text_zh": f"第二步：{LABEL_ZH.get(lab, lab)}",
-                              "text_en": f"step 2: {lab}"})
+        out["stages"].append({"id": "l2", "ok": lab in ("explicit", "partial"), "text_zh": f"第二步：{_lab_zh(lab)}",
+                              "text_en": f"step 2: {_lab_en(lab)}"})
     if ex.get("via") == "pin":
         out["facts"].append({"zh": f"来源：你让 AI 钉选的（{str(ex.get('at') or '')[:10]}）", "en": "source: sieve pin"})
         step = _step(["jevscreen", "sieve", "unpin", match.security_id, "--run", ctx.ref.run_id], ask_human=True)
@@ -1116,6 +1137,10 @@ def _excluded(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], match) -> d
 
 
 # ---------------------------------------------------------------------------------------------------- rendering
+
+NAMES_EN = {"universe": "universe", "shells": "shells", "input": "text", "l1": "step 1", "l2": "step 2",
+            "rank": "list"}
+
 
 def render_text(exp: dict[str, Any], lang: str = "zh", *, verbose: bool = False) -> str:
     """The human text of one explanation: header, one plain sentence, numbered stages, facts / inference / gaps,
@@ -1141,7 +1166,7 @@ def render_text(exp: dict[str, Any], lang: str = "zh", *, verbose: bool = False)
         mark = "✓" if s.get("ok") else ("—" if s.get("ok") is None else "✗")
         text = s.get("text_zh" if zh else "text_en") or ""
         text = text.split("：", 1)[-1] if zh and "：" in text else text.split(": ", 1)[-1]
-        label = names_zh.get(s["id"], s["id"]) if zh else s["id"]
+        label = names_zh.get(s["id"], s["id"]) if zh else NAMES_EN.get(s["id"], s["id"])
         lines.append(f" {i} {label:<6} {mark} {text}")
         rule = s.get("rule_zh" if zh else "rule_en")
         if rule and not s.get("ok"):

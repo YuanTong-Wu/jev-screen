@@ -40,31 +40,35 @@ TOPICS: dict[str, str] = {
                       "annual reports with it."),
 }
 VALUES = ("yes", "no")
+# Replies that clearly mean yes or no (compared after trimming spaces and end punctuation, case-insensitive). The
+# statement offers 可以 / 不要 and yes / no, but a beginner answers 同意, 好 or OK just as clearly; anything else, or a
+# reply with a condition, is not an answer: ask again.
+ANSWER_WORDS: dict[str, tuple[str, ...]] = {
+    "yes": ("yes", "y", "ok", "okay", "sure", "agree", "i agree",
+            "可以", "可以的", "同意", "我同意", "好", "好的", "行", "没问题"),
+    "no": ("no", "n", "nope", "i don't agree", "不要", "不可以", "不同意", "我不同意", "不行", "算了"),
+}
 LANGS = ("en", "zh")
 # The versioned consent statement: this exact text is shown to the human (quickstart, doctor, AGENTS.md step 5) and
 # recorded with the answer. Version 2 added that profile text and annual-report excerpts are sent to the AI service.
 # Version 3 says plainly what the terms restrict (TradingView forbids automated use of its data; the Yahoo text's
-# terms restrict reuse) and that annual reports from official sites are personal use too. An older 'yes' stays
-# valid for the plain commands; quickstart asks once more for the current version.
-STATEMENT_VERSION = 3
+# terms restrict reuse) and that annual reports from official sites are personal use too. Version 4 says the same in
+# a casual tone (the owner's wording): gray area, their terms do not allow automated bulk use, occasional rate limits or
+# short blocks, the data stays on this computer, and profiles / report excerpts are sent to Jev (whichever provider
+# serves it: TypeSafe, OpenRouter or Vercel AI Gateway). An older 'yes' stays valid for the plain commands; quickstart
+# asks once more for the current version.
+STATEMENT_VERSION = 4
 STATEMENTS: dict[str, dict[str, Any]] = {
     GRAY_SOURCES: {
         "version": STATEMENT_VERSION,
-        "en": ("To find stocks, jev-screen downloads TradingView's stock list and market caps, and Yahoo company "
-               "profiles (via FinanceDatabase). TradingView's terms do not allow automated use of its data (including "
-               "algorithmic screening), and the Yahoo text's terms restrict reuse. There is no free alternative, so "
-               "jev-screen uses them anyway: the risk is yours (for example, a site may block your access), for "
-               "personal research only, never shared. Annual reports fetched from official sites during a screen "
-               "(such as SEC, CNINFO and BSE India) are also for personal use only and stay on this computer. Company "
-               "profile text and short annual-report excerpts are sent to the AI service (OpenRouter and the provider "
-               "that serves the model) to be read. You will not share or publish the data or the results. Do you "
-               "agree? (yes / no)"),
-        "zh": ("找股票要用 TradingView 的股票清单和市值，以及 Yahoo（经 FinanceDatabase）的公司简介。TradingView 的条款不允许"
-               "程序自动取用它的数据（包括拿来做算法筛选），Yahoo 文本的条款也限制再利用。目前没有免费的替代，所以 "
-               "jev-screen 仍然用它们：风险由你自己承担（比如网站可能限制你的访问），只限个人研究，绝不分享。筛选时从官方"
-               "网站（如美国 SEC、巨潮资讯、印度孟买证券交易所 BSE）下载的年报同样只限个人使用，留在这台电脑上。公司简介和"
-               "年报的简短摘录会发给 AI 服务（OpenRouter 和提供这个模型的公司）去阅读。你不会分享或发布这些数据和结果。"
-               "你同意吗？（同意 / 不同意）"),
+        "en": ("Quick heads-up: the stock list and company profiles come from TradingView and Yahoo. That's a gray "
+               "area — their terms don't actually allow automated bulk use, and you may occasionally get rate-limited "
+               "or briefly blocked. So this data stays on your computer for your own research; don't share it. Annual "
+               "reports downloaded from official sites (SEC, CNINFO, BSE, ...) are the same: for your own use. Company "
+               "profiles and report excerpts are sent to Jev (the AI service) to read. OK? (yes / no)"),
+        "zh": ("先说一声：股票清单和公司简介来自 TradingView 和 Yahoo，属于灰色用法——人家条款其实不让程序批量拿数据，偶尔可能被"
+               "限流或暂时封一下。所以这些数据只留在你电脑上自己研究用，别外传。筛选时从官网（SEC、巨潮、BSE 等）下的年报也一样，"
+               "自己用。另外，公司简介和年报摘录会发给 Jev（AI 服务）读一下。可以吗？（可以 / 不要）"),
     },
 }
 
@@ -141,6 +145,9 @@ def record(cfg: Config, topic: str, value: str, *, via: str = "cli", lang: str =
     entry = {"value": value, "recorded_at": _now_iso(), "via": via, "interactive": interactive,
              "statement": st[lang] if st else TOPICS[topic], "statement_en": st["en"] if st else TOPICS[topic],
              "statement_version": st["version"] if st else 1, "lang": lang}
+    if topic == GRAY_SOURCES:        # who receives the text "sent to Jev" at the time of the answer (active provider)
+        from . import doctor
+        entry.update(recipient_note=doctor.recipient_note(cfg, lang), recipient_note_en=doctor.recipient_note(cfg))
     data["version"] = 1
     data.setdefault("topics", {})[topic] = entry
     data.setdefault("history", []).append({"topic": topic, **{k: entry[k] for k in ("value", "recorded_at", "via",

@@ -12,11 +12,30 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Optional FinanceDatabase-backed DuckDB (read-only). Default: <home>/financedatabase.duckdb; override with
 # JEVSCREEN_FD_DUCKDB or `import-fd --fd-duckdb PATH`. No machine-specific path is hard-coded.
 FD_DUCKDB_FILENAME = "financedatabase.duckdb"
-# OpenRouter key file name inside <home> (data/ is git-ignored). Override the path with JEVSCREEN_OPENROUTER_KEY_FILE.
-OPENROUTER_KEY_FILENAME = "openrouter_api_key"
-# `jevscreen keys set openrouter --from-file PATH` records PATH here (a location, never the key). It is read at every
-# call, so a worker that is already running finds a key recorded after it started.
-OPENROUTER_KEY_LOCATION = "openrouter_key_location"
+# Jev API keys (one per provider; any one of them is enough). Per provider: the environment variable holding the key,
+# the variable naming a key file, the key file name inside <home> (data/ is git-ignored) and the file in which
+# `jevscreen keys set <name> --from-file PATH` records PATH (a location, never the key). The recorded location is read
+# at every call, so a worker that is already running finds a key recorded after it started.
+@dataclass(frozen=True)
+class JevKeySource:
+    name: str             # keys.KEYS name and jev.PROVIDERS name
+    label: str            # shown to humans
+    env: str              # the key itself
+    file_env: str         # names a key file (read instead of <home>/<filename>)
+    filename: str         # <home>/<filename>, written by `jevscreen keys set <name>`
+    location: str         # <home>/<location> holds the path recorded by `keys set <name> --from-file`
+
+
+JEV_KEY_SOURCES: dict[str, JevKeySource] = {
+    "typesafe": JevKeySource("typesafe", "TypeSafe", "TYPESAFE_API_KEY", "JEVSCREEN_TYPESAFE_KEY_FILE",
+                             "typesafe_api_key", "typesafe_key_location"),
+    "openrouter": JevKeySource("openrouter", "OpenRouter", "OPENROUTER_API_KEY", "JEVSCREEN_OPENROUTER_KEY_FILE",
+                               "openrouter_api_key", "openrouter_key_location"),
+    "vercel": JevKeySource("vercel", "Vercel AI Gateway", "AI_GATEWAY_API_KEY", "JEVSCREEN_VERCEL_KEY_FILE",
+                           "vercel_api_key", "vercel_key_location"),
+}
+OPENROUTER_KEY_FILENAME = JEV_KEY_SOURCES["openrouter"].filename
+OPENROUTER_KEY_LOCATION = JEV_KEY_SOURCES["openrouter"].location
 
 
 @dataclass(frozen=True)
@@ -46,59 +65,91 @@ class Config:
         f = self.home / "sec_user_agent"
         return f.read_text().strip() if f.exists() else None
 
-    def openrouter_key(self) -> str | None:
-        """OpenRouter key for Jev: env OPENROUTER_API_KEY if set; else, if JEVSCREEN_OPENROUTER_KEY_FILE is set, that
-        file and nothing else (a named but missing file is not skipped); else <home>/openrouter_api_key (data/ is
-        git-ignored). Read at call time only; never print or log it. There is no machine-specific fallback path."""
-        kind, path = self.openrouter_key_source()
+    # -- Jev API keys (typesafe | openrouter | vercel). Read at call time only; never print or log a value.
+    def jev_key(self, name: str) -> str | None:
+        """The key of Jev provider `name`: its environment variable if set; else, if its *_KEY_FILE variable is set,
+        that file and nothing else (a named but missing file is not skipped); else the file recorded with
+        `keys set <name> --from-file`; else <home>/<name>_api_key (data/ is git-ignored). No machine-specific
+        fallback path."""
+        src = JEV_KEY_SOURCES[name]
+        kind, path = self.jev_key_source(name)
         if kind == "env":
-            return os.environ["OPENROUTER_API_KEY"].strip()
+            return os.environ[src.env].strip()
         return path.read_text().strip() if path is not None and path.exists() else None
 
-    def openrouter_key_source(self) -> tuple[str, Path | None]:
-        """Where openrouter_key() reads: ("env", None), ("named-file", path), ("recorded-file", path) or
+    def jev_key_source(self, name: str) -> tuple[str, Path | None]:
+        """Where jev_key(name) reads: ("env", None), ("named-file", path), ("recorded-file", path) or
         ("home-file", path). No key value. Read at call time (a running worker sees a later `keys set`)."""
-        if os.environ.get("OPENROUTER_API_KEY"):
+        src = JEV_KEY_SOURCES[name]
+        if os.environ.get(src.env):
             return "env", None
-        named = os.environ.get("JEVSCREEN_OPENROUTER_KEY_FILE")
+        named = os.environ.get(src.file_env)
         if named:
             return "named-file", Path(named)
-        recorded = self.openrouter_key_location()
+        recorded = self.jev_key_location(name)
         if recorded is not None:
             return "recorded-file", recorded
-        return "home-file", self.home / OPENROUTER_KEY_FILENAME
+        return "home-file", self.home / src.filename
 
-    def openrouter_key_location(self) -> Path | None:
-        """The key file recorded by `keys set openrouter --from-file PATH` (<home>/openrouter_key_location holds
-        the path only), or None."""
+    def jev_key_location(self, name: str) -> Path | None:
+        """The key file recorded by `keys set <name> --from-file PATH` (<home>/<name>_key_location holds the path
+        only), or None."""
         try:
-            text = (self.home / OPENROUTER_KEY_LOCATION).read_text(encoding="utf-8").strip()
+            text = (self.home / JEV_KEY_SOURCES[name].location).read_text(encoding="utf-8").strip()
         except (OSError, UnicodeDecodeError):
             return None
         return Path(text) if text else None
 
-    def openrouter_key_hint(self) -> str:
+    def jev_key_hint(self, name: str) -> str:
         """A 'key missing' message naming the exact place that was checked (never the key itself)."""
-        kind, path = self.openrouter_key_source()
+        src = JEV_KEY_SOURCES[name]
+        kind, path = self.jev_key_source(name)
         if kind == "named-file":
-            return (f"OpenRouter key missing: JEVSCREEN_OPENROUTER_KEY_FILE names {path}, which does not exist or is "
-                    f"empty ({self.home / OPENROUTER_KEY_FILENAME} is not checked while it is set). Fix that file, "
-                    "unset the variable, or set OPENROUTER_API_KEY.")
+            return (f"{src.label} key missing: {src.file_env} names {path}, which does not exist or is empty "
+                    f"({self.home / src.filename} is not checked while it is set). Fix that file, unset the "
+                    f"variable, or set {src.env}.")
         if kind == "recorded-file":
-            return ("OpenRouter key missing: the key file recorded with `jevscreen keys set openrouter --from-file` "
-                    "does not exist or is empty. Record it again, or run `jevscreen keys set openrouter`.")
-        return (f"OpenRouter key missing: set OPENROUTER_API_KEY, or put the key (one line, chmod 600) in {path} "
-                f"(data/{OPENROUTER_KEY_FILENAME}, git-ignored), or point JEVSCREEN_OPENROUTER_KEY_FILE at a key file.")
+            return (f"{src.label} key missing: the key file recorded with `jevscreen keys set {name} --from-file` "
+                    f"does not exist or is empty. Record it again, or run `jevscreen keys set {name}`.")
+        return (f"{src.label} key missing: set {src.env}, or put the key (one line, chmod 600) in {path} "
+                f"(data/{src.filename}, git-ignored), or point {src.file_env} at a key file.")
 
-    def openrouter_key_files(self) -> list[Path]:
-        """The key file openrouter_key() reads when OPENROUTER_API_KEY is not set (for `jevscreen keys` / doctor):
-        the file named by JEVSCREEN_OPENROUTER_KEY_FILE when set (and nothing else), else <home>/openrouter_api_key
-        (written by `jevscreen keys set openrouter`)."""
-        named = os.environ.get("JEVSCREEN_OPENROUTER_KEY_FILE")
+    def jev_key_files(self, name: str) -> list[Path]:
+        """The key file jev_key(name) reads when its environment variable is not set (for `jevscreen keys` /
+        doctor): the file named by its *_KEY_FILE variable when set (and nothing else), else the recorded file, else
+        <home>/<name>_api_key (written by `jevscreen keys set <name>`)."""
+        src = JEV_KEY_SOURCES[name]
+        named = os.environ.get(src.file_env)
         if named:
             return [Path(named)]
-        recorded = self.openrouter_key_location()
-        return [recorded] if recorded is not None else [self.home / OPENROUTER_KEY_FILENAME]
+        recorded = self.jev_key_location(name)
+        return [recorded] if recorded is not None else [self.home / src.filename]
+
+    def jev_keys(self) -> list[str | None]:
+        """Every configured Jev key value (for redaction and secret scans only)."""
+        out = []
+        for name in JEV_KEY_SOURCES:
+            try:
+                out.append(self.jev_key(name))
+            except OSError:
+                out.append(None)
+        return out
+
+    # OpenRouter shorthands (kept: the plain names read better where only OpenRouter is meant)
+    def openrouter_key(self) -> str | None:
+        return self.jev_key("openrouter")
+
+    def openrouter_key_source(self) -> tuple[str, Path | None]:
+        return self.jev_key_source("openrouter")
+
+    def openrouter_key_location(self) -> Path | None:
+        return self.jev_key_location("openrouter")
+
+    def openrouter_key_hint(self) -> str:
+        return self.jev_key_hint("openrouter")
+
+    def openrouter_key_files(self) -> list[Path]:
+        return self.jev_key_files("openrouter")
 
     def _local_secret(self, env: str, filename: str) -> str | None:
         value = os.environ.get(env)

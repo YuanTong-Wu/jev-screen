@@ -369,7 +369,7 @@ def default_secrets(cfg: Config) -> list[str | None]:
     e-mail address inside it, and the API keys."""
     ua = cfg.sec_user_agent()
     emails = [t.strip("<>()[],;") for t in (ua or "").split() if "@" in t]
-    return [ua, *emails, cfg.edinet_api_key(), cfg.opendart_api_key(), cfg.openrouter_key()]
+    return [ua, *emails, cfg.edinet_api_key(), cfg.opendart_api_key(), *cfg.jev_keys()]
 
 
 def build(cfg: Config, out_dir: Path | str, *, tag: str | None = None, now: dt.datetime | None = None,

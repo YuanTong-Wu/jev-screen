@@ -37,7 +37,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Iterable, NamedTuple
 
-from . import screen, zhvariants
+from . import l10n, screen, zhvariants
 
 SIEVE_FORMAT = "jevscreen.sieve/1"
 CARDS_FORMAT = "jevscreen.cards/1"
@@ -294,9 +294,11 @@ FORM_ZH = {"annual_report_summary": "年报摘要", "annual_report": "年报", "
            "有価証券報告書": "有价证券报告书（年报）", "사업보고서": "事业报告（年报）", "股東會年報": "股东会年报"}
 NO_REPORT_ZH = "（没有年报文本，系统只读了公司简介）"
 LABEL_ZH = {"explicit": "明确符合", "partial": "相关", "insufficient": "证据不足", "contradicted": "年报否认"}
-LICENCE_GRAY_ZH = ("仅供个人使用：部分「做什么」来自 TradingView / FinanceDatabase 公司简介（gray-private），"
+LICENCE_GRAY_ZH = ("仅供个人使用：部分「做什么」来自 TradingView / FinanceDatabase 的公司简介，"
                    "本文件不得公开、分享或转发。")
-LICENCE_OFFICIAL_ZH = "年报摘录（SEC、CNINFO、EDINET、DART、MOPS、BSE；official-private）是发行人原文：原文摘录只留在本地。"
+LICENCE_OFFICIAL_ZH = ("年报摘录（" + "、".join(l10n.pick(l10n.SOURCE_WORDS[k], "zh")
+                                     for k in ("SEC", "CNINFO", "EDINET", "DART", "MOPS", "BSE"))
+                       + "）是发行人原文，仅供个人使用：原文摘录只留在本地。")
 
 # ---------------------------------------------------------------------------------------------------------------
 # Rule trials and keywords
@@ -963,6 +965,87 @@ def answer_words_zh(want: str | None, chip: str | None = None, *, user_only: boo
 
 CAUSE_WORDS_ZH = {"关键词（摘录变了）": "年报摘录换了一段", "规则": "按新规则重判",
                   "重读": "AI 重读后结论变了", "被挤出": "被排名更高的公司挤出"}
+CAUSE_WORDS_EN = {"你：不要": "you: no", "新抓年报": "annual report fetched", "关键词（摘录变了）":
+                  "another filing excerpt", "规则": "judged again with the new rules", "重读":
+                  "the AI read it again and changed its verdict", "被挤出": "pushed out by higher-ranked companies"}
+YES_WORDS_EN = {"a": "does it directly", "b": "related, counts as the broad category"}
+DIFF_EN = {"title": "Takes effect now (free)", "same": "  the list did not change", "out": "  out {n}: ",
+           "in": "  in {n}: ", "backfill": " (moved up, not confirmed by you)", "moves": "  rank: ",
+           "below": " · #{rank}, below the top {max_out}, listed anyway", "you": "you: "}
+
+
+def answer_words_en(want: str | None, chip: str | None = None, *, user_only: bool = False) -> str:
+    """answer_words_zh in English: yes (does it directly) / yes (not in the filing: your call) / no (a buyer ...)."""
+    if want == "no":
+        why = NO_CHIP_TEXT_EN.get(chip or "") or (G_CHIP_GENERIC_EN if chip == "g" else None)
+        return f"no ({why[0].lower() + why[1:]})" if why else "no"
+    if want in ("explicit", "partial"):
+        if user_only:
+            return "yes (the filing does not say it: your call)"
+        k = chip or ("a" if want == "explicit" else "b")
+        return f"yes ({YES_WORDS_EN[k]})" if k in YES_WORDS_EN else "yes"
+    return "not sure"
+
+
+def render_diff(before: dict[str, Any], after: dict[str, Any], *, title: str | None = None,
+                lang: str = "zh") -> str:
+    """render_diff_zh in the reader's language (lang 'en': the English twin)."""
+    if lang == "en":
+        return _diff_en(before, after, title or DIFF_EN["title"])
+    return render_diff_zh(before, after, **({"title": title} if title else {}))
+
+
+def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str) -> str:
+    """The English twin of render_diff_zh (same rows, same causes)."""
+    b_rows = {r["company_key"]: r for r in before.get("rows") or []}
+    a_rows = {r["company_key"]: r for r in after.get("rows") or []}
+    b_all = {r["company_key"]: r for w in ("rows", "unverified", "excluded_by_user") for r in before.get(w) or []}
+    a_all = {r["company_key"]: r for w in ("rows", "unverified", "excluded_by_user") for r in after.get(w) or []}
+    a_excl = {r["company_key"] for r in after.get("excluded_by_user") or []}
+    q_changed = bool(before.get("questions") and after.get("questions")
+                     and (before["questions"] or {}).get("l2") != (after["questions"] or {}).get("l2"))
+
+    def cause_of(k: str) -> str | None:
+        b, a = b_all.get(k) or {}, a_all.get(k) or {}
+        if b.get("l2_evidence") == "profile" and a.get("l2_evidence") == "annual_report":
+            return "新抓年报"
+        if b.get("evidence_sha") and a.get("evidence_sha") and b["evidence_sha"] != a["evidence_sha"]:
+            return "关键词（摘录变了）"
+        if b and a and b.get("l2_label") != a.get("l2_label"):
+            return "规则" if q_changed else "重读"
+        return None
+    removed = [f"{_display(r)} #{r.get('rank')} ({CAUSE_WORDS_EN.get(c, c)})"
+               for k, r in b_rows.items() if k not in a_rows
+               for c in ["你：不要" if k in a_excl else cause_of(k) or "被挤出"]]
+    added, backfill = [], []
+    max_out = after.get("max_out") or (after.get("params") or {}).get("max_out")
+    for k, r in a_rows.items():
+        if k in b_rows:
+            continue
+        if r.get("user_verdict"):
+            tag = DIFF_EN["you"] + answer_words_en(r.get("user_verdict"), r.get("user_chip"),
+                                                  user_only=r.get("verdict_source") == "user")
+            if r.get("below_cut"):
+                tag += DIFF_EN["below"].format(rank=r.get("rank"), max_out=max_out or "?")
+            added.append(f"{_display(r)} ({tag})")
+        elif r.get("backfill"):
+            backfill.append(_display(r))
+        else:
+            c = cause_of(k)
+            added.append(f"{_display(r)} ({CAUSE_WORDS_EN.get(c, c)})" if c else _display(r))
+    moves = [f"{_display(r)} #{b_rows[k].get('rank')}→#{r.get('rank')}" for k, r in a_rows.items()
+             if k in b_rows and r.get("user_verdict") and b_rows[k].get("rank") != r.get("rank")]
+    lines = [title]
+    if not (removed or added or backfill or moves):
+        return "\n".join(lines + [DIFF_EN["same"]])
+    if removed:
+        lines.append(DIFF_EN["out"].format(n=len(removed)) + " · ".join(removed))
+    if added or backfill:
+        parts = added + ([", ".join(backfill) + DIFF_EN["backfill"]] if backfill else [])
+        lines.append(DIFF_EN["in"].format(n=len(added) + len(backfill)) + " · ".join(parts))
+    if moves:
+        lines.append(DIFF_EN["moves"] + " · ".join(moves))
+    return "\n".join(lines)
 
 
 def render_diff_zh(before: dict[str, Any], after: dict[str, Any], *, title: str = "立即生效（免费）") -> str:
@@ -1751,9 +1834,12 @@ def _legend_no(chip: str, text: str | None) -> str:
     return LEGEND_NO[chip]
 
 
-def render_cards_md(deck: dict[str, Any]) -> str:
+def render_cards_md(deck: dict[str, Any], tr: dict[int, dict[str, str | None]] | None = None) -> str:
     """cards.md (Chinese): a header and the answer legend once, then 4 lines per card (做什么 / 年报 / 系统, plus 缺口
-    when set), then the licence note. An empty deck is the single line 这次没有需要你判断的卡."""
+    when set), then the licence note. An empty deck is the single line 这次没有需要你判断的卡. `tr` (card n ->
+    {'what', 'quote'}: the stored agent translations, page.card_translations) prints a translated text in place of a
+    foreign one, marked AI 翻译 (the file cards.md keeps the originals)."""
+    tr = tr or {}
     cards = deck.get("cards") or []
     if not cards:
         return EMPTY_DECK_ZH + "\n"
@@ -1768,23 +1854,28 @@ def render_cards_md(deck: dict[str, Any]) -> str:
         pos = f"现排第{c['rank']}" if c.get("rank") else "未入选"
         lines.append(f"[{c['n']}] {_display(c)} · {pos} — {c.get('why_zh')}")
         w = c.get("what") or {}
+        ct = tr.get(c["n"]) or {}
+        ai = "AI 翻译，"
         if w.get("text"):
             priv = "，仅供个人使用" if w.get("tier") == "gray-private" else ""
             gray = gray or w.get("tier") == "gray-private"
-            lines.append(f"  做什么：{w['text']}（{w.get('source') or '公司简介'}{priv}）")
+            what = ct.get("what")
+            lines.append(f"  做什么：{what or w['text']}（{ai if what else ''}{w.get('source') or '公司简介'}{priv}）")
         else:
             lines.append("  做什么：（没有简介）")
         q = c.get("quote") or {}
+        qt = ct.get("quote")
         if q.get("source") == "公司简介":
             lines.append(f"  年报：{NO_REPORT_ZH}")
             if q.get("text") and q["text"] != w.get("text"):
-                lines.append(f"  简介：「{q['text']}」")
+                lines.append(f"  简介：「{qt or q['text']}」" + ("（AI 翻译）" if qt else ""))
         else:
             official = True
             year = str(q.get("filing_date") or "")[:4]
-            form = FORM_ZH.get(q.get("form") or "", q.get("form"))
-            where = " ".join(x for x in (q.get("source"), form) if x) + (f"，{year} 年发布" if year else "")
-            lines.append(f"  年报：「{q.get('text') or ''}」（{where}）")
+            where = (l10n.source_form_words(q.get("source"), q.get("form"), "zh")
+                     or " ".join(x for x in (q.get("source"), FORM_ZH.get(q.get("form") or "", q.get("form"))) if x)
+                     ) + (f"，{year} 年发布" if year else "")
+            lines.append(f"  年报：「{qt or q.get('text') or ''}」（{ai if qt else ''}{where}）")
         v = c.get("verdict") or {}
         label = v.get("label")
         n_reads = len(v.get("reads") or []) or 1
@@ -1808,6 +1899,55 @@ def render_cards_md(deck: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+LABEL_EN = {"explicit": "clearly fits", "partial": "related", "insufficient": "not enough evidence",
+            "contradicted": "contradicted by the filing"}
+
+
+def render_cards_en(deck: dict[str, Any], max_out: int | None = None,
+                    tr: dict[int, dict[str, str | None]] | None = None) -> str:
+    """The cards in English (what `jevscreen cards --lang en` prints; cards.md stays the Chinese file): the answer
+    legend once, then per card what it does, the filing text and the system's verdict. A text in another language
+    is printed as the agent's stored translation when `tr` has one (marked AI translation), else as it is."""
+    from . import page
+    tr = tr or {}
+    cards = deck.get("cards") or []
+    if not cards:
+        return "No cards need your judgment this time\n"
+    idea = (deck.get("idea") or "").strip()
+    head = idea[:40] + ("…" if len(idea) > 40 else "")
+    facets = deck.get("facets_en") if isinstance(deck.get("facets_en"), dict) else {}
+    have = (deck.get("chips") or {}).get("no") or {}
+    no_keys = [k for k in NO_CHIPS if k in have or (k in "cdef" and not have)]
+    legend = "; ".join(f"{k} {(NO_CHIP_TEXT_EN.get(k) or g_chip_en(facets)).lower()}" for k in no_keys)
+    lines = [f"Cards · {head} ({len(cards)} card{'' if len(cards) == 1 else 's'}, about 1 minute)",
+             f"Answer: 1a 2c 3? …  yes a = does it directly, yes b = related (broad category) | no: {legend} | "
+             "? = not sure; no answer = skip", ""]
+    for c in cards:
+        pos = f"now #{c['rank']}" if c.get("rank") else "not listed"
+        lines.append(f"[{c['n']}] {_display(c)} · {pos} — {page._card_why_en(c, max_out, facets)}")
+        w = c.get("what") or {}
+        ct = tr.get(c["n"]) or {}
+        what, qt = ct.get("what"), ct.get("quote")
+        lines.append(f"  What it does: {what or w['text']}" + (" (AI translation)" if what else "")
+                     if w.get("text") else "  What it does: (no profile)")
+        q = c.get("quote") or {}
+        if q.get("source") == "公司简介":
+            lines.append("  Annual report: (none; the system read only the company profile)")
+        else:
+            where = l10n.source_form_words(q.get("source"), q.get("form"), "en") or ""
+            year = str(q.get("filing_date") or "")[:4]
+            lines.append(f"  Annual report: \"{qt or q.get('text') or ''}\" (" + ("AI translation; " if qt else "")
+                         + where + (f", filed {year})" if year else ")"))
+        v = c.get("verdict") or {}
+        n_reads = len(v.get("reads") or []) or 1
+        lines.append(f"  System: {LABEL_EN.get(v.get('label'), v.get('label') or '?')} (clearly fits "
+                     f"{_pct(v.get('p_explicit'))}, related {_pct(v.get('p_partial'))}, {n_reads} read"
+                     f"{'s' if n_reads != 1 else ''})" + (" · borderline" if v.get("edge") else ""))
+    lines.append("")
+    lines.append("Personal use only: profiles and verbatim filing excerpts stay on this computer; do not share.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def write_deck(deck: dict[str, Any], out_dir: str | Path) -> tuple[Path, Path]:
     """cards.json and cards.md in the run's output directory."""
     out = Path(out_dir)
@@ -1818,17 +1958,20 @@ def write_deck(deck: dict[str, Any], out_dir: str | Path) -> tuple[Path, Path]:
     return pj, pm
 
 
-def load_deck(path: str | Path) -> dict[str, Any]:
-    """cards.json (a file or a run's output directory). ValueError when missing or not jevscreen.cards/1."""
+def load_deck(path: str | Path, lang: str = "zh") -> dict[str, Any]:
+    """cards.json (a file or a run's output directory). ValueError (in `lang`) when missing or not
+    jevscreen.cards/1."""
     p = Path(path)
     if p.is_dir():
         p = p / "cards.json"
+    en = lang == "en"
     try:
         deck = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        raise ValueError(f"卡组 {p} 读不了（{type(e).__name__}）") from None
+        raise ValueError(f"cannot read the deck {p} ({type(e).__name__})" if en else
+                         f"卡组 {p} 读不了（{type(e).__name__}）") from None
     if not isinstance(deck, dict) or deck.get("format") != CARDS_FORMAT:
-        raise ValueError(f"{p} 不是 {CARDS_FORMAT} 卡组")
+        raise ValueError(f"{p} is not a {CARDS_FORMAT} deck" if en else f"{p} 不是 {CARDS_FORMAT} 卡组")
     return deck
 
 

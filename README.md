@@ -5,8 +5,9 @@
 **jev-screen turns an investment idea, written in any language, into a ranked list of listed companies worldwide
 whose annual report, or a public company profile, says they do it, with the quote that says so.**
 
-It runs on your computer. An AI model reads the text for you, and you pay OpenRouter a few tens of cents per idea
-for it. The list is where your research starts; it is not investment advice.
+It runs on your computer. An AI model (Jev) reads the text for you, and you pay a few tens of cents per idea for it,
+through TypeSafe's official API, OpenRouter or Vercel AI Gateway: whichever account you have, at the same price.
+The list is where your research starts; it is not investment advice.
 
 **What to expect, measured:** before any calibration, about 1 in 4 of the top 40 was clearly right and about 1 in 3
 clearly wrong. Supply-chain and Southeast Asia ideas did worse ([details](#accuracy-and-limits)). Treat the list as a
@@ -43,8 +44,9 @@ On the page, every row carries its evidence, and four kinds of statement are kep
 | **Your call** | Your answers on the calibration cards (below) |
 
 Below the list you find the companies that passed the first read but could not be confirmed (**unverified**), the
-gaps, and up to 8 cards. The page is a local HTML file with a Chinese / English switch, and opening it makes no
-network requests.
+gaps, and up to 8 cards. The page is a local HTML file, all in your language (Chinese or English), and opening it
+makes no network requests. Profiles and excerpts in other languages are translated by your own AI agent, marked
+"AI translation", with the original one tap away.
 
 **How it works, in five steps.**
 
@@ -59,19 +61,28 @@ network requests.
 
 ### About Jev, the model
 
-The AI is **Jev** (`typesafe/jev-1.13`), a model published on OpenRouter under the name `typesafe`. The project is
-named after it.
+The AI is **Jev** 1.13, made by [TypeSafe](https://docs.typesafe.ai). The project is named after it.
 
-- **Who serves it:** the [model page](https://openrouter.ai/typesafe/jev-1.13) on OpenRouter names the provider and
-  links that provider's data policy.
+- **Where you buy it:** Jev via TypeSafe's official API, OpenRouter or Vercel AI Gateway, same price: US$0.042 per
+  million input tokens, output free. Any one account is enough, and jev-screen uses the key you set last.
+
+  | Provider | Model id jev-screen sends | Version | Key |
+  |---|---|---|---|
+  | [TypeSafe official API](https://console.typesafe.ai/keys) (sign-ups are sometimes paused) | `jev-1.13.0` | pinned | `jevscreen keys set typesafe` |
+  | [OpenRouter](https://openrouter.ai/settings/keys) | `typesafe/jev-1.13` | pinned to 1.13 | `jevscreen keys set openrouter` |
+  | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe) | `typesafe-ai/jev` | not pinned: Vercel offers only this unversioned id | `jevscreen keys set vercel` |
+
+  With several keys set, the one set last is used (`jevscreen keys use typesafe|openrouter|vercel` switches without a
+  new key; `jevscreen keys clear <provider>` removes one). Answers are cached per provider, so switching provider
+  reads (and pays) again once; the switch says how much was already paid through the old one.
 - **Why this model:** it answers multiple-choice questions with a probability for each option, and it is cheap. A
   first read of about 20,000 company profiles cost about $0.71. The probabilities let jev-screen rank by confidence
   and re-read the companies near the borderline.
-- **Who gets your money:** you pay OpenRouter directly with your own key. The code sends no referral, affiliate or
-  app id with its requests.
-- **Privacy:** if your idea is sensitive, first check OpenRouter's
-  [privacy settings](https://openrouter.ai/settings/privacy). They control whether your prompts may be logged, and
-  whether providers that train on prompts may be used.
+- **Who gets your money:** you pay the provider you chose directly, with your own key. The code sends no referral,
+  affiliate or app id with its requests.
+- **Privacy:** if your idea is sensitive, check the chosen provider's data settings first (for example OpenRouter's
+  [privacy settings](https://openrouter.ai/settings/privacy), or Vercel AI Gateway's
+  [data handling](https://vercel.com/docs/ai-gateway/faq)).
 
 ## Start in about 15 minutes with your AI
 
@@ -82,12 +93,15 @@ named after it.
 - **macOS or Linux.** Windows is not supported yet: it is untested, and the hidden key box does not exist there. WSL
   (Linux on Windows) may work but is untested too.
 - **An internet connection** that reaches github.com and raw.githubusercontent.com (or cdn.jsdelivr.net),
-  openrouter.ai, tradingview.com and the official filing sites. From mainland China, several of these are often slow
+  your Jev provider (api.typesafe.ai, openrouter.ai or ai-gateway.vercel.sh), tradingview.com and the official filing
+  sites. From mainland China, several of these are often slow
   or unreachable. Your usual network setup is fine. What the tool and your agent never do is switch network or
   identity to get around a site that has blocked them.
-- **An OpenRouter account with credit.** The first top-up has a minimum, usually a few dollars, plus a payment fee;
-  check the payment page on openrouter.ai for current terms. It needs a card that pays in US dollars, or another
-  method OpenRouter accepts. That top-up is your first real outlay; each idea then takes about $0.25–0.30 of it.
+- **An account that pays for Jev**, with credit: TypeSafe's official API, OpenRouter or Vercel AI Gateway, same
+  price. The first top-up usually has a minimum (a few dollars, plus a payment fee; check the provider's payment page)
+  and needs a card that pays in US dollars. That top-up is your first real outlay; each idea then takes about
+  $0.25–0.30 of it. No account yet? OpenRouter is the quickest to set up; TypeSafe's own sign-ups are sometimes paused,
+  and on Vercel, Jev may not be in the free tier.
 - **On a Mac,** the first `git` command may open a box that offers to install the command line developer tools.
   Click Install; it takes a few minutes. If your computer has neither `uv` nor Python 3.10 or newer, the agent asks
   you to run one command that installs `uv`, which brings its own Python. jev-screen itself needs no admin rights.
@@ -98,20 +112,21 @@ named after it.
 
 The agent installs it and then asks you **one round of questions**, all in one message:
 
-1. **Consent to two data sources whose terms restrict this use.** The stock list and market caps come from
-   TradingView, and the company profiles come from Yahoo (via FinanceDatabase). TradingView's terms do not allow
-   automated use of its data, including algorithmic screening, and the Yahoo text's terms restrict reuse. There is
-   no free alternative, so jev-screen uses them anyway, and the risk is yours: a site may block your access, for
-   example. The annual reports it fetches from official sites (SEC, CNINFO, BSE India) are personal-use only too.
-   All of this stays on your computer, apart from short excerpts sent to the AI to be read
-   ([what leaves your computer](#what-leaves-your-computer)). You agree not to share the data or the results. If you
-   say no, it stops, because there is no screen without a stock list.
+1. **A heads-up on two data sources, and your OK.** The stock list and company profiles come from TradingView and
+   Yahoo (via FinanceDatabase). That is a gray area: their terms don't actually allow automated bulk use, and you may
+   occasionally get rate-limited or briefly blocked. So the data stays on your computer for your own research; don't
+   share it. Annual reports downloaded from official sites (SEC, CNINFO, BSE, ...) are the same: for your own use.
+   Company profiles and report excerpts are sent to Jev to be read
+   ([what leaves your computer](#what-leaves-your-computer)). If you say no, it stops, because there is no screen
+   without a stock list.
 2. **A spending cap, $1 by default.** The agent shows you the English sentence the AI will be asked about and the
    expected cost (about $0.30). The cap is hard: the run stops before it would spend more. Anything above $1 needs
    your explicit yes to that number.
-3. **An OpenRouter key.** Create one at [openrouter.ai](https://openrouter.ai/settings/keys). A hidden input box
-   opens on your screen for the key, so it never passes through the chat; never paste it there. Giving the key a
-   spending limit of a few dollars is a good idea.
+3. **Which Jev account you have**, when no key is set yet: TypeSafe's official API
+   ([keys](https://console.typesafe.ai/keys)), OpenRouter ([keys](https://openrouter.ai/settings/keys)) or Vercel AI
+   Gateway (API Keys page in the Vercel dashboard). The agent gives you the sign-up link and the key step for each. A
+   hidden input box then opens on your screen for the key, so it never passes through the chat; never paste it there.
+   Giving the key a spending limit of a few dollars is a good idea where the provider allows it.
 
 After that:
 
@@ -122,11 +137,11 @@ After that:
    evidence changed are checked again within your cap (at most $0.05).
 5. The page opens.
 
-The first time takes about 15–25 minutes, including the OpenRouter sign-up. The agent tells you the progress about
+The first time takes about 15–25 minutes, including the sign-up. The agent tells you the progress about
 once a minute.
 
 Other questions come only if something changes: the estimate goes over your cap, the budget runs out, the English
-sentence changes its meaning, or OpenRouter reports no credit. Optional questions may come with the result, only
+sentence changes its meaning, or your Jev provider reports no credit. Optional questions may come with the result, only
 when they help your idea (just say no if you like; the result stays):
 
 - **Fill missing company profiles.** When many companies of your idea's market have no profile (often the case for
@@ -145,7 +160,7 @@ command and flag is in [docs/REFERENCE.md](docs/REFERENCE.md).
 ## What it costs
 
 jev-screen itself is free (MIT). It has no server and no account. Downloads and annual reports are free. The Jev
-model is paid from **your** OpenRouter credit.
+model is paid from **your** credit at TypeSafe, OpenRouter or Vercel AI Gateway (same price at all three).
 
 | What | Money | Basis | Time |
 |---|---|---|---|
@@ -156,7 +171,7 @@ model is paid from **your** OpenRouter credit.
 | A wider screen: about 20,000 companies from $200M (`screen --min-mcap 2e8`) | about $0.71 | measured, on a store with more profiles than a new install | about 4 min of AI reads |
 | Test that the key can pay | about $0.0001 | measured | seconds |
 
-Outside jev-screen, you also pay your AI agent's plan and the first OpenRouter top-up (see above).
+Outside jev-screen, you also pay your AI agent's plan and the first top-up at your Jev provider (see above).
 
 Every paid request is logged locally with its cost. An answer already paid for is not paid for again. The one
 exception is a rare resend after an interrupted request, which costs under 1 cent and stays within your cap. A dry
@@ -201,7 +216,7 @@ The tiers mean:
 
 | What | Goes to |
 |---|---|
-| Your idea as you wrote it, its English sentence, the rule sentences from your card answers, company profile text and short annual-report excerpts | OpenRouter and the provider that serves Jev |
+| Your idea as you wrote it, its English sentence, the rule sentences from your card answers, company profile text and short annual-report excerpts | Your Jev provider (TypeSafe, OpenRouter or Vercel AI Gateway) and whoever serves Jev behind it |
 | Download requests. The filing sites see which companies are requested. | TradingView; GitHub or jsDelivr; the official filing sites (SEC, CNINFO, BSE, DART, MOPS); GitHub for the open data pack |
 | Your SEC name and email | sec.gov only, with those downloads |
 
@@ -276,7 +291,7 @@ What the test shows:
   already paid for are kept, a rerun continues from there, and your cap still holds.
 - **Disk space:** the quickstart path usually needs well under 1 GB. A store with every bulk sync done is about 2 GB.
 - **Removing it:** delete the jev-screen folder (your data, keys and consent records are all inside its `data/`), and
-  delete the key on [openrouter.ai](https://openrouter.ai/settings/keys).
+  delete the key at your Jev provider (TypeSafe, OpenRouter or Vercel).
 
 ## Commands
 
@@ -289,7 +304,7 @@ Your agent runs these for you. `quickstart`, `doctor`, `why`, `answer`, `fetch-d
 |---|---|---|
 | `jevscreen quickstart "<idea>" --json` | The whole path from an idea to the page, with one round of questions | within the cap you approve |
 | `jevscreen doctor --json` | What is set up, what is missing, and the next command | free |
-| `jevscreen keys set openrouter --dialog` / `keys check` | Store a key from a hidden box on your screen; the key is never shown. In your own terminal: `keys set NAME` | free |
+| `jevscreen keys set typesafe\|openrouter\|vercel --dialog` / `keys check` | Store a key from a hidden box on your screen; the key is never shown. In your own terminal: `keys set NAME` | free |
 | `jevscreen consent set gray-sources yes\|no` | Record your answer on the restricted sources | free |
 | `jevscreen screen "<idea>" --min-mcap 1e9 --budget 1 [--dry-run]` | A screen with every setting (countries, market cap, reads) | paid, hard budget |
 | `jevscreen page latest --open` | Rebuild and open the result page | free |
@@ -346,8 +361,8 @@ the evidence. It does not value them, time them or recommend them. Check the fil
 
 **What leaves my computer, and who can see it?** See [the table above](#what-leaves-your-computer). In short:
 
-- Your idea, its English sentence, your rule sentences, profile text and short excerpts go to OpenRouter and the
-  provider that serves Jev.
+- Your idea, its English sentence, your rule sentences, profile text and short excerpts go to your Jev provider
+  (TypeSafe, OpenRouter or Vercel AI Gateway) and whoever serves Jev behind it.
 - Download requests go to the data sites.
 - Your SEC contact goes only to sec.gov.
 

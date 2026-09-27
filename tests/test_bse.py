@@ -854,13 +854,13 @@ class TestOfficialSourceRegistry(unittest.TestCase):
     """screen (layer 2), coverage, report and the calibration cards name the same official sources."""
 
     def test_registries_agree(self):
-        from jevscreen import calib, coverage, pack, report, screen
+        from jevscreen import calib, coverage, l10n, pack, report, screen
         self.assertEqual(set(coverage.OFFICIAL_DOC_SOURCES), set(screen.OFFICIAL_DOC_SOURCES))
         self.assertEqual(coverage._NATIVE_IDS, screen.NATIVE_ID_TYPES)
         for sid, (label, _lang) in screen.OFFICIAL_DOC_SOURCES.items():
             self.assertEqual(report.SOURCE_LABELS.get(sid), label, sid)
             self.assertEqual(provenance.tier_of(sid), provenance.LicenseTier.OFFICIAL_PRIVATE, sid)
-            self.assertIn(label, calib.LICENCE_OFFICIAL_ZH, sid)
+            self.assertIn(l10n.source_words(label, "zh"), calib.LICENCE_OFFICIAL_ZH, sid)
             self.assertTrue(sid in pack.PACK_SOURCES or sid in pack.EXCLUDED_REASONS, sid)
 
     def test_report_names_every_official_source(self):

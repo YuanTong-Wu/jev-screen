@@ -60,7 +60,7 @@ class TestNoviceEndToEnd(FlowCase):
         say("1 front:", out["status"], out["exit_code"], "pending=", self.ids(out), "state=", out.get("state"),
             "poll=", bool(out.get("poll_command")), "idea_en_problems=", out.get("idea_en_problems"))
         self.assertEqual(out["status"], "needs_human")
-        self.assertEqual(self.ids(out), ["key_openrouter"])
+        self.assertEqual(self.ids(out), ["key_jev"])
         self.assertFalse(out.get("idea_en_problems"))
         self.assertTrue(out.get("poll_command"))
         # 2) worker; the key file is recorded mid-download; Core Inc and the Chinese companies arrive with the list

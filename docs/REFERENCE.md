@@ -61,11 +61,32 @@ paste it into an issue or a report. Without a key the command refuses before sen
 where to put it. Keys travel in request URLs, so every printed line, journal note, error text and cooldown marker
 shows `<edinet-api-key>` / `<opendart-api-key>` instead of the key.
 
-### OpenRouter key (Jev) and the optional FinanceDatabase file
+### Jev keys (TypeSafe, OpenRouter or Vercel AI Gateway) and the optional FinanceDatabase file
 
-Jev calls read the OpenRouter key at call time: the environment variable `OPENROUTER_API_KEY` if set; else, if
-`JEVSCREEN_OPENROUTER_KEY_FILE` is set, the file it names and nothing else (a named but missing file is an error,
-not skipped); else the file `data/openrouter_api_key` (under `JEVSCREEN_HOME`, git-ignored; one line, the key only,
+Jev via TypeSafe's official API, OpenRouter or Vercel AI Gateway, same price (US$0.042 per million input tokens,
+output free). One key is enough:
+
+| Provider | Endpoint | Model id sent | Key (variable / file) |
+|---|---|---|---|
+| `typesafe` | `POST https://api.typesafe.ai/v1/systemone` | `jev-1.13.0` (pinned; never `jev-latest`) | `TYPESAFE_API_KEY` / `data/typesafe_api_key` |
+| `openrouter` | `POST https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` | `OPENROUTER_API_KEY` / `data/openrouter_api_key` |
+| `vercel` | `POST https://ai-gateway.vercel.sh/typesafe/v1/systemone` (TypeSafe-compatible API) | `typesafe-ai/jev` (Vercel's only id: no version) | `AI_GATEWAY_API_KEY` / `data/vercel_api_key` |
+
+The active provider is `JEVSCREEN_JEV_PROVIDER` when set; else the human's saved choice (`data/jev_provider`: the
+last Jev key set with `keys set`, or `keys use <provider>`; `keys clear` of that provider forgets it); else the first
+of openrouter, typesafe, vercel whose key is configured (OpenRouter first, so answers cached before providers existed
+stay valid). A screen resolves the provider once and uses it for both layers. Every response must name the model id that was sent (otherwise the whole request fails as
+`model_mismatch`), so a provider can never switch Jev versions silently under a pinned id. Answers are cached per
+provider and model: a switch of provider never reuses or mixes answers, and the first screen after it reads and pays
+again. The cost of each request comes from the provider's usage: OpenRouter's `usage.cost`, Vercel's
+`provider_metadata.gateway.cost`, and for TypeSafe (which reports tokens only) input tokens x the list price.
+HTTP 429, 500, 503 and 529 (TypeSafe overloaded) are retried up to 3 times with exponential backoff that honours
+`Retry-After` / `retry-after-ms` (a longer wait is cut to 10 s); 401/402/403 stop the run (`JevUnavailable`).
+
+Each key is read at call time: its environment variable if set; else, if its file variable
+(`JEVSCREEN_TYPESAFE_KEY_FILE`, `JEVSCREEN_OPENROUTER_KEY_FILE`, `JEVSCREEN_VERCEL_KEY_FILE`) is set, the file it
+names and nothing else (a named but missing file is an error, not skipped); else a file recorded with `keys set
+<name> --from-file`; else `data/<name>_api_key` (under `JEVSCREEN_HOME`, git-ignored; one line, the key only,
 `chmod 600`). There is no other fallback. `import-fd` opens
 `--fd-duckdb PATH` if given, else `JEVSCREEN_FD_DUCKDB`, else `data/financedatabase.duckdb` (read-only).
 `jevscreen quickstart` does not need that file: it downloads FinanceDatabase's `equities.bz2` (about 15 MB, one
@@ -188,8 +209,10 @@ Paid calls are journaled per physical request in `jev_requests` (a resend is a n
 overwritten) and per item in `jev_items`, which is also the reuse cache: an item answered once (same question, same
 text) is free on every later run, whatever packet it lands in. An item whose earlier send had an unknown outcome
 (timeout, gateway 502/504/524, crash) is not resent unless you pass `--retry-uncertain`. Only one process uses Jev at
-a time (`data/locks/openrouter-jev.lock`). The budget is hard: one request is in flight until the first priced
-answer, reservations scale with the observed actual/estimated cost, and a price change is reported.
+a time, whatever the provider (`data/locks/openrouter-jev.lock`; the name predates the other providers). The budget
+is hard: one request is in flight until the first priced answer, reservations scale with the observed
+actual/estimated cost, and a price change is reported. Each ledger row names its provider (`jev_requests.provider`;
+empty on rows from before providers existed, which were all OpenRouter).
 
 Outputs go to `data/screens/<YYYYmmdd-HHMM>-<slug>/`: `results.csv` (ranked rows), `results.json` and `report.md`
 (idea, the English idea and keywords per language with the model and time used, warnings, parameters, the full
@@ -227,8 +250,8 @@ Full rules: [DATA_RULES.md](DATA_RULES.md).
 | `official-private` | Official source, personal use only (e.g. exchange downloads) | No |
 | `gray-private` | Public but terms-restricted endpoint or text (TradingView forbids automated use of its data) | **No, never** |
 
-Profile text and short annual-report excerpts are sent to the AI service (OpenRouter and the provider that serves
-Jev) to be read; nothing is published.
+Profile text and short annual-report excerpts are sent to Jev (through TypeSafe's official API, OpenRouter or Vercel
+AI Gateway, whichever key you set) to be read; nothing is published.
 
 ### Notice: the default sources are gray-private
 
@@ -277,17 +300,19 @@ never do (read or echo your keys, spend more than $1 without your yes, work arou
 
 **Before you start** (the fast path, `jevscreen quickstart`), the agent says:
 
-> Before we start: (1) you agree to use two data sources (TradingView's stock list, Yahoo company profiles) whose
-> terms restrict automated use: for your personal research only, never shared; (2) you need an OpenRouter account with
-> credit. The first top-up has a minimum (usually a few dollars, plus a payment fee; see the payment page on
-> openrouter.ai) and needs a card that pays in US dollars or another method OpenRouter accepts; this screen uses about
-> $0.30 of it and the rest stays for later. (3) About 15–25 minutes the first time, including the OpenRouter sign-up.
-> On a Mac, a box may offer to install the command line developer tools: click Install (a few minutes). You answer one
+> Before we start: (1) I will ask if you are OK with two data sources (TradingView's stock list, Yahoo company
+> profiles) whose terms restrict automated use: for your personal research only, never shared; (2) you need an account
+> that pays for Jev (the AI service that reads profiles and annual reports): TypeSafe's official API, OpenRouter or
+> Vercel AI Gateway, whichever you have; the price is the same. The first top-up usually has a minimum (a few dollars,
+> plus a payment fee; see the provider's payment page) and needs a card that pays in US dollars; this screen uses
+> about $0.30 of it and the rest stays for later. (3) About 15–25 minutes the first time, including the sign-up. On a
+> Mac, a box may offer to install the command line developer tools: click Install (a few minutes). You answer one
 > round of questions.
 
 1. Your agent runs `jevscreen quickstart "<your idea>" --json` and asks you everything in one message: the data
-   sources, the spend cap (the English sentence the AI will read is shown), and the OpenRouter key (a hidden box
-   opens; the key never passes through the chat).
+   sources, the spend cap (the English sentence the AI will read is shown), and, when no Jev key is set yet, which
+   account you have (TypeSafe's official API, OpenRouter or Vercel AI Gateway), then that key (a hidden box opens;
+   the key never passes through the chat).
 2. Downloads start in the background while you make the key (about 1 minute); the AI screen and the annual-report
    fetch run next (about 3 minutes); the agent tells you the progress about once a minute.
 3. A page opens in your browser: a ranked list where every company carries its evidence (annual-report quote with a
@@ -300,12 +325,13 @@ The commands behind it:
 
 | Command | What it does |
 |---|---|
-| `jevscreen doctor [--json] [--check-jev]` | Checks Python, dependencies, the store, universe freshness, description and annual-report coverage, which keys are set (never their values), consent and cooldowns, then prints the next command. Exit 0 when a screen can run. `--check-jev` asks OpenRouter whether the key works (one free request, no paid call) |
-| `jevscreen keys set NAME` / `keys check [NAME]` / `keys clear NAME` | Stores `openrouter`, `sec-email`, `edinet` or `opendart` from a hidden prompt into `data/` with mode 0600; never prints them |
+| `jevscreen doctor [--json] [--check-jev]` | Checks Python, dependencies, the store, universe freshness, description and annual-report coverage, which keys are set (never their values), consent and cooldowns, then prints the next command. Exit 0 when a screen can run. `--check-jev` asks the active Jev provider whether the key works (one free request, no paid call) |
+| `jevscreen keys set NAME` / `keys check [NAME]` / `keys clear NAME` / `keys use typesafe\|openrouter\|vercel` | Stores `typesafe`, `openrouter`, `vercel`, `sec-email`, `edinet` or `opendart` from a hidden prompt into `data/` with mode 0600; never prints them |
 | `jevscreen quickstart "<idea>" [--idea-en TEXT] [--approve-budget USD] [--fill-descriptions yes\|no] [--json]` / `--status [--wait S]` | The fast path: returns in seconds, asks one round of questions (`pending`), runs the downloads, the key check, the estimate, the screen, the annual-report fetch (the same one as `screen --fetch-docs auto`) and the page in a detached worker; the agent polls `--status --wait`. `--fill-descriptions yes` answers the optional profile-fill question (crawl-descriptions for the idea's market, then an incremental re-rank). Exit code = JSON `status` (0 running/done, 10 needs you, 11 needs the agent, …) |
-| `jevscreen page [RUN_ID\|latest] [--open] [--text]` | Rebuilds the result page `page.html` (self-contained, zh/en, cards that build the `answer` line); `--text` also prints the ranked list as plain text for an agent without a browser |
-| `jevscreen keys set openrouter --dialog` | Opens a hidden input box on your screen for the key (macOS / Linux desktop) |
-| `jevscreen keys set openrouter --from-file PATH` | Records where you saved the key yourself (only the location is stored; the key is never copied or printed, and the file must hold only the key: one line starting with `sk-or-`). A running quickstart uses it from its next paid step |
+| `jevscreen page [RUN_ID\|latest] [--open] [--text]` | Rebuilds the result page `page.html` (self-contained, one language: zh or en, cards that build the `answer` line); `--text` also prints the ranked list as plain text for an agent without a browser |
+| `jevscreen page RUN --export-strings FILE [--lang zh\|en] [--batch N]` / `--import-translations FILE` | The page's texts in another language than the page (at most 60 per file) for your AI agent to translate, and storing its translations (`translations` table, reused by later runs); free, no model call |
+| `jevscreen keys set typesafe\|openrouter\|vercel --dialog` | Opens a hidden input box on your screen for the key (macOS / Linux desktop) |
+| `jevscreen keys set typesafe\|openrouter\|vercel --from-file PATH` | Records where you saved the key yourself (only the location is stored; the key is never copied or printed, and the file must hold only the key: one line; OpenRouter keys start with `sk-or-`). A running quickstart uses it from its next paid step |
 | `jevscreen consent set gray-sources yes\|no` / `consent show` | Records your answer on gray-private sources (TradingView, FinanceDatabase/Yahoo text; personal use only; the statement also covers official annual reports as personal use) with a timestamp in `data/consent.json`. `refresh-universe`, `crawl-descriptions` and `import-fd` refuse to run (exit 1, `consent_required`) until it is `yes` |
 
 Type keys yourself when `jevscreen keys set NAME` asks (in your own terminal, give the full path

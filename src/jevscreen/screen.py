@@ -189,10 +189,32 @@ def _jev_types() -> tuple[type, type]:
 
 
 def _default_factory(cfg, *, run_id: str, layer: str, budget_usd: float, dry_run: bool,
-                     retry_uncertain: bool = False):
+                     retry_uncertain: bool = False, provider=None):
     from . import jev
     return jev.JevClient(cfg, run_id=run_id, layer=layer, budget_usd=budget_usd, dry_run=dry_run,
-                         retry_uncertain=retry_uncertain)
+                         retry_uncertain=retry_uncertain, provider=provider)
+
+
+_REAL_DEFAULT_FACTORY = _default_factory
+
+
+def _run_factory(cfg):
+    """The real client factory of one screen run: the Jev provider is resolved once here, so layer 1 and layer 2
+    go through the same provider even if a key is set or cleared while the run is going (an unknown
+    JEVSCREEN_JEV_PROVIDER is left to JevClient, which reports it before anything is sent). A replaced
+    _default_factory (a test fake) is used as it is."""
+    from . import jev
+    if _default_factory is not _REAL_DEFAULT_FACTORY:
+        return _default_factory
+    try:
+        provider = jev.resolve_provider(cfg)[0]
+    except jev.ProviderError:
+        provider = None
+
+    def factory(cfg, **kw):
+        return _default_factory(cfg, provider=provider, **kw)
+    factory.provider = provider
+    return factory
 
 
 def _is_error(e: BaseException, name: str) -> bool:
@@ -1902,7 +1924,7 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     t0 = time.monotonic()
     started = store.now_utc()
     run_id = f"scr-{started.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    factory = jev_factory or _default_factory
+    factory = jev_factory or _run_factory(cfg)
     out_path = Path(out_dir) if out_dir is not None else _default_out_dir(cfg, idea, started)
     params = {"min_mcap_usd": min_mcap_usd, "min_avg_volume": min_avg_volume, "countries": countries,
               "max_out": max_out, "budget_usd": budget_usd, "l2_max": l2_max, "keywords": keywords,

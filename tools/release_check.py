@@ -86,6 +86,7 @@ def old_project_re(root: Path | None = None) -> re.Pattern:
 OLD_PROJECT_RE = old_project_re(Path(__file__).resolve().parents[1])
 KEY_PATTERNS = [
     ("openrouter/openai-style key", re.compile(r"\bsk-(?:or-v1-|proj-|ant-)?[A-Za-z0-9_-]{24,}")),
+    ("Vercel AI Gateway key", re.compile(r"\bvck_[A-Za-z0-9_-]{24,}")),
     ("AWS access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("GitHub token", re.compile(r"\b(?:ghp|gho|ghs|ghu)_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{40,}")),
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),

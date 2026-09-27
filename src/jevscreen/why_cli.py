@@ -143,7 +143,7 @@ def cmd_why(args: argparse.Namespace, cfg: Any) -> int:
         if args.json:
             _emit(body)
         else:
-            lang = why.lang_of(args.idea, args.lang)
+            lang = _why_lang(cfg, args.idea, args.lang)
             print(e.text_zh if lang == "zh" else e.text_en, file=sys.stderr)
             for r in e.extra.get("runs") or []:
                 print(f"  {r['run_id']}  {r['started_at'][:16]}  {r['idea']}", file=sys.stderr)
@@ -151,7 +151,7 @@ def cmd_why(args: argparse.Namespace, cfg: Any) -> int:
     if args.json:
         _emit(out)
     else:
-        lang = why.lang_of(out["run"].get("idea"), args.lang)
+        lang = _why_lang(cfg, out["run"].get("idea"), args.lang)
         if not out["results"]:
             print("没有要解释的公司：给公司代码或名字，或加 --checks" if lang == "zh" else
                   "Nothing to explain: give tickers or names, or --checks")
@@ -164,6 +164,19 @@ def cmd_why(args: argparse.Namespace, cfg: Any) -> int:
     if not out["results"]:
         return EXIT_ERROR
     return EXIT_ERROR if out["status"] in ("not_found", "partly_resolved") else EXIT_OK
+
+
+def _why_lang(cfg, idea: str | None, lang: str) -> str:
+    """--lang zh|en as given; auto: the idea's quickstart job language (the page's), else from the idea."""
+    from . import quickstart_cli, why
+    if lang in ("zh", "en"):
+        return lang
+    if idea and idea.strip():
+        try:
+            return quickstart_cli.page_lang(cfg, idea)
+        except Exception:  # noqa: BLE001
+            pass
+    return why.lang_of(idea, lang)
 
 
 # ------------------------------------------------------------------------------------------------ sieve commands

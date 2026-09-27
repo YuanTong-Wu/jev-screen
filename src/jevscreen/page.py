@@ -11,7 +11,10 @@ Rules (see docs/DATA_RULES.md "Result page"):
 - Deterministic for the same inputs (sorted JSON, no clock), under 300 KB: at most MAX_ROWS ranked rows,
   MAX_UNVERIFIED unverified rows and MAX_CARDS cards. No absolute home path appears (the footer shows run id,
   deck id and version).
-- Both languages are embedded; the build language (--lang) is shown first and a button switches zh / en.
+- ONE language per page (--lang, default the idea's quickstart language): a zh page is fully Chinese, an en page
+  fully English (jevscreen.l10n: sources, forms, dates, money, countries); no toggle. Texts the data holds in
+  another language show the user's agent's translation (jevscreen.translations) with an 'AI translation' tag and
+  the verbatim original behind a 'show original' button; without a translation the original, marked.
 - Fact / inference / gap / your call are labelled separately: the filing quote is a fact (with its link), the
   verdict is the AI's inference, missing text is a gap, card answers are the user's call.
 - Cards: the answer tokens come from calib.answer_tokens (Python); the page only joins them, so the line it builds
@@ -33,6 +36,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from . import l10n
+
 PAGE_FORMAT = "jevscreen.page/1"
 MAX_ROWS = 40
 MAX_UNVERIFIED = 60
@@ -46,23 +51,21 @@ BADGE_ORDER = ("no_mention", "profile_only", "stale", "edge", "read_once", "back
 TOP_TABLE = 10
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
        "base-uri 'none'; form-action 'none'")
-COUNTRY_ZH = {"China": "中国", "United States": "美国", "India": "印度", "South Korea": "韩国", "Taiwan": "台湾",
-              "Japan": "日本", "Hong Kong": "香港", "United Kingdom": "英国", "Germany": "德国", "France": "法国",
-              "Canada": "加拿大", "Switzerland": "瑞士", "Australia": "澳大利亚", "Singapore": "新加坡",
-              "Netherlands": "荷兰", "Sweden": "瑞典", "Italy": "意大利", "Spain": "西班牙", "Brazil": "巴西",
-              "Saudi Arabia": "沙特", "Indonesia": "印尼", "Thailand": "泰国", "Malaysia": "马来西亚",
-              "Israel": "以色列", "Mexico": "墨西哥", "Cayman Islands": "开曼群岛", "Bermuda": "百慕大"}
+COUNTRY_ZH = l10n.COUNTRY_ZH       # kept for callers of page.COUNTRY_ZH
 CN_EXCHANGES = ("SSE", "SZSE", "BJSE")
 
 STRINGS: dict[str, dict[str, str]] = {
     "zh": {
-        "title": "筛选结果", "toggle": "English", "idea": "你的想法", "idea_en": "发给 AI 的英文",
+        "title": "筛选结果", "idea": "你的想法", "idea_en": "发给 AI 的英文句子（点开看）",
+        "idea_orig": "你原来写的", "ai_tr": "AI 翻译", "ai_tr_quote": "AI 翻译（不是原文）", "show_orig": "看原文", "hide_orig": "收起原文",
+        "orig_label": "原文", "untranslated": "原文（未翻译）", "text_ai": "（AI 翻译）", "text_untranslated": "（原文，未翻译）",
+        "legend_ai": "AI 翻译＝你的 AI 译的，点「看原文」核对；原文才是事实",
         "version_first": "第 1 版", "version_n": "第 {n} 版：应用了你的 {k} 个回答（上一版 {prev}）",
         "version_n0": "第 {n} 版（上一版 {prev}）",
         "meta": "{date} · {status} · 花费 ${cost}{cny} · 用时 {time}",
         "meta_total": "{date} · {status} · 这个想法累计花费 ${cost}{cny} · 累计用时 {time}（不算等你回答的时间）",
         "version_change": "第 {n} 版：{change}（上一版 {prev}）",
-        "cny": "（约 ¥{y}，按 1 美元 ≈ 7.2 元）",
+        "cny": "（约 ¥{y}，按 1 美元 ≈ 7.2 元）", "cny_tiny": "（不到 ¥0.01，按 1 美元 ≈ 7.2 元）",
         "status_ok": "完成", "status_partial": "部分完成", "status_budget_exhausted": "预算用完（部分结果）",
         "status_other": "未完成",
         "funnel": "从 {universe} 家公司（市值 ≥ {floor}）中，{described} 家有简介、被 AI 读过；{l1} 家初读通过，"
@@ -123,14 +126,19 @@ STRINGS: dict[str, dict[str, str]] = {
         "no_js": "这个页面需要浏览器开启 JavaScript 才能完整显示。下面是纯文字名单：",
     },
     "en": {
-        "title": "Screen results", "toggle": "中文", "idea": "Your idea", "idea_en": "Sent to the AI as",
+        "title": "Screen results", "idea": "Your idea", "idea_en": "The English sentence sent to the AI",
+        "idea_orig": "As you wrote it", "ai_tr": "AI translation",
+        "ai_tr_quote": "AI translation (not the filing text)", "show_orig": "Show original",
+        "hide_orig": "Hide original", "orig_label": "Original", "untranslated": "original (not translated)",
+        "text_ai": " (AI translation)", "text_untranslated": " (original, not translated)",
+        "legend_ai": "AI translation = made by your AI; tap \"Show original\" to check it. The original is the fact",
         "version_first": "Version 1", "version_n": "Version {n}: applied your {k} answers (previous: {prev})",
         "version_n0": "Version {n} (previous: {prev})",
         "meta": "{date} · {status} · cost ${cost}{cny} · took {time}",
         "meta_total": "{date} · {status} · this idea so far: cost ${cost}{cny}, took {time} (not counting time waiting "
                       "for your answers)",
         "version_change": "Version {n}: {change} (previous: {prev})",
-        "cny": "",
+        "cny": "", "cny_tiny": "",
         "status_ok": "done", "status_partial": "partly done", "status_budget_exhausted": "budget ran out (partial)",
         "status_other": "not finished",
         "funnel": "Of {universe} companies (market cap ≥ {floor}), {described} have a profile the AI read; {l1} passed "
@@ -191,13 +199,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "st_insufficient": "the filing/profile does not say enough", "st_other": "not checked",
         "excluded_title": "You excluded ({n})",
         "gaps_title": "Gaps (not read, which is not the same as not relevant)",
-        "gap_no_description": "{n} companies have no profile at all and were not read (not \"not relevant\"): {by}. "
+        "gap_no_description": "{n} {companies_have} no profile at all and were not read (not \"not relevant\"): {by}. "
                               "To fill China: ask your AI to run {cmd} (about {m} min, can run in the background).",
-        "gap_no_description_other": "{n} companies have no profile at all and were not read (not \"not "
+        "gap_no_description_other": "{n} {companies_have} no profile at all and were not read (not \"not "
                                     "relevant\"): {by}.",
-        "gap_us_profile": "{k} US companies were checked from profiles only. To check them against annual reports, "
+        "gap_us_profile": "{k} US {companies_were} checked from profiles only. To check {them} against annual reports, "
                           "you can give the SEC a contact name and e-mail, sent with each download (optional, no account): {cmd}.",
-        "gap_jp_profile": "{k} Japanese companies were checked from profiles only (no Japanese filing pack on this "
+        "gap_jp_profile": "{k} Japanese {companies_were} checked from profiles only (no Japanese filing pack on this "
                           "computer).",
         "gap_ondemand": "Annual-report text was fetched on demand for {n} companies ({src}).",
         "footer": "run {run} · deck {deck} · jev-screen {ver} · personal research only",
@@ -252,7 +260,9 @@ def _money(v: float | None) -> str:
     return "?" if v is None else f"{v:.2f}" if v >= 0.1 else f"{v:.4f}"
 
 
-def _floor_text(v: float | None) -> str:
+def _floor_text(v: float | None, lang: str = "en") -> str:
+    if lang == "zh":
+        return l10n.usd_words(v or 0, "zh")
     if not v:
         return "$0"
     return f"${v / 1e9:g}B" if v >= 1e9 else f"${v / 1e6:g}M"
@@ -295,7 +305,9 @@ GENERIC_CJK = frozenset({"系统", "核心", "供应", "应商", "厂商", "公�
                          "사업", "기업"})
 _CJK_FUNCTION = frozenset("的和与及或在为是等之了对于把被将向从其各该此并也都")
 _CJK_RUN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+")
-_SHARE_CLASS = re.compile(r"\s+(?:class|cl\.?|series)\s+[a-z0-9]\.?$|\s+(?:ordinary shares|common stock)$", re.I)
+_SHARE_CLASS = re.compile(r"\s*[-,]?\s+\(?(?:class|cl\.?|series)\s+[a-z0-9]\.?\)?(?:\s+(?:shares|common stock|ordinary "
+                          r"shares))?$|\s*[-,]?\s+\(?(?:ordinary shares|common stock|common shares|sponsored adr|adr|ads|"
+                          r"american depositary (?:shares|receipts))\)?$", re.I)
 
 
 def _fold(t: str) -> str:
@@ -374,8 +386,13 @@ def idea_words_shown(result: dict[str, Any], lang: str, n: int = 8) -> list[str]
                 en.append(w)
     terms = idea_terms(result)
     checked = {_fold(t) for t in terms}
+    # the reader's language only (a zh page names Chinese words, an en page English ones), when there are any
+    own = [w for w in (cjk if lang == "zh" else en) if _fold(w) in checked]
+    if own:
+        return own[:n]
+    same = [t for t in terms if _script(t) == ("cjk" if lang == "zh" else "latin")]
     words = [w for w in (cjk + en if lang == "zh" else en + cjk) if _fold(w) in checked]
-    return (words or terms)[:n]
+    return (same or words or terms)[:n]
 
 
 def _script(text: str) -> str | None:
@@ -458,7 +475,9 @@ def _clean_name(name: str | None) -> str | None:
     """The name without a share-class tail ('... Co., Ltd. Class A' -> '... Co., Ltd.')."""
     if not name:
         return name
-    n = _SHARE_CLASS.sub("", str(name)).strip()
+    n, prev = str(name).strip(), None
+    while n != prev:                      # 'Foo Inc. Class A ADS' -> 'Foo Inc.'
+        prev, n = n, _SHARE_CLASS.sub("", n).strip()
     return n or str(name)
 
 
@@ -481,38 +500,21 @@ def _reads(r: dict[str, Any]) -> dict[str, int] | None:
     return {"n": len(detail), "k": sum(1 for d in detail if (d.get("p_pos") or 0) >= 0.5)}
 
 
-# Filing form ids in plain words (the page never shows an internal id such as annual_report_summary)
-FORM_WORDS = {"annual_report_summary": ("年报摘要", "annual report summary"), "annual_report": ("年报", "annual report"),
-              "10-K": ("10-K 年报", "10-K annual report"),
-              "10-KT": ("10-K 年报（过渡期）", "10-K annual report (transition period)"),
-              "20-F": ("20-F 年报", "20-F annual report"), "40-F": ("40-F 年报", "40-F annual report"),
-              "有価証券報告書": ("有价证券报告书（年报）", "securities report (annual report)"),
-              "사업보고서": ("事业报告（年报）", "business report (annual report)"),
-              "股東會年報": ("股东会年报", "annual report to shareholders")}
+FORM_WORDS = l10n.FORM_WORDS          # filing form ids in plain words (never an internal id on a page)
+form_words = l10n.form_words
 
 
-def form_words(form: Any) -> tuple[str | None, str | None]:
-    """(zh, en) plain words of a filing form id; an unknown internal id (snake_case) is left out."""
-    f = str(form or "").strip()
-    if not f:
-        return None, None
-    if f in FORM_WORDS:
-        return FORM_WORDS[f]
-    if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", f):
-        return None, None
-    return f, f
-
-
-def _quote(r: dict[str, Any]) -> dict[str, Any] | None:
+def _quote(r: dict[str, Any], lang: str = "zh") -> dict[str, Any] | None:
     text = _clip(r.get("evidence_excerpt"), QUOTE_CHARS)
     if not text:
         return None
-    from . import screen
-    fs = r.get("filing_source")
-    src = "profile" if r.get("l2_evidence") == "profile" else (screen.source_label(fs) if fs else None)
-    fz, fe = form_words(r.get("filing_form"))
-    return {"text": text, "source": src, "form_zh": fz, "form_en": fe,
-            "date": str(r.get("filing_date") or "")[:10] or None, "url": _safe_url(r.get("evidence_url"))}
+    profile = r.get("l2_evidence") == "profile"
+    src = "profile" if profile else (l10n.source_key(r.get("filing_source")) or r.get("filing_source"))
+    date = str(r.get("filing_date") or "")[:10] or None
+    return {"text": text, "source": src, "profile": profile,
+            "where": l10n.source_form_words(src, None if profile else r.get("filing_form"), lang),
+            "date": date, "date_text": None if profile else l10n.date_words(date, lang),
+            "url": _safe_url(r.get("evidence_url"))}
 
 
 def _l2_hit(r: dict[str, Any], terms: list[str], l2: dict[str, Any] | None) -> tuple[str, list[str]] | None:
@@ -530,10 +532,10 @@ def _l2_hit(r: dict[str, Any], terms: list[str], l2: dict[str, Any] | None) -> t
 
 
 def _row(r: dict[str, Any], one_line: str | None, today: dt.date | None, terms: list[str] | None = None,
-         local_name: str | None = None, l2: dict[str, Any] | None = None) -> dict[str, Any]:
+         local_name: str | None = None, l2: dict[str, Any] | None = None, lang: str = "zh") -> dict[str, Any]:
     uv = r.get("user_verdict")
     user = bool(uv) and r.get("verdict_source") in ("user", "evidence+user")
-    q = _quote(r)
+    q = _quote(r, lang)
     hits = mentions_idea((q or {}).get("text"), terms or [])
     if q is not None and hits == []:
         # the shown excerpt is only the start of what the AI read: a later piece that names the idea is the quote
@@ -552,7 +554,9 @@ def _row(r: dict[str, Any], one_line: str | None, today: dt.date | None, terms: 
     return {"rank": r.get("rank"), "name": name, "name_zh": local_name, "ticker": _ticker(r.get("security_id")),
             "security_id": r.get("security_id"), "country": r.get("country"),
             "country_zh": COUNTRY_ZH.get(r.get("country") or ""),
+            "country_text": l10n.country_words(r.get("country"), lang),
             "mcap_usd": r.get("market_cap_usd"), "one_line": one_line,
+            "mcap_text": l10n.usd_words(r.get("market_cap_usd"), lang) if r.get("market_cap_usd") else None,
             "verdict": r.get("l2_label") if r.get("l2_label") in ("explicit", "partial") else (uv or None),
             "evidence": r.get("l2_evidence") or "profile", "quote": q, "badges": badges,
             "edge": "edge" in badges or no_mention,
@@ -578,7 +582,8 @@ def _card_why_en(c: dict[str, Any], max_out: int | None, facets: dict[str, Any] 
         return ""
 
 
-def _cards(deck: dict[str, Any] | None, max_out: int | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _cards(deck: dict[str, Any] | None, max_out: int | None, lang: str = "zh"
+           ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from . import calib
     if not deck or not deck.get("cards"):
         return [], {}
@@ -604,16 +609,25 @@ def _cards(deck: dict[str, Any] | None, max_out: int | None) -> tuple[list[dict[
         w = c.get("what") or {}
         n = int(c["n"])
         profile = q.get("source") == "公司简介"
+        src = "profile" if profile else (l10n.source_key(q.get("source")) or q.get("source"))
+        date = str(q.get("filing_date") or "")[:10] or None
         out.append({"n": n, "name": _clean_name(c.get("name")), "ticker": _ticker(c.get("security_id")),
                     "security_id": c.get("security_id"), "rank": c.get("rank"),
                     "why_zh": c.get("why_zh"), "why_en": _card_why_en(c, max_out, facets),
                     "what": _clip(w.get("text"), 200),
-                    "quote": {"text": _clip(q.get("text"), QUOTE_CHARS), "profile": profile,
-                              "source": None if profile else q.get("source"),
-                              "form_zh": form_words(q.get("form"))[0], "form_en": form_words(q.get("form"))[1],
-                              "date": str(q.get("filing_date") or "")[:10] or None, "url": _safe_url(q.get("url"))},
+                    "quote": {"text": _clip(q.get("text"), QUOTE_CHARS), "profile": profile, "source": src,
+                              "where": l10n.source_form_words(src, None if profile else q.get("form"), lang),
+                              "date": date, "date_text": None if profile else l10n.date_words(date, lang),
+                              "url": _safe_url(q.get("url"))},
                     "edge": bool((c.get("verdict") or {}).get("edge")), "tokens": tokens.get(n, {})})
     return out, chip_text
+
+
+def _en_count(n: int) -> dict[str, str]:
+    """The English words that agree with a count ('1 company has' / '2 companies have')."""
+    one = n == 1
+    return {"companies_have": "company has" if one else "companies have",
+            "companies_were": "company was" if one else "companies were", "them": "it" if one else "them"}
 
 
 def _gap_lines(result: dict[str, Any], country_of: dict[str, str], extra: dict[str, Any]) -> list[dict[str, Any]]:
@@ -637,18 +651,20 @@ def _gap_lines(result: dict[str, Any], country_of: dict[str, str], extra: dict[s
             by[k] = by.get(k, 0) + 1
         top = sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
         cn = by.get("China", 0)
-        by_zh = "、".join(f"{COUNTRY_ZH.get(k, k)} {v}" for k, v in top)
-        by_en = ", ".join(f"{k} {v}" for k, v in top)
+        by_zh = "、".join(f"{'其他' if k == '?' else COUNTRY_ZH.get(k, k)} {v}" for k, v in top)
+        by_en = ", ".join(f"{'other' if k == '?' else k} {v}" for k, v in top)
         cmd = f"jevscreen crawl-descriptions --countries CN --min-mcap {floor:.0e}".replace("e+0", "e")
         m = max(1, math.ceil(cn / CRAWL_REQ_PER_S / 60)) if cn else 0
         if cn:
             out.append({"id": "no_description", "count": len(nod), "cn": cn, "minutes": m, "command": cmd,
                         "text_zh": STRINGS["zh"]["gap_no_description"].format(n=len(nod), by=by_zh, cmd=cmd, m=m),
-                        "text_en": STRINGS["en"]["gap_no_description"].format(n=len(nod), by=by_en, cmd=cmd, m=m)})
+                        "text_en": STRINGS["en"]["gap_no_description"].format(n=len(nod), by=by_en, cmd=cmd, m=m,
+                                                                                 **_en_count(len(nod)))})
         else:
             out.append({"id": "no_description", "count": len(nod), "cn": 0, "minutes": None, "command": None,
                         "text_zh": STRINGS["zh"]["gap_no_description_other"].format(n=len(nod), by=by_zh),
-                        "text_en": STRINGS["en"]["gap_no_description_other"].format(n=len(nod), by=by_en)})
+                        "text_en": STRINGS["en"]["gap_no_description_other"].format(n=len(nod), by=by_en,
+                                                                                       **_en_count(len(nod)))})
     prof = gaps.get("l2_profile_only") or []
     us = [g for g in prof if country(g.get("security_id")) == "United States"
           or str(g.get("security_id") or "").split(":", 1)[0] in ("NASDAQ", "NYSE", "AMEX", "NYSEARCA")]
@@ -656,20 +672,22 @@ def _gap_lines(result: dict[str, Any], country_of: dict[str, str], extra: dict[s
         cmd = "jevscreen keys set sec-email"
         out.append({"id": "us_profile_only", "count": len(us), "command": cmd,
                     "text_zh": STRINGS["zh"]["gap_us_profile"].format(k=len(us), cmd=cmd),
-                    "text_en": STRINGS["en"]["gap_us_profile"].format(k=len(us), cmd=cmd)})
+                    "text_en": STRINGS["en"]["gap_us_profile"].format(k=len(us), cmd=cmd, **_en_count(len(us)))})
     jp = [g for g in prof if country(g.get("security_id")) == "Japan" or str(g.get("security_id") or "")
           .startswith("TSE:")]
     if jp:
         out.append({"id": "jp_profile_only", "count": len(jp), "command": None,
                     "text_zh": STRINGS["zh"]["gap_jp_profile"].format(k=len(jp)),
-                    "text_en": STRINGS["en"]["gap_jp_profile"].format(k=len(jp))})
+                    "text_en": STRINGS["en"]["gap_jp_profile"].format(k=len(jp), **_en_count(len(jp)))})
     od = extra.get("ondemand") or {}
     n_od = sum((od.get("fetched") or {}).values()) if isinstance(od.get("fetched"), dict) else 0
     if n_od:
-        src = ", ".join(sorted(k.upper() for k, v in od["fetched"].items() if v))
+        keys = sorted(k for k, v in od["fetched"].items() if v)
+        src_zh = "、".join(l10n.source_words(k, "zh") or k.upper() for k in keys)
+        src_en = ", ".join(l10n.source_words(k, "en") or k.upper() for k in keys)
         out.append({"id": "ondemand", "count": n_od, "command": None,
-                    "text_zh": STRINGS["zh"]["gap_ondemand"].format(n=n_od, src=src),
-                    "text_en": STRINGS["en"]["gap_ondemand"].format(n=n_od, src=src)})
+                    "text_zh": STRINGS["zh"]["gap_ondemand"].format(n=n_od, src=src_zh),
+                    "text_en": STRINGS["en"]["gap_ondemand"].format(n=n_od, src=src_en)})
     return out
 
 
@@ -679,13 +697,16 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
                     lineage: dict[str, Any] | None = None, descriptions: dict[str, str] | None = None,
                     country_of: dict[str, str] | None = None, extra: dict[str, Any] | None = None,
                     local_names: dict[str, str] | None = None,
-                    l2_pieces: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
-    """The page's data (format jevscreen.page/1): everything the page shows, nothing it does not. `descriptions`
-    maps company_key -> description text (the one-line 'what it does'); `country_of` security_id -> country (gap
-    lines); `lineage` {'version', 'prev_run_id', 'answers'}; `extra` {'ondemand': layers.fetch, 'has_sec_key': bool};
-    `local_names` security_id -> the local short name (CNINFO 简称), shown first on a Chinese page; `l2_pieces`
-    company_key -> the text layer 2 read (load_l2_pieces; default: the run folder's l2_inputs.jsonl)."""
-    from . import __version__
+                    l2_pieces: dict[str, dict[str, Any]] | None = None,
+                    translations: dict[str, str] | None = None) -> dict[str, Any]:
+    """The page's data (format jevscreen.page/1): everything the page shows, nothing it does not, in ONE language
+    (`lang`: a zh page is fully Chinese, an en page fully English). `descriptions` maps company_key -> description
+    text (the one-line 'what it does'); `country_of` security_id -> country (gap lines); `lineage` {'version',
+    'prev_run_id', 'answers'}; `extra` {'ondemand': layers.fetch, 'has_sec_key': bool}; `local_names` security_id ->
+    the official Chinese short name (CNINFO 简称, MOPS 公司簡稱), shown on a Chinese page; `l2_pieces` company_key ->
+    the text layer 2 read (load_l2_pieces; default: the run folder's l2_inputs.jsonl); `translations` sha -> the
+    user's agent's translation into `lang` of a text in another language (jevscreen.translations)."""
+    from . import __version__, translations as tr_mod
     lang = "en" if lang == "en" else "zh"
     descriptions = descriptions or {}
     local_names = local_names or {}
@@ -697,43 +718,51 @@ def build_page_data(result: dict[str, Any], deck: dict[str, Any] | None, *, lang
     if l2_pieces is None:
         l2_pieces = load_l2_pieces(result.get("output_dir"), [r.get("company_key") for r in rows_in])
     rows = [_row(r, _first_sentence(descriptions.get(r.get("company_key") or "")), today, terms,
-                 local_names.get(r.get("security_id") or ""), l2_pieces.get(r.get("company_key") or ""))
+                 local_names.get(r.get("security_id") or ""), l2_pieces.get(r.get("company_key") or ""), lang)
             for r in rows_in]
     unv = [{"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
             "name_zh": local_names.get(r.get("security_id") or ""),
             "country": r.get("country"), "country_zh": COUNTRY_ZH.get(r.get("country") or ""),
-            "status": r.get("l2_status") or "not_run",
-            "one_line": _first_sentence(descriptions.get(r.get("company_key") or ""))}
+            "country_text": l10n.country_words(r.get("country"), lang), "status": r.get("l2_status") or "not_run"}
            for r in list(result.get("unverified") or [])[:MAX_UNVERIFIED]]
     exc = [{"name": _clean_name(r.get("name")) or r.get("security_id"), "ticker": _ticker(r.get("security_id")),
             "name_zh": local_names.get(r.get("security_id") or ""), "note": r.get("user_note")}
            for r in result.get("excluded_by_user") or []]
-    cards, chip_text = _cards(deck, params.get("max_out"))
+    cards, chip_text = _cards(deck, params.get("max_out"), lang)
     for c in cards:
         c["name_zh"] = local_names.get(c.get("security_id") or "")
+    if lang == "en":                  # an English page shows English names only
+        for x in rows + unv + exc + cards:
+            x["name_zh"] = None
     f = result.get("funnel") or {}
     lin = lineage or {}
     totals = extra.get("totals") if isinstance(extra.get("totals"), dict) else None
     cost = totals["cost_usd"] if totals and totals.get("cost_usd") is not None else result.get("cost_usd")
     seconds = totals["seconds"] if totals and totals.get("seconds") else (result.get("timing") or {}).get("total_s")
+    date = str(result.get("finished_at") or result.get("started_at") or "")[:10]
+    idea, idea_en = result.get("idea"), result.get("idea_en")
+    # the headline in the page's language: an English page of a non-English idea leads with the English sentence
+    head_en = lang == "en" and bool(idea_en) and l10n.text_lang(idea) not in (None, "en")
     data = {
-        "format": PAGE_FORMAT, "lang": lang, "idea": result.get("idea"), "idea_en": result.get("idea_en"),
+        "format": PAGE_FORMAT, "lang": lang, "idea": idea, "idea_en": idea_en,
+        "headline": idea_en if head_en else idea, "headline_is_idea_en": head_en,
         "run_id": result.get("run_id"), "deck_id": (deck or {}).get("deck_id"), "version_tool": __version__,
         "version": int(lin.get("version") or 1), "prev_run_id": lin.get("prev_run_id"),
         "answers": int(lin.get("answers") or 0),
-        "date": str(result.get("finished_at") or result.get("started_at") or "")[:10],
+        "date": date, "date_text": l10n.date_words(date, lang) or "",
         "status": result.get("status"), "cost_usd": cost,
         "cost_cny": None if cost is None else round(float(cost) * CNY_PER_USD, 2),
         "seconds": seconds, "totals": bool(totals), "change": change_of(result, lin),
         "funnel": {"universe": f.get("universe"), "described": f.get("described"), "l1": f.get("l1_pass"),
-                   "listed": len(result.get("rows") or []), "floor": params.get("min_mcap_usd")},
+                   "listed": len(result.get("rows") or []), "floor": params.get("min_mcap_usd"),
+                   "floor_text": _floor_text(params.get("min_mcap_usd"), lang)},
         "rows": rows, "unverified": unv, "unverified_total": len(result.get("unverified") or []),
         "unverified_groups": _unverified_groups(result.get("unverified") or []),
         "excluded": exc, "cards": cards, "chips": chip_text, "idea_terms": idea_words_shown(result, lang), "top_n": TOP_TABLE,
         "answer_prefix": "jevscreen answer", "gaps": _gap_lines(result, country_of or {}, extra),
-        "strings": STRINGS,
+        "strings": {lang: STRINGS[lang]},
     }
-    return data
+    return tr_mod.apply(data, translations)
 
 
 def _status_key(status: str | None) -> str:
@@ -750,31 +779,43 @@ def _unverified_groups(unverified: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def display_name(row: dict[str, Any], lang: str) -> str:
-    """The name a reader of `lang` recognises first: the local short name on a Chinese page, else the English."""
-    if lang == "zh" and row.get("name_zh"):
-        return str(row["name_zh"])
+    """The name a reader of `lang` recognises: on a Chinese page the official Chinese short name, else the agent's
+    Chinese translation of the name, else the English name; on an English page the English name."""
+    if lang == "zh":
+        if row.get("name_zh"):
+            return str(row["name_zh"])
+        if row.get("name_tr"):
+            return str(row["name_tr"])
     return str(row.get("name") or row.get("ticker") or "?")
 
 
+def shown_text(holder: dict[str, Any] | None, field: str) -> str | None:
+    """What the page shows for a text: its translation when there is one, else the text itself."""
+    if not holder:
+        return None
+    return holder.get(f"{field}_tr") or holder.get(field)
+
+
 def render_text(data: dict[str, Any], lang: str | None = None) -> str:
-    """The page as plain text (the <noscript> block and `jevscreen page --text`): header, the ranked list with the
-    verdict, the evidence kind and the one-line description, the unverified reasons with counts, the gaps."""
+    """The page as plain text (the <noscript> block and `jevscreen page --text`), in the page's one language:
+    header, the ranked list with the verdict, the evidence kind and the one-line description (the AI translation
+    when there is one, marked), the unverified reasons with counts, the gaps."""
     lang = lang or data.get("lang") or "zh"
     lang = "en" if lang == "en" else "zh"
     S = STRINGS[lang]
     zh = lang == "zh"
     sep = "：" if zh else ": "
-    out = [f"{S['title']} · {data.get('idea') or ''}"]
+    out = [f"{S['title']} · {data.get('headline') or data.get('idea') or ''}"]
     if data.get("version", 1) > 1:
         change = data.get("change") if isinstance(data.get("change"), dict) else None
-        if change and (change.get(lang) or change.get("zh")):       # what changed (the page header says the same)
-            out.append(S["version_change"].format(n=data["version"], change=change.get(lang) or change.get("zh"),
+        if change and change.get(lang):                  # what changed (the page header says the same)
+            out.append(S["version_change"].format(n=data["version"], change=change[lang],
                                                   prev=data.get("prev_run_id") or "?"))
         else:
             key = "version_n" if data.get("answers") else "version_n0"
             out.append(S[key].format(n=data["version"], k=data.get("answers"), prev=data.get("prev_run_id") or "?"))
     f = data.get("funnel") or {}
-    out.append(S["funnel"].format(universe=f.get("universe"), floor=_floor_text(f.get("floor")),
+    out.append(S["funnel"].format(universe=f.get("universe"), floor=_floor_text(f.get("floor"), lang),
                                   described=f.get("described"), l1=f.get("l1"), listed=f.get("listed")))
     out.append(S["rank_note"])
     out.append("")
@@ -784,9 +825,10 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
         out.append(S["list_empty"])
     for r in rows:
         name = display_name(r, lang)
-        other = r.get("name") if zh and r.get("name_zh") else (r.get("name_zh") if not zh else None)
-        where = " · ".join(x for x in (r.get("ticker"), (r.get("country_zh") if zh else None) or r.get("country"))
-                           if x)
+        # a translated name keeps the original name beside it (small on the page)
+        other = r.get("name") if zh and not r.get("name_zh") and r.get("name_tr") else None
+        country = l10n.country_words(r.get("country"), lang)
+        where = " · ".join(x for x in (r.get("ticker"), country) if x)
         verdict = S.get(f"verdict_{r.get('verdict') or 'partial'}", r.get("verdict") or "")
         q = r.get("quote") or {}
         if r.get("user_only"):
@@ -796,11 +838,13 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
         else:
             ev = S.get(f"evidence_{r.get('evidence') or 'profile'}", "")
         marks = ("；" if zh else "; ").join([S.get(f"badge_{b}", b) for b in r.get("badges") or []]
-                         + ([S["badge_user"]] if r.get("user") else []))
-        line = f"#{r.get('rank')} {name}" + (f"（{other}）" if zh and other else (f" ({other})" if other else ""))
+                                           + ([S["badge_user"]] if r.get("user") else []))
+        line = f"#{r.get('rank')} {name}" + (f"（{other}）" if other else "")
         out.append(f"{line} {where} — {verdict} · {ev}" + (f" [{marks}]" if marks else ""))
         if r.get("one_line"):
-            out.append(f"    {S['what']}{sep}{r['one_line']}")
+            one = shown_text(r, "one_line")
+            tag = S["text_ai"] if r.get("one_line_tr") else (S["text_untranslated"] if r.get("one_line_x") else "")
+            out.append(f"    {S['what']}{sep}{one}{tag}")
     groups = data.get("unverified_groups") or []
     if groups:
         out.append("")
@@ -841,6 +885,8 @@ button:disabled{opacity:.5;cursor:default}
 .tag{display:inline-block;font-size:.75rem;border-radius:6px;padding:0 6px;margin-right:6px;border:1px solid}
 .t-fact{color:var(--fact);border-color:var(--fact)}.t-inference{color:var(--infer);border-color:var(--infer)}
 .t-gap{color:var(--gap);border-color:var(--gap)}.t-user{color:var(--user);border-color:var(--user)}
+.t-ai{color:var(--accent);border-color:var(--accent)}.t-orig{color:var(--muted);border-color:var(--muted)}
+.orig{margin:4px 0;padding:4px 8px;border-left:3px solid var(--line);color:var(--muted)}
 input[type=search]{width:100%;min-height:44px;font:inherit;padding:8px 12px;border-radius:10px;
 border:1px solid var(--line);background:var(--card);color:var(--fg)}
 .filters{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
@@ -868,6 +914,7 @@ table.top10 th,table.top10 td{text-align:left;vertical-align:top;padding:6px 8px
 overflow-wrap:anywhere}
 table.top10 th{color:var(--muted);font-weight:600;font-size:.82rem;overflow-wrap:normal}
 table.top10 td:first-child,table.top10 th:first-child{white-space:nowrap;width:1%;overflow-wrap:normal}
+table.top10 td:nth-child(3),table.top10 td:nth-child(4){word-break:keep-all;overflow-wrap:normal}
 table.top10 td.t-gap{color:var(--gap)}table.top10 td.t-user{color:var(--user)}
 table.top10 tr.edge td:first-child a{color:var(--gap)}
 details.unv .names{margin:0 0 10px 0}
@@ -882,34 +929,43 @@ footer{margin:28px 0 8px;font-size:.82rem;color:var(--muted)}
 JS = r"""
 (function(){
 var D=JSON.parse(document.getElementById('data').textContent);
-var L=D.lang, Q='', F='all', A={}, DBG=false;
+var L=D.lang==='en'?'en':'zh', Q='', F='all', A={}, DBG=false;
 try{DBG=/[?&]debug\b/.test(String(window.location.search||''));}catch(e){}
-function S(k){return (D.strings[L]||{})[k]||k;}
+function S(k){var t=(D.strings[L]||{})[k];return (t===undefined||t===null)?k:t;}
 function fmt(t,o){return t.replace(/\{(\w+)\}/g,function(m,k){return (o&&o[k]!==undefined&&o[k]!==null)?String(o[k]):'';});}
 function E(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined&&text!==null)e.textContent=String(text);return e;}
+function T(t){return document.createTextNode(String(t));}
 function tag(kind,text){return E('span','tag t-'+kind,text||S('tag_'+kind));}
 function isHttp(u){return typeof u==='string'&&/^https?:\/\//i.test(u);}
 function link(u){var a=E('a',null,S('open_link'));a.href=u;a.rel='noopener noreferrer';a.target='_blank';return a;}
 function money(v){return v===null||v===undefined?'?':(v>=0.1?v.toFixed(2):v.toFixed(4));}
 function dur(s){if(s===null||s===undefined)return '?';s=Math.round(s);return s>=60?fmt(S('dur_ms'),{m:Math.floor(s/60),s:s%60}):fmt(S('dur_s'),{s:s});}
-function ctry(o){return (L==='zh'&&o.country_zh)?o.country_zh:o.country;}
-function nm(o){return (L==='zh'&&o.name_zh)?o.name_zh:(o.name||o.ticker||'?');}
-function sub(o){return (L==='zh'&&o.name_zh)?o.name:(o.name_zh||null);}
+function ctry(o){return o.country_text||(L==='zh'?(o.country_zh||o.country):o.country)||null;}
+function nm(o){return (L==='zh'&&(o.name_zh||o.name_tr))||o.name||o.ticker||'?';}
+function sub(o){return (L==='zh'&&!o.name_zh&&o.name_tr)?o.name:null;}
+function nmFull(o){var s=sub(o);return nm(o)+(s?'（'+s+'）':'');}
 function lbl(v){if(v===null||v===undefined||v==='')return null;var t=(D.strings[L]||{})['lbl_'+v];return t||String(v);}
 function pct(v){return (v===null||v===undefined||isNaN(v))?null:Math.round(Number(v)*100)+'%';}
-function floor(v){if(!v)return '$0';return v>=1e9?'$'+(v/1e9)+'B':'$'+(v/1e6)+'M';}
-function mcap(v){if(!v)return '?';return v>=1e9?'$'+(v/1e9).toFixed(1)+'B':'$'+(v/1e6).toFixed(0)+'M';}
 function gapq(q){return !!q&&q.mentions===false;}
+function origToggle(orig){var w=E('div','small');var o=E('div','orig');o.style.display='none';o.appendChild(tag('fact',S('orig_label')));o.appendChild(T(orig));
+ var bt=E('button','more',S('show_orig'));bt.onclick=function(){var shut=o.style.display==='none';o.style.display=shut?'block':'none';bt.textContent=S(shut?'hide_orig':'show_orig');};
+ w.appendChild(bt);w.appendChild(o);return w;}
+function trLine(cls,prefix,orig,tr,foreign){var d=E('div',cls);if(prefix)d.appendChild(T(prefix));
+ if(foreign&&tr){d.appendChild(T(tr+' '));d.appendChild(tag('ai',S('ai_tr')));d.appendChild(origToggle(orig));}
+ else{if(foreign){d.appendChild(tag('orig',S('untranslated')));}d.appendChild(T(orig));}return d;}
+function clampBox(b,tx){if(String(tx.textContent).length<=60)return;tx.className='clamp';var mb=E('button','more',S('more'));
+ mb.onclick=function(){var shut=tx.className==='clamp';tx.className=shut?'':'clamp';mb.textContent=S(shut?'less':'more');};b.appendChild(mb);
+ setTimeout(function(){try{if(tx.className==='clamp'&&tx.scrollHeight>0&&tx.scrollHeight<=tx.clientHeight+2)mb.style.display='none';}catch(e){}},0);}
 function quote(q,profile,byUser){var b=E('div');
  if(!q||!q.text){b.appendChild(tag('fact'));b.appendChild(E('span','muted',S('no_quote')));return b;}
- var miss=gapq(q);b.appendChild(miss?tag('gap',S(profile||q.profile||q.source==='profile'?'quote_gap_profile':'quote_gap')):tag('fact'));
- var bq=E('blockquote',miss?'gapq':null);var tx=E('div',null,q.text);bq.appendChild(tx);b.appendChild(bq);
- if(String(q.text).length>60){tx.className='clamp';var mb=E('button','more',S('more'));
-  mb.onclick=function(){var shut=tx.className==='clamp';tx.className=shut?'':'clamp';mb.textContent=S(shut?'less':'more');};b.appendChild(mb);
-  setTimeout(function(){try{if(tx.className==='clamp'&&tx.scrollHeight>0&&tx.scrollHeight<=tx.clientHeight+2)mb.style.display='none';}catch(e){}},0);}
+ var miss=gapq(q),pr=profile||q.profile||q.source==='profile',trd=!!(q.text_x&&q.text_tr);
+ if(miss)b.appendChild(tag('gap',S(pr?'quote_gap_profile':'quote_gap')));else if(!trd)b.appendChild(tag('fact'));
+ if(trd)b.appendChild(tag('ai',S('ai_tr_quote')));else if(q.text_x)b.appendChild(tag('orig',S('untranslated')));
+ var bq=E('blockquote',miss?'gapq':null);var tx=E('div',null,trd?q.text_tr:q.text);bq.appendChild(tx);b.appendChild(bq);clampBox(b,tx);
+ if(trd)b.appendChild(origToggle(q.text));
  if(miss)b.appendChild(E('div','small muted',fmt(S(byUser?'quote_gap_why_user':'quote_gap_why'),{terms:(D.idea_terms||[]).slice(0,8).join(L==='zh'?'、':', ')})));
- var src=q.profile||q.source==='profile'?S('evidence_profile'):[q.source,L==='zh'?q.form_zh:q.form_en,q.date].filter(Boolean).join(' · ');
- var m=E('div','small muted',S('quote_from')+': '+src+' ');if(isHttp(q.url))m.appendChild(link(q.url));b.appendChild(m);return b;}
+ var src=[q.where||(pr?S('evidence_profile'):null),q.date_text].filter(Boolean).join(' · ');
+ if(src||isHttp(q.url)){var m=E('div','small muted',src?S('quote_from')+(L==='zh'?'：':': ')+src+' ':'');if(isHttp(q.url))m.appendChild(link(q.url));b.appendChild(m);}return b;}
 function answerLine(){var parts=[];(D.cards||[]).forEach(function(c){var a=A[c.n];if(!a||!a.v)return;
  var t=c.tokens||{};var k=a.chip||(a.v==='?'?'?':a.v);if(t[k])parts.push(t[k]);});
  if(!parts.length)return '';return D.answer_prefix+' "'+parts.join(' ')+'" --deck '+D.deck_id+(L==='en'?' --lang en':'');}
@@ -920,25 +976,28 @@ function topTable(m){var rows=(D.rows||[]).slice(0,D.top_n||10);if(!rows.length)
  m.appendChild(E('h2',null,fmt(S('top_title'),{n:rows.length})));var t=E('table','top10');var th=E('tr');
  ['col_rank','col_name','col_verdict','col_evidence'].forEach(function(k){th.appendChild(E('th',null,S(k)));});t.appendChild(th);
  rows.forEach(function(r){var tr=E('tr',r.edge?'edge':null);var a=E('a',null,'#'+r.rank);a.href='#r'+r.rank;var c0=E('td');c0.appendChild(a);tr.appendChild(c0);
-  var c1=E('td');c1.appendChild(E('div','name',nm(r)));c1.appendChild(E('div','small muted',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));tr.appendChild(c1);
+  var c1=E('td');c1.appendChild(E('div','name',nm(r)));if(sub(r))c1.appendChild(E('div','small muted',sub(r)));c1.appendChild(E('div','small muted',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));tr.appendChild(c1);
   tr.appendChild(E('td',null,S('verdict_'+(r.verdict||'partial'))+(r.edge?' · '+S('filter_edge'):'')));
   var ev=evCell(r);tr.appendChild(E('td',ev[1],ev[0]));t.appendChild(tr);});
  var w=E('div','tablewrap');w.appendChild(t);m.appendChild(w);}
 function render(){
- document.documentElement.lang=L==='zh'?'zh-CN':'en';document.title=S('title')+' · '+(D.idea||'');
+ document.documentElement.lang=L==='zh'?'zh-CN':'en';document.title=S('title')+' · '+(D.headline||D.idea||'');
  var app=document.getElementById('app');app.textContent='';var m=E('main');app.appendChild(m);
- var top=E('div','top');var h=E('div');h.appendChild(E('div','muted small',S('idea')));h.appendChild(E('h1',null,D.idea));
- if(D.idea_en&&D.idea_en!==D.idea)h.appendChild(E('div','small muted',S('idea_en')+': '+D.idea_en));
- top.appendChild(h);var tg=E('button',null,S('toggle'));tg.onclick=function(){L=(L==='zh'?'en':'zh');render();};top.appendChild(tg);m.appendChild(top);
- m.appendChild(E('div','small',D.version>1?(D.change?fmt(S('version_change'),{n:D.version,change:D.change[L]||D.change.zh,prev:D.prev_run_id||'?'}):fmt(S(D.answers?'version_n':'version_n0'),{n:D.version,k:D.answers,prev:D.prev_run_id||'?'})):S('version_first')));
+ var top=E('div','top');var h=E('div');h.appendChild(E('div','muted small',S('idea')));h.appendChild(E('h1',null,D.headline||D.idea));
+ var alt=D.headline_is_idea_en?[S('idea_orig'),D.idea]:((D.idea_en&&D.idea_en!==(D.headline||D.idea))?[S('idea_en'),D.idea_en]:null);
+ if(alt){var ad=E('details','small muted');ad.appendChild(E('summary',null,alt[0]));ad.appendChild(E('div','orig',alt[1]));h.appendChild(ad);}
+ top.appendChild(h);m.appendChild(top);
+ m.appendChild(E('div','small',D.version>1?(D.change&&D.change[L]?fmt(S('version_change'),{n:D.version,change:D.change[L],prev:D.prev_run_id||'?'}):fmt(S(D.answers?'version_n':'version_n0'),{n:D.version,k:D.answers,prev:D.prev_run_id||'?'})):S('version_first')));
  var st=S('status_'+D.status);if(st==='status_'+D.status)st=S('status_other');
- m.appendChild(E('div','small muted',fmt(S(D.totals?'meta_total':'meta'),{date:D.date,status:st,cost:money(D.cost_usd),
-  cny:(L==='zh'&&D.cost_cny!==null)?fmt(S('cny'),{y:D.cost_cny.toFixed(2)}):'',time:dur(D.seconds)})));
- var f=D.funnel||{};m.appendChild(E('p',null,fmt(S('funnel'),{universe:f.universe,floor:floor(f.floor),described:f.described,l1:f.l1,listed:f.listed})));
+ m.appendChild(E('div','small muted',fmt(S(D.totals?'meta_total':'meta'),{date:D.date_text||D.date,status:st,cost:money(D.cost_usd),
+  cny:(L==='zh'&&D.cost_cny!==null&&D.cost_cny!==undefined)?fmt(S(D.cost_usd>0&&D.cost_cny<0.005?'cny_tiny':'cny'),{y:D.cost_cny.toFixed(2)}):'',time:dur(D.seconds)}).replace(/^ · /,'')));
+ var f=D.funnel||{};m.appendChild(E('p',null,fmt(S('funnel'),{universe:f.universe,floor:f.floor_text||'?',described:f.described,l1:f.l1,listed:f.listed})));
  topTable(m);
  m.appendChild(E('p','small',S('rank_note')));
  m.appendChild(E('div','banner',S('banner')));
- var lg=E('div','legend');['fact','inference','gap','user'].forEach(function(k){var s=E('span');s.appendChild(tag(k));s.appendChild(document.createTextNode(S('legend_'+k)));lg.appendChild(s);});m.appendChild(lg);
+ var lg=E('div','legend');['fact','inference','gap','user'].forEach(function(k){var s=E('span');s.appendChild(tag(k));s.appendChild(T(S('legend_'+k)));lg.appendChild(s);});
+ if(D.translation&&D.translation.foreign){var sa=E('span');sa.appendChild(tag('ai',S('ai_tr')));sa.appendChild(T(S('legend_ai')));lg.appendChild(sa);}
+ m.appendChild(lg);
  var sb=E('input');sb.type='search';sb.placeholder=S('search');sb.value=Q;sb.setAttribute('aria-label',S('search'));m.appendChild(sb);
  var fl=E('div','filters');['all','report','edge'].forEach(function(k){var b=E('button',F===k?'on':null,S('filter_'+k));b.onclick=function(){F=k;render();};fl.appendChild(b);});m.appendChild(fl);
  m.appendChild(E('h2',null,fmt(S('list_title'),{n:(D.rows||[]).length})));
@@ -946,20 +1005,20 @@ function render(){
  function draw(){list.textContent='';var q=Q.trim().toLowerCase(),shown=0;
   (D.rows||[]).forEach(function(r){
    if(F==='report'&&r.evidence!=='annual_report')return;if(F==='edge'&&!r.edge)return;
-   if(q&&[r.name,r.name_zh,r.ticker].every(function(x){return String(x||'').toLowerCase().indexOf(q)<0;}))return;
+   if(q&&[r.name,r.name_zh,r.name_tr,r.ticker].every(function(x){return String(x||'').toLowerCase().indexOf(q)<0;}))return;
    shown++;var d=E('div','row');d.id='r'+r.rank;var hd=E('div','head');hd.appendChild(E('span','rank','#'+r.rank));hd.appendChild(E('span','name',nm(r)));
    hd.appendChild(E('span','muted small',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));
    if((r.badges||[]).length)hd.appendChild(E('span','badge',S('badge_'+r.badges[0])));d.appendChild(hd);
-   if(sub(r))d.appendChild(E('div','small muted',sub(r)));
-   if(r.one_line)d.appendChild(E('div','small',r.one_line));
+   if(sub(r)){var sn=E('div','small muted',sub(r));d.appendChild(sn);}
+   if(r.one_line)d.appendChild(trLine('small',null,r.one_line,r.one_line_tr,r.one_line_x));
    var v=E('div');v.appendChild(tag('inference'));v.appendChild(E('strong',null,S('verdict_'+(r.verdict||'partial'))));
-   v.appendChild(document.createTextNode(' · '+S(r.user_only?'evidence_user':'evidence_'+(r.evidence||'profile'))));
-   if(r.user){v.appendChild(document.createTextNode(' '));v.appendChild(tag('user'));}d.appendChild(v);
+   v.appendChild(T(' · '+S(r.user_only?'evidence_user':'evidence_'+(r.evidence||'profile'))));
+   if(r.user){v.appendChild(T(' '));v.appendChild(tag('user'));}d.appendChild(v);
    d.appendChild(quote(r.quote,r.evidence==='profile',r.user));
    var det=E('details');det.appendChild(E('summary',null,S('details')));var g=E('div','grid');
    function kv(k,val){if(val===null||val===undefined||val==='')return;g.appendChild(E('div','muted',S(k)));g.appendChild(E('div',null,val));}
    var rd=r.details||{};kv('reads_label',rd.reads?(rd.reads.n>1?fmt(S('reads'),rd.reads):S('reads_one')):null);
-   kv('l1',lbl(rd.l1));kv('l2',lbl(rd.l2));kv('p_pos',pct(rd.p_pos));if(DBG)kv('p_core',rd.p_core);kv('mcap',mcap(r.mcap_usd));
+   kv('l1',lbl(rd.l1));kv('l2',lbl(rd.l2));kv('p_pos',pct(rd.p_pos));if(DBG)kv('p_core',rd.p_core);kv('mcap',r.mcap_text);
    kv('badges',(r.badges||[]).map(function(b){return S('badge_'+b);}).join(L==='zh'?'；':'; '));det.appendChild(g);d.appendChild(det);
    list.appendChild(d);});
   if(!(D.rows||[]).length&&!q)list.appendChild(E('p','muted',S('list_empty')));
@@ -967,13 +1026,16 @@ function render(){
  sb.oninput=function(){Q=sb.value;draw();};draw();
  m.appendChild(E('h2',null,S('cards_title')));
  if(!(D.cards||[]).length){m.appendChild(E('p','muted',S('no_cards')));}else{m.appendChild(E('p','small',S('cards_intro')));}
+ var colon=L==='zh'?'：':': ';
  (D.cards||[]).forEach(function(c){var a=A[c.n]||{};var d=E('div','cardq');var hd=E('div','head');
   hd.appendChild(E('span','rank','['+c.n+']'));hd.appendChild(E('span','name',nm(c)));
   hd.appendChild(E('span','muted small',[c.ticker,c.rank?fmt(S('card_rank'),{rank:c.rank}):S('card_not_listed')].filter(Boolean).join(' · ')));
   if(c.edge)hd.appendChild(E('span','badge',S('badge_edge')));d.appendChild(hd);
   if(sub(c))d.appendChild(E('div','small muted',sub(c)));
-  var why=L==='en'?(c.why_en||c.why_zh):c.why_zh;if(why)d.appendChild(E('div','small',S('card_why')+': '+why));
-  if(c.what)d.appendChild(E('div','small',S('card_what')+': '+c.what));
+  if(L==='en'&&c.why_en)d.appendChild(E('div','small',S('card_why')+colon+c.why_en));
+  else if(L==='en'&&c.why_zh)d.appendChild(trLine('small',S('card_why')+colon,c.why_zh,c.why_zh_tr,c.why_zh_x));
+  else if(c.why_zh)d.appendChild(E('div','small',S('card_why')+colon+c.why_zh));
+  if(c.what)d.appendChild(trLine('small',S('card_what')+colon,c.what,c.what_tr,c.what_x));
   d.appendChild(quote(c.quote));d.appendChild(E('div','small muted',S('card_explain')));
   var bt=E('div','btns');[['yes','yes'],['no','no'],['?','unsure']].forEach(function(p){var b=E('button',a.v===p[0]?'on':null,S(p[1]));
    b.onclick=function(){A[c.n]={v:p[0],chip:null};render();};bt.appendChild(b);});
@@ -987,13 +1049,13 @@ function render(){
   var SK={contradicted:'st_contradicted',skipped_budget:'st_skipped_budget',failed:'st_failed',uncertain:'st_failed',no_excerpt:'st_no_excerpt',insufficient:'st_insufficient'};
   var groups=D.unverified_groups||[];var byKey={};D.unverified.forEach(function(u){var k=SK[u.status]||'st_other';(byKey[k]=byKey[k]||[]).push(u);});
   if(!groups.length)groups=Object.keys(byKey).map(function(k){return {key:k,n:byKey[k].length};});
-  groups.forEach(function(gr){var p=E('p','small');p.appendChild(tag('gap'));p.appendChild(document.createTextNode(fmt(S('unverified_group'),{n:gr.n,why:S(gr.key)})));ud.appendChild(p);
-   var us=byKey[gr.key]||[];if(us.length)ud.appendChild(E('div','small muted names',us.map(function(u){return nm(u)+(u.ticker?' '+u.ticker:'');}).join(L==='zh'?'、':', ')+(us.length<gr.n?' …':'')));});
+  groups.forEach(function(gr){var p=E('p','small');p.appendChild(tag('gap'));p.appendChild(T(fmt(S('unverified_group'),{n:gr.n,why:S(gr.key)})));ud.appendChild(p);
+   var us=byKey[gr.key]||[];if(us.length)ud.appendChild(E('div','small muted names',us.map(function(u){return nmFull(u)+(u.ticker?' '+u.ticker:'');}).join(L==='zh'?'、':', ')+(us.length<gr.n?' …':'')));});
   m.appendChild(ud);}
  if((D.excluded||[]).length){m.appendChild(E('h2',null,fmt(S('excluded_title'),{n:D.excluded.length})));
-  D.excluded.forEach(function(x){var p=E('div','small');p.appendChild(tag('user'));p.appendChild(document.createTextNode(nm(x)+' '+(x.ticker||'')));m.appendChild(p);});}
+  D.excluded.forEach(function(x){var p=E('div','small');p.appendChild(tag('user'));p.appendChild(T(nmFull(x)+' '+(x.ticker||'')));m.appendChild(p);});}
  if((D.gaps||[]).length){m.appendChild(E('h2',null,S('gaps_title')));D.gaps.forEach(function(g){var p=E('p','small');p.appendChild(tag('gap'));
-  p.appendChild(document.createTextNode(L==='en'?g.text_en:g.text_zh));m.appendChild(p);});}
+  p.appendChild(T(L==='en'?g.text_en:g.text_zh));m.appendChild(p);});}
  m.appendChild(E('footer',null,fmt(S('footer'),{run:D.run_id,deck:D.deck_id||'-',ver:D.version_tool})));
  document.body.className=(D.cards||[]).length?'hasbar':'';if(!(D.cards||[]).length)return;
  var bar=E('div','bar');var bi=E('div','in');bi.appendChild(E('span','small lbl',S('bar_label')));var ta=E('textarea');ta.readOnly=true;ta.rows=2;
@@ -1060,19 +1122,19 @@ def _filled_by(con, run_id: str) -> int:
 
 
 def render_page(data: dict[str, Any]) -> str:
-    """The HTML of the page for `data` (build_page_data)."""
-    lang = "en" if data.get("lang") == "en" else "zh-CN"
-    title = f"{STRINGS['en' if lang == 'en' else 'zh']['title']}"
+    """The HTML of the page for `data` (build_page_data), in the data's one language."""
     import html as _html
-    no_js = STRINGS["en" if lang == "en" else "zh"]["no_js"]
+    lg = "en" if data.get("lang") == "en" else "zh"
+    S = STRINGS[lg]
+    title = _html.escape(f"{S['title']} · {data.get('headline') or data.get('idea') or ''}", quote=False)
     text = _html.escape(render_text(data), quote=False)
     return ("<!DOCTYPE html>\n"
-            f'<html lang="{lang}">\n<head>\n<meta charset="utf-8">\n'
+            f'<html lang="{"en" if lg == "en" else "zh-CN"}">\n<head>\n<meta charset="utf-8">\n'
             f'<meta http-equiv="Content-Security-Policy" content="{CSP}">\n'
             '<meta name="referrer" content="no-referrer">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
             f"<title>{title}</title>\n<style>{CSS}</style>\n</head>\n<body>\n"
-            f'<div id="app"><noscript><p>{no_js}</p><pre class="plain">{text}</pre></noscript></div>\n'
+            f'<div id="app"><noscript><p>{S["no_js"]}</p><pre class="plain">{text}</pre></noscript></div>\n'
             f'<script type="application/json" id="data">{_json_for_script(data)}</script>\n'
             f"<script>{JS}</script>\n</body>\n</html>\n")
 
@@ -1110,10 +1172,52 @@ def _local_names(con, sids: list[str]) -> dict[str, str]:
     return out
 
 
+def _tw_names(con, sids: list[str]) -> dict[str, str]:
+    """security_id -> the official Chinese short name (公司簡稱, e.g. 台積電; else the full name without 股份有限公司) of
+    the Taiwan lines among `sids`, from the MOPS basic-data payloads sync-mops stored (their aux_batch manifests);
+    {} when none was fetched."""
+    from .sources import mops
+    tw = sorted({s for s in sids if str(s).split(":", 1)[0] in mops.TW_VENUES})
+    if not tw:
+        return {}
+    code_of = {sid: str(code) for sid, code in con.execute(
+        "SELECT security_id, id_value FROM identifiers WHERE id_type = ? AND list_contains(?::VARCHAR[], security_id)",
+        [mops.ID_TYPE, tw]).fetchall()}
+    want = set(code_of.values())
+    raw: dict[str, str] = {}
+    for (path,) in con.execute(
+            "SELECT raw_path FROM snapshots WHERE source_id = ? AND kind = 'aux_batch' AND raw_path IS NOT NULL "
+            "ORDER BY fetched_at DESC", [mops.BASIC_SOURCE_ID]).fetchall():
+        if len(raw) == len(want):
+            break
+        try:
+            entries = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for e in entries if isinstance(entries, list) else []:
+            co = str((e or {}).get("co_id") or "")
+            if co in want and co not in raw and str(e.get("kind") or "").startswith("basic-") and e.get("raw_path"):
+                raw[co] = str(e["raw_path"])
+    names: dict[str, str] = {}
+    for co, rp in raw.items():
+        try:
+            short, full = mops.basic_names(json.loads(Path(rp).read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+        n = short or (re.sub(r"股份有限公司$|有限公司$", "", full) if full else None)
+        if n:
+            names[co] = n
+    return {sid: names[code] for sid, code in code_of.items() if code in names}
+
+
+LOOKUP_WAIT_S = 30.0      # how long a page build waits for a busy store before giving up (store.StoreLocked)
+
+
 def _store_lookups(cfg, result: dict[str, Any], deck: dict[str, Any] | None = None
                    ) -> tuple[dict[str, str], dict[str, str], dict[str, Any], dict[str, str]]:
     """(company_key -> description text, security_id -> country, lineage, security_id -> local short name) from one
-    short read-only session; empty when the store is busy or missing (the page still renders)."""
+    short read-only session; empty when the store is missing or has an old schema (the page still renders).
+    store.StoreLocked when the store stays busy (the caller decides: page_data)."""
     from . import screen, store
     listed = (list(result.get("rows") or [])[:MAX_ROWS] + list(result.get("unverified") or [])[:MAX_UNVERIFIED]
               + list(result.get("excluded_by_user") or []))
@@ -1129,7 +1233,7 @@ def _store_lookups(cfg, result: dict[str, Any], deck: dict[str, Any] | None = No
     if not Path(cfg.db_path).exists():
         return descs, countries, lineage, local
     try:
-        with store.session(cfg, read_only=True, wait_s=30.0) as con:
+        with store.session(cfg, read_only=True, wait_s=LOOKUP_WAIT_S) as con:
             if keys:
                 by: dict[str, list[tuple[str, str, bool]]] = {}
                 for ck, src, text in con.execute(
@@ -1147,6 +1251,8 @@ def _store_lookups(cfg, result: dict[str, Any], deck: dict[str, Any] | None = No
                     [sorted(set(sids))]).fetchall() if c}
             with contextlib.suppress(Exception):         # an unreadable list: English names only
                 local = _local_names(con, shown)
+            with contextlib.suppress(Exception):         # Taiwan: the MOPS short names (公司簡稱)
+                local.update({k: v for k, v in _tw_names(con, shown).items() if k not in local})
             run, n = result.get("run_id"), 1
             prev = (result.get("params") or {}).get("from_run")
             lineage["prev_run_id"] = prev
@@ -1162,10 +1268,58 @@ def _store_lookups(cfg, result: dict[str, Any], deck: dict[str, Any] | None = No
                 except ValueError:
                     prev = None
             lineage["version"] = n
-    except Exception:  # noqa: BLE001 - locked / old schema: the page renders without these extras
+    except store.StoreLocked:
+        raise
+    except Exception:  # noqa: BLE001 - old schema: the page renders without these extras
         pass
     lineage["answers"] = int(((result.get("calibration") or {}).get("answers")) or 0)
     return descs, countries, lineage, local
+
+
+def with_translations(cfg, data: dict[str, Any], *, strict: bool = False) -> dict[str, Any]:
+    """The page data with the stored agent translations of its foreign texts attached (jevscreen.translations);
+    unchanged when the store has none. A store that stays busy: store.StoreLocked when `strict`, else the data is
+    returned untranslated with data['store_busy'] = True (write_page then keeps or carries the earlier page's)."""
+    from . import store, translations
+    shas = translations.needed(data)
+    if not shas or not Path(cfg.db_path).exists():
+        return data
+    try:
+        with store.session(cfg, read_only=True, wait_s=LOOKUP_WAIT_S) as con:
+            tr = translations.lookup(con, shas, data.get("lang") or "zh")
+    except store.StoreLocked:
+        if strict:
+            raise
+        data["store_busy"] = True
+        return data
+    except Exception:  # noqa: BLE001 - old schema: the originals show, marked not translated
+        return data
+    return translations.apply(data, tr)
+
+
+def card_translations(cfg, deck: dict[str, Any] | None, lang: str, max_out: int | None = None
+                      ) -> dict[int, dict[str, str | None]]:
+    """card n -> {'what', 'quote'}: the stored agent translations into `lang` of a card's foreign texts (the same
+    texts the page shows), for the `cards` printout. Empty when there are none or the store is busy."""
+    cards, _chips = _cards(deck, max_out, lang)
+    if not cards:
+        return {}
+    for c in cards:
+        c["name_zh"] = c.get("name")         # the names are not printed from here
+    data = with_translations(cfg, {"lang": "en" if lang == "en" else "zh", "cards": cards})
+    return {int(c["n"]): {"what": c.get("what_tr"), "quote": (c.get("quote") or {}).get("text_tr")}
+            for c in data.get("cards") or [] if c.get("what_tr") or (c.get("quote") or {}).get("text_tr")}
+
+
+def read_page_data(path: str | Path) -> dict[str, Any] | None:
+    """The data block of a written page (None when missing or unreadable)."""
+    try:
+        html = Path(path).read_text(encoding="utf-8")
+        m = re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S)
+        data = json.loads(m.group(1)) if m else None
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def stable_path(cfg, idea: str) -> Path:
@@ -1202,6 +1356,38 @@ def _newest_for_stable(cfg, result: dict[str, Any]) -> bool:
     return str(result.get("started_at") or "") >= str(owner.get("started_at") or "")
 
 
+def page_data(cfg, result: dict[str, Any], deck: dict[str, Any] | None, *, lang: str = "zh",
+              extra: dict[str, Any] | None = None, strict: bool = False) -> dict[str, Any]:
+    """The page data of a run with everything the store adds (descriptions, countries, lineage, official Chinese
+    names, the idea's totals, the agent translations), without writing anything. A store that stays busy:
+    store.StoreLocked when `strict` (the export must not work from a partial page), else the page without those
+    extras and data['store_busy'] = True."""
+    from . import store
+    busy = False
+    try:
+        descs, countries, lineage, local = _store_lookups(cfg, result, deck)
+    except store.StoreLocked:
+        if strict:
+            raise
+        busy = True
+        descs, countries, local = {}, {}, {}
+        lineage = {"version": 1, "prev_run_id": None,
+                   "answers": int(((result.get("calibration") or {}).get("answers")) or 0)}
+    ex = dict(extra or {})
+    ex.setdefault("has_sec_key", bool(cfg.sec_user_agent()))
+    ex.setdefault("ondemand", ((result.get("layers") or {}).get("fetch")))   # the on-demand fetch, if one ran
+    if "totals" not in ex and result.get("idea"):
+        with contextlib.suppress(Exception):   # the idea's cumulative cost and time (quickstart.idea_totals)
+            from . import quickstart
+            ex["totals"] = quickstart.idea_totals(cfg, result["idea"], wait_s=5.0)
+    data = build_page_data(result, deck, lang=lang, lineage=lineage, descriptions=descs, country_of=countries,
+                           extra=ex, local_names=local)
+    if busy:
+        data["store_busy"] = True
+        return data
+    return with_translations(cfg, data, strict=strict)
+
+
 def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str, Any] | None, *, lang: str = "zh",
                extra: dict[str, Any] | None = None, stable: bool = True,
                warn: Callable[[str], None] | None = None) -> tuple[Path | None, dict[str, Any] | None]:
@@ -1212,24 +1398,29 @@ def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str,
         (warn or (lambda m: print(m, file=sys.stderr)))(msg)
     try:
         from . import ops
-        descs, countries, lineage, local = _store_lookups(cfg, result, deck)
-        ex = dict(extra or {})
-        ex.setdefault("has_sec_key", bool(cfg.sec_user_agent()))
-        ex.setdefault("ondemand", ((result.get("layers") or {}).get("fetch")))   # the on-demand fetch, if one ran
-        if "totals" not in ex and result.get("idea"):
-            with contextlib.suppress(Exception):   # the idea's cumulative cost and time (quickstart.idea_totals)
-                from . import quickstart
-                ex["totals"] = quickstart.idea_totals(cfg, result["idea"], wait_s=5.0)
-        data = build_page_data(result, deck, lang=lang, lineage=lineage, descriptions=descs, country_of=countries,
-                               extra=ex, local_names=local)
+        from . import translations
+        out = Path(out_dir)
+        path = out / "page.html"
+        data = page_data(cfg, result, deck, lang=lang, extra=extra)
+        busy = bool(data.pop("store_busy", False))
+        if busy:
+            # the store stayed busy: never replace a page with a poorer one (no descriptions, no translations).
+            # This run's page, when written before, stays as it is; a new page carries the translations the
+            # idea's page already showed.
+            prev = read_page_data(path) if path.exists() else None
+            if prev is not None:
+                say("warning: result page not rebuilt: the database is busy (run the same command again later)")
+                prev["store_busy"] = True
+                return path, prev
+            old = read_page_data(stable_path(cfg, result["idea"])) if result.get("idea") else None
+            if old is not None and old.get("lang") == data.get("lang"):
+                translations.apply(data, translations.carried(old))
         html = render_page(data)
         hits = ops.scan_secrets(cfg, html)
         if hits:
             say(f"warning: result page not written: it would contain a configured secret ({', '.join(hits)})")
             return None, None
-        out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
-        path = out / "page.html"
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(html, encoding="utf-8")
         os.replace(tmp, path)
@@ -1242,6 +1433,8 @@ def write_page(cfg, out_dir: str | Path, result: dict[str, Any], deck: dict[str,
             owner = _stable_owner_path(cfg, result["idea"])
             owner.write_text(json.dumps({"run_id": result.get("run_id"), "started_at": result.get("started_at")}),
                              encoding="utf-8")
+        if busy:
+            data["store_busy"] = True
         return path, data
     except Exception as e:  # noqa: BLE001 - a page failure is a warning, never an exit code
         say(f"warning: result page not written ({type(e).__name__}: {str(e)[:200]})")
@@ -1296,22 +1489,29 @@ def summary_of(data: dict[str, Any] | None, deck: dict[str, Any] | None) -> dict
 
 
 def top_rows(data: dict[str, Any] | None, n: int = 10) -> list[dict[str, Any]]:
-    """The first n rows for the agent to relay in chat (quickstart JSON 'top'): 'name' is the name a reader of the
-    page's language knows (the Chinese short name on a Chinese page when the store has one), 'name_en' the English
-    one; 'excerpt_mentions_idea' false = none of the text the AI read has the idea's words (say so, it is a gap; null:
-    nothing to check); 'edge' borderline; 'user' the user answered this company; 'verdict_from_user' it is listed
-    only because of that answer (the AI did not confirm it from the text)."""
+    """The first n rows for the agent to relay in chat (quickstart JSON 'top'), in the page's language: 'name' is the
+    name the page shows (on a Chinese page the official Chinese short name, else the agent's translation, else the
+    English name), 'name_en' the English one; 'one_line' what the page shows (the agent's translation when there is
+    one: 'one_line_translated' true, the verbatim text in 'one_line_original'; 'one_line_needs_translation' true when
+    it is still in another language); 'excerpt_mentions_idea' false = none of the text the AI read has the idea's
+    words (say so, it is a gap; null: nothing to check); 'edge' borderline; 'user' the user answered this company;
+    'verdict_from_user' it is listed only because of that answer (the AI did not confirm it from the text)."""
     lang = (data or {}).get("lang") or "zh"
     out = []
     for r in ((data or {}).get("rows") or [])[:n]:
         v = r.get("verdict") or "partial"
         q = r.get("quote") or {}
         out.append({"rank": r.get("rank"), "name": display_name(r, lang), "name_en": r.get("name"),
-                    "name_zh": r.get("name_zh"), "ticker": r.get("ticker"), "country": r.get("country"),
+                    "name_zh": r.get("name_zh"), "name_translated": bool(lang == "zh" and not r.get("name_zh")
+                                                                       and r.get("name_tr")),
+                    "ticker": r.get("ticker"), "country": r.get("country"),
                     "country_zh": r.get("country_zh"),
                     "verdict_words_zh": STRINGS["zh"].get(f"verdict_{v}", v),
                     "verdict_words_en": STRINGS["en"].get(f"verdict_{v}", v),
-                    "evidence_kind": r.get("evidence"), "one_line": r.get("one_line"),
+                    "evidence_kind": r.get("evidence"), "one_line": shown_text(r, "one_line"),
+                    "one_line_original": r.get("one_line") if r.get("one_line_tr") else None,
+                    "one_line_translated": bool(r.get("one_line_tr")),
+                    "one_line_needs_translation": bool(r.get("one_line_x") and not r.get("one_line_tr")),
                     "excerpt_mentions_idea": q.get("mentions"), "edge": bool(r.get("edge")),
                     "user": bool(r.get("user")), "verdict_from_user": bool(r.get("user_only"))})
     return out

@@ -236,8 +236,8 @@ class TestSelectCards(unittest.TestCase):
         self.assertIn("g只有大类", lines[1])
         self.assertIn("[2] 北辰信安 309352 · 现排第", md)
         self.assertIn("  做什么：北辰信安 makes software.（公司简介，仅供个人使用）", md)
-        self.assertIn("  年报：「北辰信安为政府客户提供终端安全管理与身份认证产品。」（CNINFO 年度报告，2026 年发布）", md)
-        self.assertIn("（SEC 10-K 年报，2026 年发布）", md)
+        self.assertIn("  年报：「北辰信安为政府客户提供终端安全管理与身份认证产品。」（巨潮资讯 · 年度报告，2026 年发布）", md)
+        self.assertIn("（美国年报 10-K，2026 年发布）", md)
         self.assertIn("  系统：明确符合 56%（相关 42%，读 3 次）", md)
         self.assertIn("  缺口：年报摘录没写到AI agent", md)
         self.assertIn(calib.LICENCE_GRAY_ZH, md)
@@ -1080,9 +1080,9 @@ class TestCardFixes(unittest.TestCase):
                 "verdict": {"label": "explicit", "p_explicit": 0.56, "p_partial": 0.42, "reads": [0.98]},
                 "why_zh": "w"}
         md = calib.render_cards_md({"idea": "x", "chips": {"no": {}}, "cards": [card]})
-        self.assertIn("  年报：「q」（CNINFO 年报摘要，2026 年发布）", md)
-        for src, form, zh in (("SEC", "10-K", "SEC 10-K 年报"), ("EDINET", "有価証券報告書", "EDINET 有价证券报告书（年报）"),
-                              ("DART", "사업보고서", "DART 事业报告（年报）")):
+        self.assertIn("  年报：「q」（巨潮资讯 · 年报摘要，2026 年发布）", md)
+        for src, form, zh in (("SEC", "10-K", "美国年报 10-K"), ("EDINET", "有価証券報告書", "日本有价证券报告书"),
+                              ("DART", "사업보고서", "韩国事业报告（年报）")):
             card["quote"].update(source=src, form=form)
             self.assertIn(f"（{zh}，2026 年发布）", calib.render_cards_md({"idea": "x", "chips": {"no": {}},
                                                                           "cards": [card]}))

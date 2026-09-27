@@ -646,6 +646,24 @@ def parse_basic(payload: Any) -> tuple[dict | None, str]:
     return (info, "basic") if main else (None, "basic_no_main_business")
 
 
+def basic_names(payload: Any) -> tuple[str | None, str | None]:
+    """(公司簡稱, 公司名稱) of a t05st03 JSON payload (the official short and full Chinese names), None when absent
+    or hidden. The result page shows the short name on a Chinese page (page._tw_names)."""
+    result = payload.get("result") if isinstance(payload, Mapping) else None
+    if not isinstance(result, Mapping):
+        return None, None
+
+    def val(k: str) -> str | None:
+        v = result.get(k)
+        if isinstance(v, Mapping):
+            if v.get("isHidden"):
+                return None
+            v = v.get("value")
+        s = re.sub(r"\s+", "", str(v)) if isinstance(v, str) else ""
+        return s or None
+    return val("companyAbbreviation"), val("companyName")
+
+
 def fetch_basic(client: Any, code: str, *, on_request: Callable[[str], None] | None = None) -> dict:
     """MOPS basic data of one company: {'status': 'ok' | 'no_basic' | 'error', 'http_status', 'note', 'info', 'body',
     'refused'}. 'no_basic' only for a code-200 answer without (or with a hidden) mainBusiness; a JSON envelope with

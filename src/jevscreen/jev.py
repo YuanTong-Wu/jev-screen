@@ -1,11 +1,29 @@
-"""Small paid Jev client (OpenRouter `typesafe/jev-1.13`) with packing, a request ledger and a hard budget.
+"""Small paid Jev client with packing, a request ledger and a hard budget. Jev is reached through one of three
+providers, all at the same price (US$0.042 per million input tokens, output free):
+
+- 'typesafe': TypeSafe's official API, POST https://api.typesafe.ai/v1/systemone, model 'jev-1.13.0' (an exact
+  version; never 'jev-latest', so the model can never change under us silently). Key: TYPESAFE_API_KEY.
+- 'openrouter': POST https://openrouter.ai/api/alpha/decisions, model 'typesafe/jev-1.13'. Key: OPENROUTER_API_KEY.
+- 'vercel': Vercel AI Gateway's TypeSafe-compatible API, POST https://ai-gateway.vercel.sh/typesafe/v1/systemone,
+  model 'typesafe-ai/jev' (the only id Vercel offers for Jev: it names no version). Key: AI_GATEWAY_API_KEY.
+
+All three take the same request (model, state, questions) and answer in TypeSafe's shape (model, answers, usage
+{input_tokens, output_tokens}). normalize_response() is the one place that evens out the differences: OpenRouter
+reports usage.cost, Vercel reports provider_metadata.gateway.cost (a decimal string), TypeSafe reports no cost (the
+cost is then usage.input_tokens x the list price, which is what TypeSafe bills). The active provider:
+JEVSCREEN_JEV_PROVIDER when set (typesafe | openrouter | vercel), else the human's saved choice (<home>/jev_provider,
+written by `jevscreen keys set <provider>` - the last Jev key set wins - and by `jevscreen keys use <provider>`), else
+the first of openrouter, typesafe, vercel whose key is configured (OpenRouter first: answers already cached there stay
+valid), else openrouter (so a missing key is reported against the long-standing default). A screen resolves it once
+and hands it to both layers' clients.
 
 Ported from the earlier research tools (outputs/jev-research/jev.py, packed_screen.py, batch_screen.py):
 
 - Payload: several issuers per request under `state.items`, one choice question per item. Every question starts with
   an isolation prefix ("This question is ONLY about state.items[i]...") and its `state.issuer` / `state.text`
   references are rewritten to `state.items[i].*`, so other items are never evidence.
-- Response validation is strict at the envelope (model name, answers object, usage counts) and per answer
+- Response validation is strict at the envelope (model name = the provider's model id, answers object, usage counts;
+  after normalize_response) and per answer
   (type, labels subset of the criteria, finite probabilities in [0, 1] summing to 1 +- 0.01, choice = argmax).
   A bad answer fails only its own item; the rest of the packet stands.
 - Ledger (`jev_requests`): one row per physical send. request_id = sha256(canonical payload)[:24] + '-' + a random
@@ -24,6 +42,12 @@ Ported from the earlier research tools (outputs/jev-research/jev.py, packed_scre
   i.e. fresh draws that are then cached like any other answer. The payload never carries `read`; jev_items stores it
   as read_index. Jev's per-answer `confidence` is validated, returned with each result and stored (jev_items.confidence)
   but is not used in any decision.
+- Providers and the cache: item_key is per provider and model. OpenRouter's keys hash exactly what they hashed
+  before providers existed ({"model": "typesafe/jev-1.13", ...}), so every answer already paid for stays valid; the
+  other providers add "provider" to the hashed dict. A switch of provider therefore never reuses or mixes answers
+  (their payloads differ at least in the model id, so they are never byte-identical): the first screen after a switch
+  reads again and pays again. The ledger records the provider of every send (jev_requests.provider; NULL on rows
+  written before, which were all OpenRouter).
 - One process at a time: classify holds guard.budget_lock(cfg, 'openrouter-jev') from the cache lookup to the last
   ledger write, so two concurrent runs never both pay for the same items. A second process gets JevBusy at once.
 - Budget: accounted spend = provider usage.cost when present, else a token estimate. Each in-flight request holds a
@@ -35,9 +59,10 @@ Ported from the earlier research tools (outputs/jev-research/jev.py, packed_scre
   that; the class exists for callers that want to turn it into an exception).
 - Errors: missing key -> JevUnavailable before any request or ledger write. HTTP 401/402/403 -> stop dispatching,
   let in-flight requests finish and be recorded, then raise JevUnavailable carrying the per-item results already
-  completed (e.results). 429/500/503 -> at most 3 retries with backoff, then 'failed'. 502/504/520/524 (gateway or
+  completed (e.results). 429/500/503/529 (529 = TypeSafe overloaded) -> at most 3 retries with exponential backoff
+  that honours Retry-After / retry-after-ms (a longer wait is cut to 10 s, never ignored), then 'failed'. 502/504/520/524 (gateway or
   upstream timeout: the model call may have run and been billed) -> no retry, 'uncertain', reservation charged.
-  Every attempt's HTTP status is kept in the error text. The key is read once (cfg.openrouter_key()) at the first
+  Every attempt's HTTP status is kept in the error text. The key is read once (cfg.jev_key(provider)) at the first
   real send and never appears in exceptions, ledger rows, logs or saved files (error bodies are redacted before they
   are cut, and a trailing partial copy of the key is dropped).
 - Ctrl-C / SIGTERM / an unexpected error during dispatch: halt, drain in-flight requests (bounded), write their
@@ -48,7 +73,11 @@ Cost calibration (measured 2026-09-26 on 10,859 journaled requests of the old pr
 tests/fixtures/jev_calibration.json): provider input tokens ~= 235.4 per request + 31.4 per question
 + 0.1953 per ASCII char + 1.0888 per non-ASCII char of json.dumps(questions) + json.dumps(state)
 (ensure_ascii=False). Mean abs error 0.16 %, max 1.1 %, over pack sizes 1/4/8, English and Chinese question banks.
-Price: US$0.042 per million input tokens, output US$0 (usage.cost == input_tokens x 0.042e-6 on every request).
+Price: US$0.042 per million input tokens, output US$0 (usage.cost == input_tokens x 0.042e-6 on every request), the
+same list price at TypeSafe, OpenRouter and Vercel AI Gateway. The token model was measured on OpenRouter only; it is
+used for every provider on the assumption that the same model counts the same tokens (not yet measured on TypeSafe or
+Vercel). If one of them counts differently, the observed actual/estimate ratio scales the reservations after the first
+priced answer, so the budget still holds.
 """
 from __future__ import annotations
 
@@ -57,6 +86,7 @@ import hashlib
 import http.client
 import json
 import math
+import os
 import re
 import socket
 import threading
@@ -72,8 +102,110 @@ from typing import Any
 from . import guard, store
 from .config import Config, redact, secret_variants
 
-MODEL = "typesafe/jev-1.13"
-ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
+PROVIDER_ENV = "JEVSCREEN_JEV_PROVIDER"
+
+
+@dataclass(frozen=True)
+class Provider:
+    name: str                  # typesafe | openrouter | vercel (= its keys.KEYS name)
+    label: str                 # shown to humans (English text)
+    label_zh: str              # shown to humans in Chinese text
+    endpoint: str
+    model: str                 # the model id sent in every payload and required back in every response
+    pinned: bool               # True when `model` names one exact Jev version
+    version_note: str          # one line on which Jev version this id serves
+    signup_url: str
+    key_url: str
+    credits_url: str
+
+
+PROVIDERS: dict[str, Provider] = {
+    "typesafe": Provider(
+        "typesafe", "TypeSafe (official API)", "TypeSafe 官方", "https://api.typesafe.ai/v1/systemone", "jev-1.13.0", True,
+        "jev-1.13.0, pinned (the alias jev-latest is never used)",
+        "https://console.typesafe.ai", "https://console.typesafe.ai/keys", "https://console.typesafe.ai"),
+    "openrouter": Provider(
+        "openrouter", "OpenRouter", "OpenRouter", "https://openrouter.ai/api/alpha/decisions", "typesafe/jev-1.13", True,
+        "Jev 1.13 (OpenRouter's versioned id typesafe/jev-1.13)",
+        "https://openrouter.ai", "https://openrouter.ai/settings/keys", "https://openrouter.ai/settings/credits"),
+    "vercel": Provider(
+        "vercel", "Vercel AI Gateway", "Vercel AI Gateway", "https://ai-gateway.vercel.sh/typesafe/v1/systemone", "typesafe-ai/jev", False,
+        "typesafe-ai/jev: Vercel's only id for Jev, which names no version (Vercel decides which Jev it serves)",
+        "https://vercel.com/signup",
+        "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys&title=AI+Gateway+API+Keys",
+        "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway&title=Go+to+AI+Gateway"),
+}
+PROVIDER_ORDER = ("typesafe", "openrouter", "vercel")   # the order they are offered to the human in
+# Auto-detect order when several keys are configured and the human saved no choice: OpenRouter first, because every
+# answer paid for before the other providers existed is cached under OpenRouter (a silent switch would pay again).
+AUTO_ORDER = ("openrouter", "typesafe", "vercel")
+DEFAULT_PROVIDER = "openrouter"                         # when no key is configured at all
+# The long-standing defaults (OpenRouter): item keys of read 0 hash this model id, so the cache stays valid.
+MODEL = PROVIDERS["openrouter"].model
+ENDPOINT = PROVIDERS["openrouter"].endpoint
+
+
+class ProviderError(ValueError):
+    """JEVSCREEN_JEV_PROVIDER names no known provider."""
+
+
+def provider_named(name: str | None) -> Provider:
+    if isinstance(name, Provider):
+        return name
+    key = (name or "").strip().lower()
+    if key not in PROVIDERS:
+        raise ProviderError(f"{PROVIDER_ENV}={name!r} is not a Jev provider; use one of: {', '.join(PROVIDER_ORDER)}")
+    return PROVIDERS[key]
+
+
+def configured_providers(cfg: Config) -> list[str]:
+    """Providers whose key is present (by stat / environment only: no key value is read), in AUTO_ORDER."""
+    from . import keys
+    return [n for n in AUTO_ORDER if keys.presence(cfg, n).get("configured")]
+
+
+def resolve_provider(cfg: Config) -> tuple[Provider, str]:
+    """(active provider, why): 'explicit' (JEVSCREEN_JEV_PROVIDER, which wins even when its key is missing),
+    'saved' (the human's choice saved by `keys set` / `keys use`, which also wins when its key is missing: the key
+    step then asks for that provider's key and offers the others), 'key' (the first of AUTO_ORDER with a configured
+    key) or 'default' (no key at all: OpenRouter). Raises ProviderError for an unknown JEVSCREEN_JEV_PROVIDER."""
+    from . import keys
+    explicit = os.environ.get(PROVIDER_ENV, "").strip()
+    if explicit:
+        return provider_named(explicit), "explicit"
+    saved = keys.saved_provider(cfg)
+    if saved:
+        return PROVIDERS[saved], "saved"
+    found = configured_providers(cfg)
+    if found:
+        return PROVIDERS[found[0]], "key"
+    return PROVIDERS[DEFAULT_PROVIDER], "default"
+
+
+def active_provider(cfg: Config) -> Provider:
+    return resolve_provider(cfg)[0]
+
+
+def paid_via(cfg: Config, provider: str) -> dict[str, Any] | None:
+    """What the ledger says was paid through `provider` ({'requests', 'usd'}; rows before providers existed count as
+    OpenRouter), or None when there is no store or it cannot be read right now (never waits, never creates it). Used
+    to size the re-pay notice of a provider switch: answers are cached per provider."""
+    import duckdb
+    db = cfg.db_path
+    if not db.exists():
+        return None
+    try:
+        con = duckdb.connect(str(db), read_only=True)
+    except Exception:  # noqa: BLE001 - locked by a running screen, or not a store: no estimate
+        return None
+    try:
+        n, usd = con.execute("SELECT count(*), coalesce(sum(cost_usd), 0) FROM jev_requests WHERE status = 'ok' "
+                             "AND coalesce(provider, 'openrouter') = ?", [provider]).fetchone()
+    except Exception:  # noqa: BLE001 - an old store without the ledger or the provider column
+        return None
+    finally:
+        con.close()
+    return {"requests": int(n or 0), "usd": round(float(usd or 0.0), 4)}
 
 INPUT_USD_PER_MILLION = 0.042
 OUTPUT_USD_PER_MILLION = 0.0
@@ -93,7 +225,7 @@ MAX_REQUEST_TOKENS = 30_000            # estimated input tokens per request (old
 MAX_RESPONSE_BYTES = 1_000_000
 REQUEST_TIMEOUT_S = 60.0
 MAX_RETRIES = 3                        # 429 / 500 / 503 retries per request
-RETRY_HTTP = frozenset({429, 500, 503})
+RETRY_HTTP = frozenset({429, 500, 503, 529})     # 529 = TypeSafe "temporarily overloaded"
 # Gateway / upstream timeouts: the model call may have run (and been billed) upstream -> uncertain, never retried.
 UNCERTAIN_HTTP = frozenset({502, 504, 520, 524})
 PRICE_DRIFT_WARN = 2.0                 # actual/estimated cost above this -> price_drift_ratio is set
@@ -103,7 +235,7 @@ LOCK_BUDGET = "openrouter-jev"         # guard.budget_lock name: one paying proc
 ERROR_EXCERPT_CHARS = 300
 MAX_RETRY_AFTER_S = 10.0
 ERROR_STORM = 5                        # consecutive failed requests -> stop dispatching
-KEY_PLACEHOLDER = "<openrouter-key>"
+KEY_PLACEHOLDER = "<jev-api-key>"
 PROB_SUM_TOLERANCE = 0.01
 
 STATUSES = ("ok", "failed", "uncertain", "skipped_budget", "dry_run")
@@ -193,13 +325,18 @@ def question_read(question: Any) -> int:
     return getattr(question, "read", 0) or 0
 
 
-def item_key(question: Question, issuer: str, text: str) -> str:
-    """Reuse-cache key of one item's answer: model + question (key, instructions, criteria) + cleaned issuer/text.
-    Independent of the packet (position, neighbours), so reordering the universe keeps every cache hit.
+def item_key(question: Question, issuer: str, text: str, provider: Provider | str | None = None) -> str:
+    """Reuse-cache key of one item's answer: provider + model + question (key, instructions, criteria) + cleaned
+    issuer/text. Independent of the packet (position, neighbours), so reordering the universe keeps every cache hit.
+    provider None means OpenRouter. OpenRouter keys hash no provider name (byte-identical to the keys written before
+    providers existed); the others add it, so answers of different providers never share a key.
     "read" enters the hashed dict only when question.read > 0: read-0 keys are byte-identical to the keys written
     before repeated reads existed, so the whole cache stays valid."""
-    fields = {"model": MODEL, "key": question.key, "instructions": question.instructions,
+    prov = provider_named(provider) if provider is not None else PROVIDERS[DEFAULT_PROVIDER]
+    fields = {"model": prov.model, "key": question.key, "instructions": question.instructions,
               "criteria": question.criteria, "issuer": issuer, "text": text}
+    if prov.name != "openrouter":
+        fields["provider"] = prov.name
     read = question_read(question)
     if read > 0:
         fields["read"] = read
@@ -259,12 +396,13 @@ def validate_question(question: Question) -> None:
         raise ValueError("question.read must be an int >= 0")
 
 
-def make_payload(entries: list[tuple[str, str]], question: Question) -> dict:
-    """entries: [(issuer, text)] already cleaned/truncated. One question per item. question.read is never sent."""
+def make_payload(entries: list[tuple[str, str]], question: Question, model: str = MODEL) -> dict:
+    """entries: [(issuer, text)] already cleaned/truncated. One question per item. question.read is never sent.
+    The same payload goes to every provider; only `model` differs (the provider's model id)."""
     questions = {question_id(i, question.key): {"type": "choice", "instructions": item_instructions(question, i),
                                                 "criteria": dict(question.criteria)}
                  for i in range(len(entries))}
-    return {"model": MODEL, "state": {"items": [{"issuer": issuer, "text": text} for issuer, text in entries]},
+    return {"model": model, "state": {"items": [{"issuer": issuer, "text": text} for issuer, text in entries]},
             "questions": questions}
 
 
@@ -313,7 +451,8 @@ def _clean_item(item: Item, max_chars: int) -> tuple[str, str, str | None, str |
 
 def build_packets(items: list[Item], question: Question, *, pack_size: int = 8, max_text_chars: int = MAX_TEXT_CHARS,
                   max_packet_text_bytes: int = MAX_PACKET_TEXT_BYTES,
-                  max_request_tokens: int = MAX_REQUEST_TOKENS) -> tuple[list[Packet], dict[int, str], dict[int, str]]:
+                  max_request_tokens: int = MAX_REQUEST_TOKENS,
+                  model: str = MODEL) -> tuple[list[Packet], dict[int, str], dict[int, str]]:
     """Pack items in order. Returns (packets, notes by position, skip reasons by position)."""
     validate_question(question)
     notes: dict[int, str] = {}
@@ -325,7 +464,7 @@ def build_packets(items: list[Item], question: Question, *, pack_size: int = 8, 
     def close() -> None:
         nonlocal cur, cur_bytes
         if cur:
-            packets.append(_packet(cur, question))
+            packets.append(_packet(cur, question, model))
         cur, cur_bytes = [], 0
 
     for pos, item in enumerate(items):
@@ -339,7 +478,7 @@ def build_packets(items: list[Item], question: Question, *, pack_size: int = 8, 
         if cur and (len(cur) >= pack_size or cur_bytes + nbytes > max_packet_text_bytes):
             close()
         if cur:
-            trial = make_payload([(i, t) for _, i, t in cur] + [(issuer, text)], question)
+            trial = make_payload([(i, t) for _, i, t in cur] + [(issuer, text)], question, model)
             if estimate_payload_tokens(trial) > max_request_tokens:
                 close()
         cur.append((pos, issuer, text))
@@ -348,8 +487,8 @@ def build_packets(items: list[Item], question: Question, *, pack_size: int = 8, 
     return packets, notes, skipped
 
 
-def _packet(entries: list[tuple[int, str, str]], question: Question) -> Packet:
-    payload = make_payload([(issuer, text) for _, issuer, text in entries], question)
+def _packet(entries: list[tuple[int, str, str]], question: Question, model: str = MODEL) -> Packet:
+    payload = make_payload([(issuer, text) for _, issuer, text in entries], question, model)
     digest = payload_sha256(payload)
     tokens = estimate_payload_tokens(payload)
     return Packet(positions=[p for p, _, _ in entries], payload=payload, request_id=digest[:24],
@@ -385,12 +524,13 @@ def model_ok(returned: Any, requested: str = MODEL) -> bool:
     return isinstance(returned, str) and (returned == requested or returned.startswith(requested + "-"))
 
 
-def validate_envelope(data: Any, qids: list[str]) -> tuple[dict, dict]:
+def validate_envelope(data: Any, qids: list[str], model: str = MODEL) -> tuple[dict, dict]:
     """Request-wide checks. Returns (answers, usage) or raises InvalidResponse. Missing answer keys are left to the
-    per-item check (one missing answer must not void the packet); unexpected keys void it (misbinding)."""
+    per-item check (one missing answer must not void the packet); unexpected keys void it (misbinding). The model
+    must be the one requested (a provider that answers with another Jev version fails the whole packet)."""
     if not isinstance(data, dict):
         raise InvalidResponse("top_level_not_object")
-    if not model_ok(data.get("model")):
+    if not model_ok(data.get("model"), model):
         raise InvalidResponse("model_mismatch")
     answers, usage = data.get("answers"), data.get("usage")
     if not isinstance(answers, dict):
@@ -454,10 +594,10 @@ def answer_confidence(answer: Any) -> float | None:
 Parsed = tuple[str | None, dict, str | None, float | None]   # (label, probs, error, confidence) of one qid
 
 
-def parse_response(data: Any, qids: list[str], labels: list[str]) -> tuple[dict, list[Parsed]]:
+def parse_response(data: Any, qids: list[str], labels: list[str], model: str = MODEL) -> tuple[dict, list[Parsed]]:
     """Validate one response. Returns (usage, [(label, probs, error, confidence)] per qid); a failed answer is
     (None, {}, 'invalid_answer:<detail>', None). Envelope errors raise."""
-    answers, usage = validate_envelope(data, qids)
+    answers, usage = validate_envelope(data, qids, model)
     out: list[Parsed] = []
     for qid in qids:
         try:
@@ -466,6 +606,53 @@ def parse_response(data: Any, qids: list[str], labels: list[str]) -> tuple[dict,
         except InvalidResponse as e:
             out.append((None, {}, f"invalid_answer:{e.detail}", None))
     return usage, out
+
+
+def _decimal(v: Any) -> float | None:
+    """A finite number >= 0 from a JSON number or a decimal string ("0.00001155"), else None."""
+    if type(v) in (int, float):
+        f = float(v)
+    elif isinstance(v, str) and re.fullmatch(r"\s*\d+(\.\d+)?([eE][-+]?\d+)?\s*", v):
+        f = float(v)
+    else:
+        return None
+    return f if math.isfinite(f) and f >= 0 else None
+
+
+def normalize_response(provider: Provider | str | None, data: Any) -> Any:
+    """The one place where the providers' answers are made alike, before validation. Returns the canonical shape
+    {model, answers, usage: {input_tokens, output_tokens[, cost]}} (other top-level fields kept); anything that is not
+    an object is returned unchanged (validation then fails it).
+
+    - openrouter: already canonical (usage.cost is OpenRouter's charge).
+    - typesafe: no cost field; accounted_cost() prices usage.input_tokens at the list price, which is TypeSafe's bill.
+    - vercel: usage may come as inputTokens / outputTokens (the gateway's own API) and the charge is
+      provider_metadata.gateway.cost (or providerMetadata.gateway.cost), a decimal string; it becomes usage.cost.
+    A cost field that is present but unreadable is dropped (the tokens price it), never guessed."""
+    prov = provider_named(provider) if provider is not None else PROVIDERS[DEFAULT_PROVIDER]
+    if not isinstance(data, dict) or prov.name == "openrouter":
+        return data
+    out = dict(data)
+    usage = out.get("usage")
+    if isinstance(usage, dict):
+        usage = dict(usage)
+        for snake, camel in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens")):
+            if snake not in usage and camel in usage:
+                usage[snake] = usage.pop(camel)
+        if prov.name == "vercel":
+            meta = out.get("provider_metadata")
+            if not isinstance(meta, dict):
+                meta = out.get("providerMetadata")
+            gw = meta.get("gateway") if isinstance(meta, dict) else None
+            cost = _decimal(gw.get("cost")) if isinstance(gw, dict) else None
+            if cost is not None:
+                usage["cost"] = cost
+            else:
+                usage.pop("cost", None)
+        elif "cost" in usage and _decimal(usage.get("cost")) is None:
+            usage.pop("cost", None)
+        out["usage"] = usage
+    return out
 
 
 def accounted_cost(usage: dict | None, est_cost: float) -> tuple[float, str]:
@@ -486,31 +673,53 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise JevHTTPError(code, f"HTTP {code} redirect rejected; authorization not forwarded")
 
 
-class UrllibTransport:
-    """POST the canonical payload to ENDPOINT. Returns raw response bytes. The key is read once, in prepare()."""
+def _retry_after_s(headers: Any) -> float | None:
+    """Seconds to wait from Retry-After (seconds) or retry-after-ms (milliseconds; TypeSafe's SDK honours it)."""
+    if headers is None:
+        return None
+    try:
+        ms = headers.get("retry-after-ms") or headers.get("Retry-After-Ms")
+        if ms not in (None, ""):
+            return float(ms) / 1000.0
+    except (TypeError, ValueError, AttributeError):
+        pass
+    try:
+        return float(headers.get("Retry-After", ""))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
-    def __init__(self, cfg: Config, *, endpoint: str = ENDPOINT, timeout_s: float = REQUEST_TIMEOUT_S, opener=None):
+
+class UrllibTransport:
+    """POST the canonical payload to the provider's endpoint. Returns raw response bytes. The key is read once, in
+    prepare()."""
+
+    def __init__(self, cfg: Config, *, endpoint: str | None = None, timeout_s: float = REQUEST_TIMEOUT_S, opener=None,
+                 provider: Provider | str | None = None):
         self._cfg = cfg
-        self.endpoint = endpoint
+        self.provider = provider_named(provider) if provider is not None else active_provider(cfg)
+        self.endpoint = endpoint or self.provider.endpoint
         self.timeout_s = timeout_s
         self._opener = opener or urllib.request.build_opener(_NoRedirect())
         self._key: str | None = None
         self._key_lock = threading.Lock()
 
     def __repr__(self) -> str:
-        return f"UrllibTransport(endpoint={self.endpoint!r})"
+        return f"UrllibTransport(provider={self.provider.name!r}, endpoint={self.endpoint!r})"
 
     def prepare(self) -> None:
+        from .config import JEV_KEY_SOURCES
+        name = self.provider.name
         with self._key_lock:
             if self._key is None:
-                key = self._cfg.openrouter_key()
+                key = self._cfg.jev_key(name)
                 if not key:
-                    raise JevUnavailable(self._cfg.openrouter_key_hint())   # names where it looked, never a value
+                    raise JevUnavailable(self._cfg.jev_key_hint(name))   # names where it looked, never a value
                 if len(key) > 4096 or any(ord(c) < 33 or ord(c) > 126 for c in key):
-                    kind, where = self._cfg.openrouter_key_source()
-                    raise JevUnavailable("OpenRouter key malformed (one line of printable ASCII expected); fix "
-                                         + ("OPENROUTER_API_KEY" if kind == "env" else
-                                            "the key file recorded with `jevscreen keys set openrouter --from-file` "
+                    kind, where = self._cfg.jev_key_source(name)
+                    raise JevUnavailable(f"{JEV_KEY_SOURCES[name].label} key malformed (one line of printable ASCII "
+                                         "expected); fix "
+                                         + (JEV_KEY_SOURCES[name].env if kind == "env" else
+                                            f"the key file recorded with `jevscreen keys set {name} --from-file` "
                                             "(it must hold only the key)" if kind == "recorded-file" else str(where)))
                 self._key = key
 
@@ -537,11 +746,7 @@ class UrllibTransport:
                     e.close()
                 except Exception:  # noqa: BLE001
                     pass
-            retry_after = None
-            try:
-                retry_after = float((e.headers or {}).get("Retry-After", ""))
-            except (TypeError, ValueError):
-                retry_after = None
+            retry_after = _retry_after_s(e.headers)
             # Redact the whole body read (up to 2049 bytes) BEFORE cutting it: a cut through the key would leave a
             # partial copy that no longer matches. redact_cut also drops a key fragment at the read limit.
             excerpt = self._clean(body.decode("utf-8", "replace")).replace("\n", " ").strip()
@@ -599,7 +804,8 @@ class RateLimiter:
 
 LEDGER_COLS = ("request_id", "run_id", "layer", "payload_sha256", "model", "items", "questions", "status",
                "http_status", "cost_usd", "cost_basis", "input_tokens", "output_tokens", "sent_at", "completed_at",
-               "response_path", "error")
+               "response_path", "error", "provider")
+# provider was added by store.init's ALTER (NULL on rows written before it: those were all OpenRouter).
 # read_index / confidence were added by store.init's ALTERs (NULL on rows written before them).
 ITEM_COLS = ("item_key", "request_id", "run_id", "layer", "position", "status", "label", "probs_json", "error",
              "created_at", "read_index", "confidence")
@@ -641,7 +847,7 @@ class JevClient:
                  retry_uncertain: bool = False, max_text_chars: int = MAX_TEXT_CHARS,
                  max_packet_text_bytes: int = MAX_PACKET_TEXT_BYTES, max_retries: int = MAX_RETRIES,
                  backoff_s: float = 0.5, reserve_factor: float = 1.25, db_wait_s: float = 60.0,
-                 drain_s: float = DRAIN_S, on_packet=None):
+                 drain_s: float = DRAIN_S, on_packet=None, provider: Provider | str | None = None):
         if not isinstance(budget_usd, (int, float)) or not math.isfinite(budget_usd) or budget_usd < 0:
             raise ValueError("budget_usd must be a finite number >= 0")
         if not 1 <= int(pack_size) <= 32:
@@ -654,6 +860,17 @@ class JevClient:
         if not 100 <= int(max_text_chars):
             raise ValueError("max_text_chars must be >= 100")
         self.cfg = cfg
+        # The provider is fixed for the client's life (packets, item keys, ledger rows and the transport agree). An
+        # unknown JEVSCREEN_JEV_PROVIDER is reported by classify() as JevUnavailable, before anything is sent.
+        self.provider_error: str | None = None
+        if provider is not None:
+            self.provider, self.provider_reason = provider_named(provider), "given"
+        else:
+            try:
+                self.provider, self.provider_reason = resolve_provider(cfg)
+            except ProviderError as e:
+                self.provider, self.provider_reason = PROVIDERS[DEFAULT_PROVIDER], "error"
+                self.provider_error = str(e)
         self.run_id = str(run_id)
         self.layer = str(layer)
         self.budget_usd = float(budget_usd)
@@ -703,7 +920,8 @@ class JevClient:
             pass
 
     def __repr__(self) -> str:
-        return (f"JevClient(run_id={self.run_id!r}, layer={self.layer!r}, budget_usd={self.budget_usd}, "
+        return (f"JevClient(provider={self.provider.name!r}, run_id={self.run_id!r}, layer={self.layer!r}, "
+                f"budget_usd={self.budget_usd}, "
                 f"spent_usd={self.spent_usd:.6f}, requests_sent={self.requests_sent})")
 
     # -- public counters
@@ -744,7 +962,7 @@ class JevClient:
     # -- estimate
     def _packets(self, items: list[Item], question: Question):
         return build_packets(list(items), question, pack_size=self.pack_size, max_text_chars=self.max_text_chars,
-                             max_packet_text_bytes=self.max_packet_text_bytes)
+                             max_packet_text_bytes=self.max_packet_text_bytes, model=self.provider.model)
 
     def estimate(self, items: list[Item], question: Question) -> dict:
         """Estimate for sending every item (the reuse cache is not consulted: an upper bound)."""
@@ -755,13 +973,16 @@ class JevClient:
                 "est_cost_usd": round(tokens_cost_usd(tokens), 8), "basis": CALIBRATION_BASIS,
                 "est_output_tokens": int(OUTPUT_TOKENS_PER_QUESTION * nq), "skipped_empty": len(skipped),
                 "truncated": len(notes), "pack_size": self.pack_size,
-                "est_reserved_usd": round(tokens_cost_usd(tokens) * self.reserve_factor, 8)}
+                "est_reserved_usd": round(tokens_cost_usd(tokens) * self.reserve_factor, 8),
+                "provider": self.provider.name, "model": self.provider.model}
 
     # -- classify
     def classify(self, items: list[Item], question: Question) -> list[dict]:
         items = list(items)
         validate_question(question)
         labels = list(question.criteria)
+        if not self.dry_run and self.provider_error:
+            raise JevUnavailable(self.provider_error)
         if not self.dry_run and self._halt.is_set():
             raise JevUnavailable(self._unavailable_msg or "provider refused an earlier request of this client")
         self.stop_reason = None
@@ -782,7 +1003,7 @@ class JevClient:
                 continue
             if note:
                 notes[pos] = note
-            keys[pos] = item_key(question, issuer, text)
+            keys[pos] = item_key(question, issuer, text, self.provider)
         if self.dry_run:
             packets, _, _ = self._packets(items, question)
             for pk in packets:
@@ -863,7 +1084,7 @@ class JevClient:
     # -- internals
     def _transport_fn(self):
         if self._transport is None:
-            self._transport = UrllibTransport(self.cfg)
+            self._transport = UrllibTransport(self.cfg, provider=self.provider)
         return self._transport
 
     def _secrets(self) -> list[str]:
@@ -916,8 +1137,8 @@ class JevClient:
 
     def _sent_rows(self, s: _Send) -> tuple[tuple, list[tuple]]:
         pk = s.packet
-        req = (s.send_id, self.run_id, self.layer, pk.payload_sha256, MODEL, len(pk.positions), len(pk.qids),
-               "sent", None, None, None, None, None, s.sent_at, None, None, None)
+        req = (s.send_id, self.run_id, self.layer, pk.payload_sha256, self.provider.model, len(pk.positions),
+               len(pk.qids), "sent", None, None, None, None, None, s.sent_at, None, None, None, self.provider.name)
         items = [(k, s.send_id, self.run_id, self.layer, i, "sent", None, None, None, s.sent_at, s.read, None)
                  for i, k in enumerate(s.keys)]
         return req, items
@@ -925,9 +1146,10 @@ class JevClient:
     def _done_rows(self, s: _Send, o: _Outcome) -> tuple[tuple, list[tuple]]:
         pk = s.packet
         now = store.now_utc()
-        req = (s.send_id, self.run_id, self.layer, pk.payload_sha256, MODEL, len(pk.positions), len(pk.qids),
-               o.status, o.http_status, o.cost, o.cost_basis or ("not_charged" if o.cost == 0 else None),
-               o.input_tokens, o.output_tokens, s.sent_at, now, o.response_path, self._clean(o.error))
+        req = (s.send_id, self.run_id, self.layer, pk.payload_sha256, self.provider.model, len(pk.positions),
+               len(pk.qids), o.status, o.http_status, o.cost,
+               o.cost_basis or ("not_charged" if o.cost == 0 else None), o.input_tokens, o.output_tokens, s.sent_at,
+               now, o.response_path, self._clean(o.error), self.provider.name)
         items = []
         for i, k in enumerate(s.keys):
             if o.answers is not None:
@@ -1076,8 +1298,8 @@ class JevClient:
 
     def _backoff(self, attempt: int, retry_after: float | None) -> None:
         delay = self.backoff_s * (2 ** (attempt - 1))
-        if retry_after is not None and math.isfinite(retry_after) and 0 < retry_after <= MAX_RETRY_AFTER_S:
-            delay = max(delay, retry_after)
+        if retry_after is not None and math.isfinite(retry_after) and retry_after > 0:
+            delay = max(delay, min(retry_after, MAX_RETRY_AFTER_S))     # a longer wait is cut to the cap
         end = time.monotonic() + delay
         while time.monotonic() < end and not self._halt.is_set():
             time.sleep(min(0.05, max(0.0, end - time.monotonic())))
@@ -1171,9 +1393,10 @@ class JevClient:
         except (ValueError, UnicodeError, RecursionError):
             return _Outcome("failed", http_status=200, error="invalid_response:invalid_json", cost=est,
                             cost_basis="reservation_estimate", response_path=path, attempts=attempt)
+        data = normalize_response(self.provider, data)
         usage_raw = data.get("usage") if isinstance(data, dict) else None
         try:
-            usage, answers = parse_response(data, pk.qids, labels)
+            usage, answers = parse_response(data, pk.qids, labels, self.provider.model)
         except InvalidResponse as e:
             cost, basis = accounted_cost(usage_raw if isinstance(usage_raw, dict) else None, est)
             return _Outcome("failed", http_status=200, error=f"invalid_response:{e.detail}", cost=cost,

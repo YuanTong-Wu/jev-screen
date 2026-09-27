@@ -269,23 +269,31 @@ class TestPageEscaping(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_page_script_renders_and_builds_the_answer_line(self):
-        """Run the page's own script in node with a tiny DOM stand-in: it renders, the toggle works and a click on
-        card 1 'Yes' then chip 'a' and card 2 'No' gives exactly the tokens joined, which parse_answers reads."""
+        """Run the page's own script in node with a tiny DOM stand-in: it renders in its one language (no language
+        toggle: a zh page is fully Chinese) and a click on card 1 'Yes' then chip 'a' and card 2 'No' gives exactly
+        the tokens joined, which parse_answers reads."""
         deck = deck3(False)
-        data = page.build_page_data(self.RESULT, deck, lang="zh")
-        html = page.render_page(data)
-        js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
-        blob = re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S).group(1)
-        with tempfile.TemporaryDirectory() as tmp:
-            harness = Path(tmp) / "h.js"
-            harness.write_text(DOM_SHIM + f"\nconst BLOB={json.dumps(blob)};\n" + "(function(){" + js + "})();\n"
-                               + DRIVE, encoding="utf-8")
-            r = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        out = json.loads(r.stdout.strip().splitlines()[-1])
+
+        def run(lang):
+            html = page.render_page(page.build_page_data(self.RESULT, deck, lang=lang))
+            js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
+            blob = re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S).group(1)
+            with tempfile.TemporaryDirectory() as tmp:
+                harness = Path(tmp) / "h.js"
+                harness.write_text(DOM_SHIM + f"\nconst BLOB={json.dumps(blob)};\n" + "(function(){" + js + "})();\n"
+                                   + (DRIVE if lang == "zh" else "console.log(JSON.stringify({title:document.title,"
+                                      "toggle:all.filter(n=>n.tagName==='button'&&n._text==='中文').length}));"),
+                                   encoding="utf-8")
+                r = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        out = run("zh")
         self.assertEqual(out["line"], 'jevscreen answer "1a 2no" --deck deck-scr-x-1')
         self.assertIn("筛选结果", out["title_zh"])
-        self.assertIn("Screen results", out["title_en"])
+        self.assertEqual(out["toggle"], 0)
+        en = run("en")
+        self.assertIn("Screen results", en["title"])
+        self.assertEqual(en["toggle"], 0)
         got = [(a.n, a.verdict, a.chip) for a in calib.parse_answers(shlex.split(out["line"])[2], deck)]
         self.assertEqual(got, [(1, "yes", "a"), (2, "no", None)])
 
@@ -387,7 +395,7 @@ class TestNovicePageFixes(unittest.TestCase):
         self.assertEqual(out["trs"], 1 + 3)
         text = out["text"]
         self.assertIn("青澜科技", text)
-        self.assertIn("Qinglan Thermal Tech Co. Ltd.", text)           # the English name, below
+        self.assertNotIn("Qinglan Thermal Tech", text)          # an official Chinese name: no English name
         self.assertNotIn("Class A", text)
         self.assertIn("年报摘录未提到（缺口）", text)
         self.assertIn("年报没提到", text)                               # the table's evidence cell
@@ -436,7 +444,8 @@ class TestNovicePageFixes(unittest.TestCase):
     def test_plain_text_list_and_noscript(self):
         d = self.data("zh")
         text = page.render_text(d)
-        self.assertIn("#1 青澜科技（Qinglan Thermal Tech Co. Ltd.） 399101 · 中国 — 相关 · 年报原文", text)
+        self.assertIn("#1 青澜科技 399101 · 中国 — 相关 · 年报原文", text)
+        self.assertIn("做什么：Baifeng makes aluminium.（原文，未翻译）", text)
         self.assertIn("#2 百峰铝业", text)
         self.assertIn("年报摘录未提到（缺口） [边缘：摘录没提到你的想法", text)
         self.assertIn("4 家：年报/简介说得不够清楚", text)
@@ -445,7 +454,8 @@ class TestNovicePageFixes(unittest.TestCase):
         m = re.search(r"<noscript>(.*?)</noscript>", html, re.S)
         self.assertIn("#1 青澜科技", m.group(1))
         en = page.render_text(self.data("en"))
-        self.assertIn("#1 Qinglan Thermal Tech Co. Ltd. (青澜科技) 399101 · China — Related · annual report", en)
+        self.assertIn("#1 Qinglan Thermal Tech Co. Ltd. 399101 · China — Related · annual report", en)
+        self.assertNotIn("青澜", en)                               # an English page shows English names only
         # untrusted names are escaped inside <noscript>
         evil = page.render_page(page.build_page_data(TestPageEscaping.RESULT, None, lang="en"))
         self.assertEqual(evil.count("</script>"), 2)
@@ -541,13 +551,16 @@ class TestNoviceReviewFixes(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_form_ids_are_plain_words(self):
-        for lang, want in (("zh", "出处: CNINFO · 年报 · 2026-04-01"), ("en", "Source: CNINFO · annual report · 2026-04-01")):
+        for lang, want in (("zh", "出处：巨潮资讯 · 年报 · 2026年4月1日"),
+                           ("en", "Source: CNINFO · annual report · 1 Apr 2026")):
             text = dom_text(self, page.render_page(page.build_page_data(_novice_result(), deck3(False), lang=lang)))[
                 "text"]
             self.assertIn(want, text)
-            for word in ("annual_report", "filing_form", "出处: filing", "Source: filing"):
+            for word in ("annual_report", "filing_form", "出处: filing", "Source: filing", "2026-04-01"):
                 self.assertNotIn(word, text, lang)
-            self.assertIn("10-K", text)                                # a card's SEC form stays as it is
+            self.assertIn("美国年报 10-K" if lang == "zh" else "SEC 10-K", text)     # a card's SEC form
+            if lang == "zh":
+                self.assertNotIn("CNINFO", text)
         self.assertEqual(page.form_words("annual_report_summary"), ("年报摘要", "annual report summary"))
         self.assertEqual(page.form_words("some_internal_id"), (None, None))
         self.assertEqual(page.form_words("10-Q"), ("10-Q", "10-Q"))
@@ -672,14 +685,12 @@ DRIVE = r"""
 function find(pred){return all.filter(pred);}
 function buttons(label){return find(n=>n.tagName==='button'&&n._text===label);}
 const titleZh=document.title;
-buttons('English')[0].onclick();
-const titleEn=document.title;
-buttons('中文')[0].onclick();
+const toggle=buttons('English').length;
 buttons('要')[0].onclick();                       // card 1 yes
 buttons('a · 直接做')[0].onclick();               // chip a
 buttons('不要')[1].onclick();                     // card 2 no
 const ta=find(n=>n.tagName==='textarea').pop();
-console.log(JSON.stringify({line:ta.value,title_zh:titleZh,title_en:titleEn}));
+console.log(JSON.stringify({line:ta.value,title_zh:titleZh,toggle:toggle}));
 """
 
 DRIVE_EN = r"""

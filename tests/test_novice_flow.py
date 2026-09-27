@@ -130,11 +130,11 @@ class TestPollAndKey(FlowCase):
         self.consent_yes()
         out = self.front(approve_budget=1)                   # no key yet: the free downloads start anyway
         self.assertEqual(out["status"], "needs_human")
-        self.assertEqual(self.ids(out), ["key_openrouter"])
+        self.assertEqual(self.ids(out), ["key_jev"])
         self.assertEqual(out["state"], "running")
         self.assertTrue(out["poll_command"].startswith("jevscreen quickstart --status --key"))
         self.assertIn("免费下载已经在后台开始", out["text_zh"])
-        self.assertIn("--from-file", out["pending"][0]["agent_try_file"])
+        self.assertTrue(all("--from-file" in c["agent_try_file"] for c in out["pending"][0]["choices"]))
 
     def test_a_key_recorded_after_the_worker_started_is_used(self):
         self.consent_yes()

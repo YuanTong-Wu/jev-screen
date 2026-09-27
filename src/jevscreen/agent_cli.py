@@ -8,7 +8,9 @@
   absolute jevscreen path and how to open a terminal). An AI agent may start it; only the human types in it.
 - `jevscreen keys check [NAME]`: presence / source / file mode / shape, never the value. Exit 1 when a NAMED key is
   missing or malformed, else 0.
-- `jevscreen keys clear NAME`: remove the key file. Exit 0.
+- `jevscreen keys clear NAME`: remove the key file (and, for a Jev provider, the saved choice when it names it). Exit 0.
+- `jevscreen keys use <typesafe|openrouter|vercel>`: save which Jev provider is used (`keys set` of a Jev key saves it
+  too: the last one set wins). Exit 0.
 - `jevscreen consent set TOPIC yes|no` / `jevscreen consent show`: the human's recorded answer (consent.json).
 JSON schemas: docs/AGENT_API.md.
 """
@@ -34,8 +36,8 @@ def add_parsers(sub: Any) -> None:
     dr = sub.add_parser("doctor", help="check that this install is ready for a first screen; prints the next command")
     dr.add_argument("--json", action="store_true", help="print the report as JSON (for AI agents)")
     dr.add_argument("--check-jev", action="store_true",
-                    help="also ask OpenRouter whether the key works and what is left of its spending limit (one free "
-                         "request, no paid call; the account balance is not checked)")
+                    help="also ask the active Jev provider (TypeSafe, OpenRouter or Vercel AI Gateway) whether the key "
+                         "works and, where it says, what is left to spend (one free request, no paid call)")
     ks = sub.add_parser("keys", help="set / check / clear API keys without ever showing them")
     kss = ks.add_subparsers(dest="keys_action", required=True)
     kset = kss.add_parser("set", help="store a key from a hidden prompt (file mode 0600)")
@@ -47,12 +49,15 @@ def add_parsers(sub: Any) -> None:
     kset.add_argument("--dialog", action="store_true",
                       help="open a native hidden input box (macOS / Linux desktop) for the human to paste the key")
     kset.add_argument("--from-file", default=None, metavar="PATH",
-                      help="openrouter only: record where the human keeps the key (a file they made); only the "
-                           "location is stored, the key is never read, copied or printed")
+                      help="Jev keys only (typesafe, openrouter, vercel): record where the human keeps the key (a file "
+                           "they made); only the location is stored, the key is never copied or printed")
     kchk = kss.add_parser("check", help="which keys are configured (never the values)")
     kchk.add_argument("name", nargs="?", choices=list(keys.KEYS))
     kclr = kss.add_parser("clear", help="remove a stored key file")
     kclr.add_argument("name", choices=list(keys.KEYS))
+    kuse = kss.add_parser("use", help="choose which Jev provider paid calls go through (the last Jev key set is "
+                                      "used otherwise); no key is read or written")
+    kuse.add_argument("name", choices=list(keys.JEV_KEYS))
     cs = sub.add_parser("consent", help="record the human's answer to a consent question (e.g. gray-sources)")
     css = cs.add_subparsers(dest="consent_action", required=True)
     cset = css.add_parser("set", help="record yes or no, with a timestamp, in data/consent.json")
@@ -184,13 +189,21 @@ def cmd_keys(args: argparse.Namespace, cfg: Any) -> int:
     if action == "check":
         names = [args.name] if args.name else list(keys.KEYS)
         rows = [keys.check(cfg, n) for n in names]
-        if cfg.openrouter_key_source()[0] == "recorded-file":
-            for r in rows:
-                if r.get("name") == "openrouter":       # the recorded location is not echoed
-                    r.update(path=None, source="recorded-file")
+        for r in rows:
+            n = r.get("name")
+            if n in keys.JEV_KEYS and cfg.jev_key_source(n)[0] == "recorded-file":
+                r.update(path=None, source="recorded-file")     # the recorded location is not echoed
         _emit({"command": "keys check", "keys": rows})
         if args.name and not (rows[0]["configured"] and rows[0]["shape_ok"]):
             return EXIT_ERROR
+        return EXIT_OK
+    if action == "use":
+        try:
+            out = keys.use_provider(cfg, args.name)
+        except keys.KeyProblem as e:
+            _emit({"command": "keys use", "status": "error", "name": args.name, "error": str(e)})
+            return EXIT_ERROR
+        _emit({"command": "keys use", "status": "ok", **out})
         return EXIT_OK
     if action == "clear":
         try:

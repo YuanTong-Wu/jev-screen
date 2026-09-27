@@ -60,6 +60,7 @@ import datetime as dt
 import importlib
 import json
 import math
+import re
 import signal
 import sys
 import threading
@@ -324,7 +325,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"at most N cards (default {CARDS_DEFAULT})")
     ca.add_argument("--out", type=Path, default=None, metavar="DIR",
                     help="write cards.json / cards.md here instead of the run's output directory")
-    ca.add_argument("--json", action="store_true", help="print cards.json instead of the Chinese cards")
+    ca.add_argument("--json", action="store_true", help="print cards.json instead of the cards as text")
+    ca.add_argument("--lang", choices=("zh", "en"), default=None,
+                    help="language of the printed cards (default: the idea's quickstart --lang, else the idea's)")
     an = sub.add_parser("answer", help="record your answers to the calibration cards ('1要a 2不要c 3?'), try the "
                         "rules they point to and screen again from the same run (L1 $0; about $0.01–0.03)")
     an.add_argument("text", nargs="?", default=None, metavar="ANSWERS",
@@ -342,8 +345,10 @@ def build_parser() -> argparse.ArgumentParser:
                          f"{APPLY_BUDGET_DEFAULT}); a higher estimate stops before any paid call (exit 5)")
     an.add_argument("--undo", type=positive_int, default=None, metavar="N",
                     help="remove answer N (as `sieve show` numbers them) from the calibration file")
-    an.add_argument("--json", action="store_true", help="print a JSON summary instead of the Chinese text")
-    an.add_argument("--lang", choices=("zh", "en"), default="zh", help="language of the answer error messages")
+    an.add_argument("--json", action="store_true", help="print a JSON summary instead of the text")
+    an.add_argument("--lang", choices=("zh", "en"), default=None,
+                    help="language of the output and the error messages (default: the idea's quickstart --lang, "
+                         "else the idea's)")
     an.add_argument("--verbose", action="store_true", help="also print the details: rule ids, keyword weighting, "
                     "the cost breakdown and the rule trial table")
     sv = sub.add_parser("sieve", help="the calibration file (sieve) of an idea (free)")
@@ -1147,7 +1152,8 @@ def _jev_exit(e: BaseException) -> int | None:
 def cmd_screen(args, cfg) -> int:
     """Exit 0 ok / partial / dry run, 1 bad parameter (e.g. unknown country, unknown --from-run, invalid --sieve),
     3 database locked, 4 another process is using Jev, 5 budget exhausted before L1 finished (partial report still
-    written), 6 Jev unavailable (missing key, 401/402/403), 130 interrupted. The OpenRouter key is never printed.
+    written), 6 Jev unavailable (missing key, 401/402/403), 130 interrupted. The Jev key (TypeSafe, OpenRouter or
+    Vercel AI Gateway) is never printed.
     Options not given on the command line come from the --from-run base run (else the defaults). At the end the
     calibration cards (cards.json / cards.md, free) are written into the output directory and printed, unless
     --cards 0 or a dry run."""
@@ -1209,45 +1215,67 @@ def cmd_screen(args, cfg) -> int:
 # ---------------------------------------------------------------------------------------------------------------
 # Calibration: cards / answer / sieve (see calib.py and docs/DATA_RULES.md "Calibration (sieve)")
 
-def _load_result(out_dir: Path) -> dict[str, Any]:
+def _load_result(out_dir: Path, lang: str = "zh") -> dict[str, Any]:
+    en = lang == "en"
     p = Path(out_dir) / "results.json"
     try:
         res = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        raise ValueError(f"读不了筛选结果 {p}（{type(e).__name__}）") from None
+        raise ValueError(f"cannot read the screen result {p} ({type(e).__name__})" if en else
+                         f"读不了筛选结果 {p}（{type(e).__name__}）") from None
     if not isinstance(res, dict) or not res.get("run_id"):
-        raise ValueError(f"{p} 不是 jevscreen screen 的结果")
+        raise ValueError(f"{p} is not a jevscreen screen result" if en else f"{p} 不是 jevscreen screen 的结果")
     if res.get("dry_run"):
-        raise ValueError(f"{p} 是 dry run（没有付费结果，也没有卡）")
+        raise ValueError(f"{p} is a dry run (no paid result, no cards)" if en else
+                         f"{p} 是 dry run（没有付费结果，也没有卡）")
     return res
 
 
-def _resolve_run(con, target: str | None, *, need: tuple[str, ...] = ("results.json",)
+def _default_lang(cfg, con, text: str | None = None) -> str:
+    """The output language before the run is known (error messages): Chinese answer words, else the language of
+    the newest screened idea (its quickstart --lang, else detected), else Chinese."""
+    if text and re.search(r"[一-鿿]", text):
+        return "zh"
+    with contextlib.suppress(Exception):
+        row = con.execute("SELECT idea FROM screen_runs ORDER BY started_at DESC LIMIT 1").fetchone()
+        if row and row[0]:
+            return quickstart_cli.page_lang(cfg, row[0])
+    return "zh"
+
+
+def _resolve_run(con, target: str | None, *, need: tuple[str, ...] = ("results.json",), lang: str = "zh"
                  ) -> tuple[str, Path, dict[str, Any]]:
     """(run_id, output directory, results.json) of a screen run: 'latest' (the newest ok / partial run whose output
-    directory holds every file in `need`), a run id, or a run's output directory. ValueError (Chinese) otherwise."""
+    directory holds every file in `need`), a run id, or a run's output directory. ValueError (in `lang`)
+    otherwise."""
+    en = lang == "en"
     target = (target or "latest").strip()
     if target == "latest":
         for run_id, od in con.execute("SELECT run_id, output_dir FROM screen_runs WHERE status IN ('ok', 'partial') "
                                       "AND output_dir IS NOT NULL ORDER BY started_at DESC").fetchall():
             d = Path(od)
             if all((d / n).exists() for n in need):
-                return run_id, d, _load_result(d)
+                return run_id, d, _load_result(d, lang)
+        if en:
+            raise ValueError("no usable screen result" + (" with calibration cards" if "cards.json" in need else "")
+                             + ": run jevscreen screen \"<idea>\" first")
         raise ValueError("没有找到可用的筛选结果" + ("和校准卡" if "cards.json" in need else "")
                          + "：先运行 jevscreen screen \"<想法>\"")
     p = Path(target).expanduser()
     if p.is_file() and p.name == "results.json":
         p = p.parent
     if p.is_dir():
-        res = _load_result(p)
+        res = _load_result(p, lang)
         return res["run_id"], p, res
     row = con.execute("SELECT output_dir FROM screen_runs WHERE run_id = ?", [target]).fetchone()
     if row is None:
-        raise ValueError(f"没有这个筛选运行：{target}（运行编号形如 scr-20260926145744-4f806b，或给结果目录）")
+        raise ValueError(f"there is no screen run {target} (a run id looks like scr-20260926145744-4f806b; or give "
+                         "the result folder)" if en else
+                         f"没有这个筛选运行：{target}（运行编号形如 scr-20260926145744-4f806b，或给结果目录）")
     if not row[0]:
-        raise ValueError(f"运行 {target} 没有记录结果目录")
+        raise ValueError(f"run {target} has no recorded result folder" if en else f"运行 {target} 没有记录结果目录")
     d = Path(row[0])
-    return target, d, _load_result(d)
+    return target, d, _load_result(d, lang)
 
 
 def _run_sieve(cfg, result: dict[str, Any]) -> tuple[dict[str, Any] | None, Path]:
@@ -1280,10 +1308,19 @@ def _deck_for(cfg, con, result: dict[str, Any], out_dir: Path, max_cards: int
     return calib.build_deck(result, inputs, sv, max_cards=max_cards, pool=pool), rebuilt
 
 
-def _deck_text(deck: dict[str, Any], path: Path | None, run_id: str | None = None) -> str:
+def _deck_text(deck: dict[str, Any], path: Path | None, run_id: str | None = None, *, lang: str = "zh",
+               max_out: int | None = None, tr: dict[int, dict[str, Any]] | None = None) -> str:
     from . import calib
-    text = calib.render_cards_md(deck).rstrip()
     nums = [c["n"] for c in deck.get("cards") or []]
+    if lang == "en":
+        text = calib.render_cards_en(deck, max_out, tr).rstrip()
+        if nums:
+            example = f"{nums[0]}a" + (f" {nums[1]}c" if len(nums) > 1 else "")
+            text += (f"\n\nCards: {path}\nAnswer (example): jevscreen answer \"{example}\" --run "
+                     f"{run_id or deck.get('run_id')} --lang en  (a card you skip is not answered; --no-apply only "
+                     "records the answers)")
+        return text
+    text = calib.render_cards_md(deck, tr).rstrip()
     if nums:
         example = f"{nums[0]}要a" + (f" {nums[1]}不要c" if len(nums) > 1 else "")    # only card numbers that exist
         text += (f"\n\n校准卡：{path}\n回答（例）：jevscreen answer \"{example}\" --run {run_id or deck.get('run_id')}"
@@ -1311,7 +1348,8 @@ def cmd_cards(args, cfg) -> int:
     from . import calib
     try:
         with _read_session(cfg) as con:
-            run_id, out_dir, result = _resolve_run(con, args.target)
+            run_id, out_dir, result = _resolve_run(con, args.target,
+                                                   lang=getattr(args, "lang", None) or _default_lang(cfg, con))
             deck, rebuilt = _deck_for(cfg, con, result, out_dir, args.max)
         dest = Path(args.out) if args.out is not None else out_dir
         _pj, pm = calib.write_deck(deck, dest)
@@ -1323,38 +1361,54 @@ def cmd_cards(args, cfg) -> int:
     if args.json:
         _emit(deck)
         return EXIT_OK
+    lang = getattr(args, "lang", None) or quickstart_cli.page_lang(cfg, result.get("idea") or "")
     if rebuilt:
-        print(f"（运行 {run_id} 早于 l2_inputs.jsonl：卡片的年报摘录按现在的文档重建，按一次读取计）")
-    print(_deck_text(deck, pm, run_id))
+        print(f"（运行 {run_id} 早于 l2_inputs.jsonl：卡片的年报摘录按现在的文档重建，按一次读取计）" if lang == "zh" else
+              f"(run {run_id} predates l2_inputs.jsonl: the cards' filing excerpts were rebuilt from today's "
+              "documents, one read each)")
+    max_out = (result.get("params") or {}).get("max_out")
+    try:          # the agent's stored translations of the cards' foreign texts, as the page shows them
+        from . import page
+        tr = page.card_translations(cfg, deck, lang, max_out)
+    except Exception:  # noqa: BLE001 - the originals print
+        tr = {}
+    print(_deck_text(deck, pm, run_id, lang=lang, max_out=max_out, tr=tr))
     return EXIT_OK
 
 
-def _resolve_deck(con, args) -> tuple[dict[str, Any], str, Path, dict[str, Any]]:
+def _resolve_deck(con, args, lang: str = "zh") -> tuple[dict[str, Any], str, Path, dict[str, Any]]:
     """(deck, run_id, output directory, results.json) for answer: --deck (a deck id or cards.json), else the cards
-    of --run (default: the newest run with cards). A deck that was replaced by a newer one is refused."""
-    import re
+    of --run (default: the newest run with cards). A deck that was replaced by a newer one is refused. ValueError
+    in `lang`."""
     from . import calib
+    en = lang == "en"
     if args.deck:
         p = Path(args.deck).expanduser()
         if p.exists():
-            deck = calib.load_deck(p)
-            run_id, out_dir, result = _resolve_run(con, deck.get("run_id"))
+            deck = calib.load_deck(p, lang)
+            run_id, out_dir, result = _resolve_run(con, deck.get("run_id"), lang=lang)
         else:
             m = re.fullmatch(r"deck-(.+)-(\d+)", args.deck.strip())
             if not m:
-                raise ValueError(f"看不懂卡组 {args.deck}（应为 deck-<运行编号>-<n> 或 cards.json 的路径）")
-            run_id, out_dir, result = _resolve_run(con, m.group(1))
-            deck = calib.load_deck(out_dir)
+                raise ValueError(f"cannot read the deck {args.deck} (expected deck-<run id>-<n> or the path of a "
+                                 "cards.json)" if en else
+                                 f"看不懂卡组 {args.deck}（应为 deck-<运行编号>-<n> 或 cards.json 的路径）")
+            run_id, out_dir, result = _resolve_run(con, m.group(1), lang=lang)
+            deck = calib.load_deck(out_dir, lang)
             if deck.get("deck_id") != args.deck.strip():
-                raise ValueError(f"卡组 {args.deck} 已换成 {deck.get('deck_id')}：请回答新的卡组"
+                raise ValueError(f"the deck {args.deck} was replaced by {deck.get('deck_id')}: answer the new deck "
+                                 f"(jevscreen cards {run_id})" if en else
+                                 f"卡组 {args.deck} 已换成 {deck.get('deck_id')}：请回答新的卡组"
                                  f"（jevscreen cards {run_id}）")
     else:
         latest = (args.run or "latest").strip() == "latest"
         run_id, out_dir, result = _resolve_run(con, args.run, need=("results.json", "cards.json") if latest
-                                               else ("results.json",))
-        deck = calib.load_deck(out_dir)
+                                               else ("results.json",), lang=lang)
+        deck = calib.load_deck(out_dir, lang)
     if deck.get("run_id") != result.get("run_id"):
-        raise ValueError(f"卡组 {deck.get('deck_id')} 属于运行 {deck.get('run_id')}，不是 {result.get('run_id')}")
+        raise ValueError(f"the deck {deck.get('deck_id')} belongs to run {deck.get('run_id')}, not "
+                         f"{result.get('run_id')}" if en else
+                         f"卡组 {deck.get('deck_id')} 属于运行 {deck.get('run_id')}，不是 {result.get('run_id')}")
     return deck, run_id, out_dir, result
 
 
@@ -1403,6 +1457,10 @@ def cmd_answer(args, cfg) -> int:
     lines: list[str] = []
     summary: dict[str, Any] = {"command": "answer"}
     verbose = bool(getattr(args, "verbose", False))
+    lang = getattr(args, "lang", None) or "zh"
+
+    def T(zh: str, en: str) -> str:
+        return en if lang == "en" else zh
 
     def say(text: str = "") -> None:
         if args.json:
@@ -1427,7 +1485,8 @@ def cmd_answer(args, cfg) -> int:
 
     try:
         with _read_session(cfg) as con:
-            deck, run_id, out_dir, result = _resolve_deck(con, args)
+            lang = getattr(args, "lang", None) or _default_lang(cfg, con, args.text)
+            deck, run_id, out_dir, result = _resolve_deck(con, args, lang)
             pool = calib.load_pool(con, run_id, result.get("params"))
             inputs, _rebuilt = _run_inputs(con, result, out_dir, pool)
             base_id, base_result, base_pool = run_id, result, pool
@@ -1440,6 +1499,7 @@ def cmd_answer(args, cfg) -> int:
     except ValueError as e:
         return fail(EXIT_ERROR, "error", str(e))
     idea = result.get("idea") or deck.get("idea") or ""
+    lang = getattr(args, "lang", None) or quickstart_cli.page_lang(cfg, idea)
     sv = sv if sv is not None else calib.new_sieve(idea)
     summary.update(run_id=run_id, deck_id=deck.get("deck_id"), sieve_path=str(sv_path))
 
@@ -1449,10 +1509,12 @@ def cmd_answer(args, cfg) -> int:
             saved = calib.save_sieve(sv_path, sv2)
         except ValueError as e:          # AnswerError / SieveStale
             return fail(EXIT_ERROR, "error", str(e))
-        say(f"已撤销第 {args.undo} 条回答：{removed.get('name') or removed.get('security_id')}"
-            f"（{calib.answer_words_zh(removed.get('want'), removed.get('chip'))}）"
+        who = removed.get('name') or removed.get('security_id')
+        say(T(f"已撤销第 {args.undo} 条回答：{who}（{calib.answer_words_zh(removed.get('want'), removed.get('chip'))}）",
+              f"Removed answer {args.undo}: {who} ({calib.answer_words_en(removed.get('want'), removed.get('chip'))})")
             + (f" → {sv_path}" if verbose else ""))
-        say(calib.render_diff_zh(result, calib.rerank_result(result, saved, pool=pool), title="撤销后（免费）"))
+        say(calib.render_diff(result, calib.rerank_result(result, saved, pool=pool),
+                              title=T("撤销后（免费）", "After the undo (free)"), lang=lang))
         summary["undone"] = removed
         return done(EXIT_OK, "undone")
 
@@ -1466,15 +1528,16 @@ def cmd_answer(args, cfg) -> int:
                 raise calib.AnswerError(f"读不了 {args.file}（{type(e).__name__}）") from None
             answers = calib.answers_from_file(data, deck, warnings)
         elif args.text and args.text.strip():
-            answers = calib.parse_answers(args.text, deck, warnings, lang=getattr(args, "lang", "zh") or "zh")
+            answers = calib.parse_answers(args.text, deck, warnings, lang=lang)
         else:
-            raise calib.AnswerError('没有回答：写成 jevscreen answer "1要a 2不要c"，或用 --file answers.json')
+            raise calib.AnswerError(T('没有回答：写成 jevscreen answer "1要a 2不要c"，或用 --file answers.json',
+                                      'No answers: write jevscreen answer "1a 2c", or use --file answers.json'))
         if not answers:
-            raise calib.AnswerError("没有可记录的回答（都跳过了）")
+            raise calib.AnswerError(T("没有可记录的回答（都跳过了）", "Nothing to record (every card was skipped)"))
     except calib.AnswerError as e:
         return fail(EXIT_ERROR, "bad_answers", str(e))
     for w in warnings:
-        say(f"注意：{w}")
+        say(T("注意：", "Note: ") + w)
     try:
         sv2, new = calib.record_answers(sv, deck, answers)
         saved = calib.save_sieve(sv_path, sv2)
@@ -1483,19 +1546,23 @@ def cmd_answer(args, cfg) -> int:
     with contextlib.suppress(OSError):
         (out_dir / "answers.json").write_text(json.dumps(calib.answers_json(deck, answers), ensure_ascii=False,
                                                          indent=2), encoding="utf-8")
-    say(f"已记录 {len(new)} 条回答（同一想法以后自动使用）" + (f" → {sv_path}" if verbose else ""))
+    say(T(f"已记录 {len(new)} 条回答（同一想法以后自动使用）",
+          f"Recorded {len(new)} answer{'s' if len(new) != 1 else ''} (used for this idea from now on)")
+        + (f" → {sv_path}" if verbose else ""))
     if base_id != run_id:
-        say(f"这组卡片来自较早的一版结果（{run_id}）；回答用在最新一版（{base_id}）上重新排序，"
-            "后来补进来的公司不会丢。")
+        say(T(f"这组卡片来自较早的一版结果（{run_id}）；回答用在最新一版（{base_id}）上重新排序，后来补进来的公司不会丢。",
+              f"These cards come from an earlier version ({run_id}); the answers re-rank the newest version "
+              f"({base_id}), so companies added since are kept."))
         summary["applied_to_run"] = base_id
     stage_a = calib.rerank_result(base_result, saved, pool=base_pool)
-    say(calib.render_diff_zh(base_result, stage_a))
+    say(calib.render_diff(base_result, stage_a, lang=lang))
     summary.update(answers=[a._asdict() for a in answers],
                    stage_a={"rows": [r["security_id"] for r in stage_a["rows"]],
                             "excluded_by_user": [r["security_id"] for r in stage_a["excluded_by_user"]]})
     apply_cmd = f"jevscreen screen {shlex.quote(idea)} --from-run {base_id} --sieve {shlex.quote(str(sv_path))}"
     if args.no_apply:
-        say(f"没有试规则、没有重新筛选（--no-apply）。要应用：{apply_cmd}")
+        say(T(f"没有试规则、没有重新筛选（--no-apply）。要应用：{apply_cmd}",
+              f"No rule trial, no new screen (--no-apply). To apply: {apply_cmd}"))
         return done(EXIT_OK, "recorded")
 
     # 2) candidate rules and keyword changes (free)
@@ -1507,7 +1574,9 @@ def cmd_answer(args, cfg) -> int:
     if cands:
         detail("候选规则：" + "；".join(f"{c['id']}（{c['from']}）" for c in cands))
         if not verbose:
-            say(f"从你的回答里总结出 {len(cands)} 条规则，先在少数公司上试一下，只留下不误伤的")
+            say(T(f"从你的回答里总结出 {len(cands)} 条规则，先在少数公司上试一下，只留下不误伤的",
+                  f"Your answers suggest {len(cands)} rule{'s' if len(cands) != 1 else ''}; each is tried on a "
+                  "few companies first and kept only when it does no harm"))
     for d in dropped:
         detail(f"  不试 {d['id']}：{d['why_zh']}")
     for pr in props:
@@ -1539,7 +1608,9 @@ def cmd_answer(args, cfg) -> int:
         code = _jev_exit(e)
         if code is None:
             raise
-        return fail(code, "jev_unavailable", f"Jev 不可用（{type(e).__name__}）：回答已保存，没有试规则、没有重新筛选")
+        return fail(code, "jev_unavailable", T(f"Jev 不可用（{type(e).__name__}）：回答已保存，没有试规则、没有重新筛选",
+                                               f"the AI service (Jev) is unavailable ({type(e).__name__}): the "
+                                               "answers are saved; no rule trial, no new screen"))
     est_apply = float((dry.get("dry_run_budget") or {}).get("est_cost_usd") or 0.0)
     est_total = est_t["est_cost_usd"] + est_apply
     extra = float(est_t.get("extra_max_usd") or 0.0)
@@ -1555,18 +1626,25 @@ def cmd_answer(args, cfg) -> int:
         + (f"，连同多读最多 ${est_total + extra:.4f}" if extra > 0 else "")
         + f"；上限 --apply-budget ${args.apply_budget:.4f}，到上限就停")
     if not verbose:
-        say(f"预计约 ${est_total:.4f}" + (f"，要多读几次时最多 ${est_total + extra:.4f}" if extra > 0 else "")
-            + f"（上限 ${args.apply_budget:.4f}，到上限就停）")
+        say(T(f"预计约 ${est_total:.4f}" + (f"，要多读几次时最多 ${est_total + extra:.4f}" if extra > 0 else "")
+              + f"（上限 ${args.apply_budget:.4f}，到上限就停）",
+              f"Estimate about ${est_total:.4f}" + (f", at most ${est_total + extra:.4f} with extra reads"
+                                                     if extra > 0 else "")
+              + f" (cap ${args.apply_budget:.4f}; it stops at the cap)"))
     summary["estimate"] = {"trials_usd": est_t["est_cost_usd"], "trials_extra_max_usd": extra,
                            "apply_usd": est_apply, "total_usd": est_total, "total_max_usd": est_total + extra}
     if est_total <= args.apply_budget + 1e-12 < est_total + extra:
-        say("  预算只够计划内的试验：边界公司要多读或对照读时钱不够，那条规则记为没试，不会采用")
+        say(T("  预算只够计划内的试验：边界公司要多读或对照读时钱不够，那条规则记为没试，不会采用",
+              "  The cap covers the planned trials only: a rule that needs extra reads is left untried, not "
+              "adopted"))
     if est_total > args.apply_budget + 1e-12:
         again = ("jevscreen answer " + (f"--file {shlex.quote(str(args.file))}" if args.file is not None
                                         else shlex.quote(args.text)) + f" --run {run_id} --apply-budget "
                  f"{math.ceil((est_total + extra) * 100) / 100:.2f}")
-        say("超过上限：回答已保存（上面「立即生效」的部分），没有试规则、没有重新筛选。")
-        say(f"要继续：{again}；或只应用回答：{apply_cmd}")
+        say(T("超过上限：回答已保存（上面「立即生效」的部分），没有试规则、没有重新筛选。",
+              "Over the cap: the answers are saved (the part that takes effect now, above); no rule trial, no new "
+              "screen."))
+        say(T(f"要继续：{again}；或只应用回答：{apply_cmd}", f"To go on: {again}; or apply the answers only: {apply_cmd}"))
         return done(EXIT_BUDGET, "over_budget")
 
     # 4) keyword changes (free), then the rule trials
@@ -1592,7 +1670,9 @@ def cmd_answer(args, cfg) -> int:
             code = _jev_exit(e)
             if code is None:
                 raise
-            return fail(code, "jev_unavailable", f"Jev 不可用（{type(e).__name__}）：回答和关键词已保存，规则没有试")
+            return fail(code, "jev_unavailable", T(f"Jev 不可用（{type(e).__name__}）：回答和关键词已保存，规则没有试",
+                                                   f"the AI service (Jev) is unavailable ({type(e).__name__}): "
+                                                   "answers and keywords are saved; no rule was tried"))
         trial = calib.trial_rules(cands, saved, base_reads, client, inputs=inputs, idea=idea, idea_en=idea_en,
                                   budget_usd=trial_budget)
         detail(calib.render_trial_zh(trial))
@@ -1601,9 +1681,18 @@ def cmd_answer(args, cfg) -> int:
             whys = list(dict.fromkeys(r.get("why_zh") for r in rej if r.get("why_zh")))
             why_untried = {"budget": "预算不够", "incomplete": "Jev 中途停了", "jev_unavailable": "Jev 中途停了",
                            "jev_busy": "Jev 中途停了"}.get(trial.get("status"), "已达试验次数上限")
-            say(f"规则试验：采用 {n_ok} 条" + (f"；没采用 {len(rej)} 条：" + "；".join(whys) if rej else "")
-                + (f"；{len(trial['untried'])} 条没试（{why_untried}）" if trial.get("untried") else "")
-                + (f"（{trial.get('note_zh') or calib.IN_SAMPLE_NOTE_ZH}）" if n_ok or rej else ""))
+            why_untried_en = {"budget": "not enough budget", "incomplete": "the AI stopped midway",
+                              "jev_unavailable": "the AI stopped midway", "jev_busy": "the AI stopped midway"}.get(
+                trial.get("status"), "trial limit reached")
+            if lang == "en":
+                say(f"Rule trials: {n_ok} adopted" + (f"; {len(rej)} not adopted" if rej else "")
+                    + (f"; {len(trial['untried'])} not tried ({why_untried_en})" if trial.get("untried") else "")
+                    + (" (agreement is measured on your own answers, not an independent check)" if n_ok or rej
+                       else ""))
+            else:
+                say(f"规则试验：采用 {n_ok} 条" + (f"；没采用 {len(rej)} 条：" + "；".join(whys) if rej else "")
+                    + (f"；{len(trial['untried'])} 条没试（{why_untried}）" if trial.get("untried") else "")
+                    + (f"（{trial.get('note_zh') or calib.IN_SAMPLE_NOTE_ZH}）" if n_ok or rej else ""))
         summary["trial"] = {k: trial.get(k) for k in ("status", "cost_usd", "adopted", "rejected", "untried",
                                                       "trials")}
         if trial["adopted"] or trial["rejected"]:
@@ -1613,7 +1702,8 @@ def cmd_answer(args, cfg) -> int:
                 return fail(EXIT_ERROR, "sieve_stale" if isinstance(e, calib.SieveStale) else "error", str(e))
         if trial["status"] in ("jev_unavailable", "jev_busy"):
             return fail(EXIT_BUSY if trial["status"] == "jev_busy" else EXIT_JEV_UNAVAILABLE, trial["status"],
-                        "Jev 中途不可用：回答和关键词已保存，没有重新筛选")
+                        T("Jev 中途不可用：回答和关键词已保存，没有重新筛选",
+                          "the AI service stopped midway: answers and keywords are saved; no new screen"))
         rules_rejected = (not trial["adopted"] and bool(trial["rejected"])
                           and {r["id"] for r in trial["rejected"]} >= {c["id"] for c in cands})
 
@@ -1631,20 +1721,30 @@ def cmd_answer(args, cfg) -> int:
         code = _jev_exit(e)
         if code is None:
             raise
-        return fail(code, "jev_unavailable", f"重新筛选时 Jev 不可用（{type(e).__name__}）：回答已保存")
+        return fail(code, "jev_unavailable", T(f"重新筛选时 Jev 不可用（{type(e).__name__}）：回答已保存",
+                                               f"the AI service (Jev) was unavailable for the new screen "
+                                               f"({type(e).__name__}): the answers are saved"))
     l2 = new_res["layers"].get("l2") or {}
     st = new_res.get("status")
     head = {"ok": "重新筛选完成", "partial": "重新筛选只完成了一部分（预算用完或出错，有些公司没有重新核对，下面的变化不完整）",
             "budget_exhausted": "预算用完，重新筛选只做了一部分",
             "jev_unavailable": "重新筛选没有完成：AI 服务（Jev）不可用，回答已保存",
             "jev_busy": "重新筛选没有完成：AI 服务（Jev）正忙，回答已保存，稍后再试"}.get(st, f"重新筛选没有完成（{st}）")
+    head_en = {"ok": "New screen done", "partial": "The new screen finished only partly (budget or errors: some "
+               "companies were not checked again, the changes below are incomplete)",
+               "budget_exhausted": "The budget ran out: the new screen finished only partly",
+               "jev_unavailable": "The new screen did not finish: the AI service (Jev) is unavailable; the answers "
+               "are saved", "jev_busy": "The new screen did not finish: the AI service (Jev) is busy; the answers "
+               "are saved, try again later"}.get(st, f"The new screen did not finish ({st})")
+    total = report.usd(spent + float(new_res.get('cost_usd') or 0.0))
     title = (f"重新筛选 {new_res['run_id']}（{st}；L1 沿用 $0；L2 {report.usd(l2.get('cost_usd'))}，"
              f"{l2.get('requests', 0)} 次请求）" if verbose
-             else f"{head}（规则试验和重新筛选共花费 {report.usd(spent + float(new_res.get('cost_usd') or 0.0))}，"
-                  f"没有重新下载；新结果编号 {new_res['run_id']}）")
-    say(calib.render_diff_zh(base_result, new_res, title=title))
+             else T(f"{head}（规则试验和重新筛选共花费 {total}，没有重新下载；新结果编号 {new_res['run_id']}）",
+                    f"{head_en} (rule trials and the new screen cost {total} together, nothing downloaded again; "
+                    f"new result {new_res['run_id']})"))
+    say(calib.render_diff(base_result, new_res, title=title, lang=lang))
     if st in ("jev_unavailable", "jev_busy"):
-        print(f"error: answer: {head}", file=sys.stderr)
+        print(f"error: answer: {T(head, head_en)}", file=sys.stderr)
     summary["apply"] = {"run_id": new_res["run_id"], "status": new_res["status"], "cost_usd": new_res["cost_usd"],
                         "output_dir": new_res["output_dir"], "rows": [r["security_id"] for r in new_res["rows"]]}
     code = SCREEN_EXIT.get(new_res["status"], EXIT_ERROR)
@@ -1653,16 +1753,20 @@ def cmd_answer(args, cfg) -> int:
         page_path, _data = quickstart_cli.write_after_cards(cfg, new_res, deck2)
         stable = quickstart_cli.stable_page_for(cfg, new_res) if page_path else None
         if stable is not None:
-            say(f"结果页已更新（同一个页面，刷新即可）：{stable.resolve().as_uri()}")
+            say(T("结果页已更新（同一个页面，刷新即可）：", "The result page is updated (the same page: refresh it): ")
+                + stable.resolve().as_uri())
             summary["apply"]["page"] = str(stable)
         elif page_path is not None:
-            say(f"更新后的结果页：{page_path}")
+            say(T("更新后的结果页：", "The updated result page: ") + str(page_path))
             summary["apply"]["page"] = str(page_path)
         if deck2 is not None:
-            say(f"下一轮校准卡：{len(deck2['cards'])} 张 → {path2}（jevscreen cards 查看）" if deck2["cards"]
-                else calib.EMPTY_DECK_ZH)
+            n2 = len(deck2["cards"])
+            say(T(f"下一轮校准卡：{n2} 张 → {path2}（jevscreen cards 查看）" if n2 else calib.EMPTY_DECK_ZH,
+                  f"Next cards: {n2} → {path2} (jevscreen cards --lang en shows them)" if n2
+                  else "No cards need your judgment this time"))
     if code == EXIT_OK and rules_rejected:
-        say("候选规则都没有采用（回答和关键词照常生效）。")
+        say(T("候选规则都没有采用（回答和关键词照常生效）。",
+              "None of the suggested rules was adopted (the answers and keywords still apply)."))
         code = EXIT_RULES_REJECTED
     return done(code, "rules_rejected" if code == EXIT_RULES_REJECTED else new_res["status"])
 

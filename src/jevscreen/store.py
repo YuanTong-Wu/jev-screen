@@ -125,6 +125,13 @@ CREATE TABLE IF NOT EXISTS runs (
     run_id VARCHAR PRIMARY KEY, command VARCHAR, started_at TIMESTAMP, finished_at TIMESTAMP,
     status VARCHAR, requests INTEGER, note VARCHAR);
 
+-- Translations of page texts made by the user's own AI agent (jevscreen.translations), keyed by the sha256 of the
+-- original text and the target language; provenance 'agent translation'. The original (the evidence) is never
+-- stored here nor changed: a page shows the translation with an 'AI translation' tag and the original beside it.
+CREATE TABLE IF NOT EXISTS translations (
+    sha VARCHAR, target_lang VARCHAR, kind VARCHAR, source_lang VARCHAR, text VARCHAR, provenance VARCHAR,
+    created_at TIMESTAMP, PRIMARY KEY (sha, target_lang));
+
 -- Screenable universe: active primary common stocks plus primary depositary receipts, one row per company_key
 -- (highest USD market cap line wins), joined to the latest market row.
 CREATE OR REPLACE VIEW latest_market AS
@@ -191,10 +198,12 @@ def session(cfg: Config, *, read_only: bool = False, wait_s: float | None = None
 # and an old database gains them (NULL for existing rows) the first time a writer opens it. New tables get them the
 # same way, so old and new databases end up with the same column order.
 # jev_items: read_index = Question.read of the send (repeat reads of one item), confidence = Jev's per-answer value.
+# jev_requests: provider = the Jev provider of the send (typesafe | openrouter | vercel; NULL before: OpenRouter).
 # screen_results: reads_json = [{read, request_id, p_pos, cached}], p_pos / p_pos_sd = mean / spread over the reads.
 MIGRATIONS = (
     "ALTER TABLE jev_items ADD COLUMN IF NOT EXISTS read_index INTEGER",
     "ALTER TABLE jev_items ADD COLUMN IF NOT EXISTS confidence DOUBLE",
+    "ALTER TABLE jev_requests ADD COLUMN IF NOT EXISTS provider VARCHAR",
     "ALTER TABLE screen_results ADD COLUMN IF NOT EXISTS reads_json VARCHAR",
     "ALTER TABLE screen_results ADD COLUMN IF NOT EXISTS p_pos DOUBLE",
     "ALTER TABLE screen_results ADD COLUMN IF NOT EXISTS p_pos_sd DOUBLE",

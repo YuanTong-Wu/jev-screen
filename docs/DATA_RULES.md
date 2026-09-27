@@ -611,12 +611,14 @@ EDINET is not fetched on demand. Every company still on a profile gets a reason 
 ## Keys and consent (agent-first operation)
 - Keys live in the data folder (git-ignored), one value per file, mode 0600, written only by
   `jevscreen keys set NAME` (hidden prompt; `--stdin` only when stdin is not a terminal). Names and files:
-  `openrouter` -> `openrouter_api_key`, `sec-email` -> `sec_user_agent`, `edinet` -> `edinet_api_key`, `opendart` ->
-  `opendart_api_key`. An environment variable wins over the file. No command prints a key; `keys check` and
+  `typesafe` -> `typesafe_api_key`, `openrouter` -> `openrouter_api_key`, `vercel` -> `vercel_api_key` (the Jev keys:
+  Jev via TypeSafe's official API, OpenRouter or Vercel AI Gateway, same price; one is enough), `sec-email` ->
+  `sec_user_agent`, `edinet` -> `edinet_api_key`, `opendart` -> `opendart_api_key`. An environment variable wins over the file. No command prints a key; `keys check` and
   `doctor` report presence, source, file mode and shape only, and `doctor` reads no key file at all (stat only)
   unless `--check-jev` is given.
-- `doctor --check-jev` is the only network access of these commands: one `GET https://openrouter.ai/api/v1/key`
-  (free, no model call); the key is redacted from any error text.
+- `doctor --check-jev` is the only network access of these commands: one free GET to the active Jev provider (no
+  model call): `https://openrouter.ai/api/v1/key`, `https://ai-gateway.vercel.sh/v1/credits` or
+  `https://api.typesafe.ai/v1/models`; the key is redacted from any error text.
 - Gray-private sources need a recorded human answer: `jevscreen consent set gray-sources yes|no` writes
   `data/consent.json` (current value, UTC timestamp, statement, append-only history). No record, an unreadable file
   or an unknown source id all mean no (`consent.require_gray_sources` raises `ConsentRequired`). `refresh-universe`,
@@ -653,11 +655,13 @@ EDINET is not fetched on demand. Every company still on a profile gets a reason 
   ticker ending (`-P?`, `-PR`, `.PR`, `_P`, `-W`, `-WT`, `-U`, `-R`; a Thai `-R` NVDR is kept). Stale deletion
   removes only rows of an earlier bulk import, never rows of the DuckDB import. `--fd-file PATH` imports a manual
   download. Both need a recorded `yes` for gray-sources before any request or file read.
-- Consent statement version 3 (`consent.STATEMENTS`) says what the terms restrict (TradingView forbids automated
-  use of its data, including algorithmic screening; the Yahoo text's terms restrict reuse), that the risk is the
-  user's, that annual reports fetched from official sites (SEC, CNINFO, BSE) are personal use only, and that profile
-  text and short annual-report excerpts are sent to the AI service (OpenRouter and the provider that serves the
-  model). Version 2 added the AI-service sentence. The record keeps the version, the language and the exact text
+- Consent statement version 4 (`consent.STATEMENTS`) says it in the owner's casual tone, still truthfully: the stock
+  list and profiles come from TradingView and Yahoo, a gray area whose terms don't allow automated bulk use, with
+  occasional rate limits or short blocks; the data stays on the user's computer for their own research and is not
+  shared; annual reports downloaded from official sites (SEC, CNINFO, BSE, ...) are for their own use too; profiles
+  and report excerpts are sent to Jev (the AI service) to read. The Chinese answer words are 可以 (yes) / 不要 (no).
+  Version 3 said the same formally (and named OpenRouter as the AI service); version 2 added the AI-service
+  sentence. The record keeps the version, the language and the exact text
   shown. An older `yes` stays valid for the plain commands; quickstart asks once more for the current version.
   Migration note for an existing install: the owner runs `jevscreen consent set gray-sources yes` once.
 - Canary: after the human approves the budget and before the estimate, quickstart sends one paid Jev request
@@ -690,10 +694,24 @@ EDINET is not fetched on demand. Every company still on a profile gets a reason 
     the chat lines): a row listed only because the user said yes reads 按你的判断（AI 没从原文确认） / "your call (the
     AI did not confirm it from the text)", never 年报原文; it is not marked borderline, but its quote still says
     when it does not name the idea.
+  - One language per page: a zh page is fully Chinese, an en page fully English (labels, sources, forms, dates,
+    money, countries, the plain-text list); no language toggle.
   - Names: on a Chinese page an A share shows its CNINFO short name (简称, from the newest stock list in the store,
     joined through identifiers.cninfo_orgid and the line's own code: one org_id carries the A and the B share, 南玻A
-    000012 and 南玻B 200012; the org_id alone only when the list has no row with the code, then its A-share name)
-    first and the English name below it; share-class tails ("Class A") are dropped. A "what it does" line that
+    000012 and 南玻B 200012; the org_id alone only when the list has no row with the code, then its A-share name),
+    a Taiwan line its MOPS 公司簡稱 (from the basic-data payloads sync-mops stored), any other company the user's
+    agent's translation with the original name small below it (else the English name); an English page shows the
+    English name only. Share-class tails ("Class A", "ADR") are dropped.
+  - Translations (jevscreen.translations) are made by the user's own AI agent, stored apart from the evidence
+    (table `translations`, provenance 'agent translation', key sha256 of the text + target language) and never
+    replace it: the page labels them "AI 翻译 / AI translation" (a translated excerpt "AI 翻译（不是原文）", never
+    "事实") and keeps the verbatim original one tap away; a translated name keeps the original name beside it in
+    every place it shows (list rows, cards, the top table, the unverified / excluded lists, the chat text); an
+    untranslated text shows the original marked "原文（未翻译） / original (not translated)". A text the agent
+    marks keep_original (and a name kept in Latin letters) is stored as itself: resolved, shown as the original.
+    A page built while the store stays busy never replaces an existing page, and a new one carries the idea
+    page's translations; the export then refuses (store_busy) rather than export already translated texts. Translations are
+    derived from personal-use text and stay local like it (never in the open pack). A "what it does" line that
     only repeats the company name is replaced by the excerpt's first sentence.
   - Internal labels never reach the reader: core / adjacent / explicit / partial are shown as 核心 / 相邻 / 明确 /
     相关, the mean fit probability as "AI 判断符合的把握 96%"; the first-read core score only with `?debug` in the

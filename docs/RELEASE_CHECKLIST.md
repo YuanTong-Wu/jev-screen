@@ -83,5 +83,7 @@ FinanceDatabase DuckDB exist only at those old paths: without this step `screen`
 3. Consent: `refresh-universe`, `crawl-descriptions` and `import-fd` now refuse to run (exit 1,
    `consent_required`) without a recorded answer. The maintainer records it once, in person:
    `jevscreen consent set gray-sources yes`.
-4. Check: `jevscreen doctor --json` shows `key_openrouter` and `consent_gray_sources` ok (add `--check-jev` for one
-   free key check against OpenRouter).
+4. Check: `jevscreen doctor --json` shows `key_openrouter`, `jev_provider` (openrouter) and `consent_gray_sources`
+   ok (add `--check-jev` for one free key check against the active Jev provider). A TypeSafe or Vercel AI Gateway key
+   works the same way (`keys set typesafe` / `keys set vercel`); answers are cached per provider, so switching reads
+   and pays again once.

@@ -49,6 +49,10 @@ def rule_factory(log):
 
 class CliCase(StoreCase):
     def main(self, argv, factory=None):
+        # the English idea's answer / cards output follows the page language (English); these tests read the Chinese
+        # text, so they ask for it (test_l10n_outputs covers the English output)
+        if argv and argv[0] in ("answer", "cards") and "--lang" not in argv:
+            argv = [*argv, "--lang", "zh"]
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, {"JEVSCREEN_HOME": str(self.home)}), \
                 mock.patch.object(screen, "_default_factory", factory or make_factory(self.log)), \
