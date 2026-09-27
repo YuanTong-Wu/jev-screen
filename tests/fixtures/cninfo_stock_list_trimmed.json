@@ -1,0 +1,341 @@
+{
+ "stockList": [
+  {
+   "code": "009001",
+   "pinyin": "gsyh",
+   "category": "A股",
+   "orgId": "gssz0009001",
+   "zwjc": "癸示银行"
+  },
+  {
+   "code": "309386",
+   "pinyin": "xskx",
+   "category": "A股",
+   "orgId": "9900093860",
+   "zwjc": "辛示科信"
+  },
+  {
+   "code": "609519",
+   "pinyin": "rsjy",
+   "category": "A股",
+   "orgId": "gssh0609519",
+   "zwjc": "壬示酒业"
+  },
+  {
+   "code": "609201",
+   "pinyin": "jsyh",
+   "category": "A股",
+   "orgId": "jjxt0099019",
+   "zwjc": "甲示银行"
+  },
+  {
+   "code": "689825",
+   "pinyin": "zscc",
+   "category": "A股",
+   "orgId": "9920099008",
+   "zwjc": "子示存储"
+  },
+  {
+   "code": "920000",
+   "pinyin": "csny",
+   "category": "A股",
+   "orgId": "gfbj0899000",
+   "zwjc": "丑示农业"
+  },
+  {
+   "code": "439047",
+   "pinyin": "ysws",
+   "category": "A股",
+   "orgId": "9900096121",
+   "zwjc": "寅示生物"
+  },
+  {
+   "code": "009001",
+   "pinyin": "gsyh",
+   "category": "A股",
+   "orgId": "gssz0009001",
+   "zwjc": "癸示银行"
+  },
+  {
+   "code": "009002",
+   "pinyin": "sl02",
+   "category": "A股",
+   "orgId": "gssz0009002",
+   "zwjc": "*ST示例02"
+  },
+  {
+   "code": "009003",
+   "pinyin": "sl03",
+   "category": "A股",
+   "orgId": "gssz0009003",
+   "zwjc": "示例03"
+  },
+  {
+   "code": "009004",
+   "pinyin": "sl04",
+   "category": "A股",
+   "orgId": "gssz0009004",
+   "zwjc": "示例04"
+  },
+  {
+   "code": "009005",
+   "pinyin": "sl05",
+   "category": "A股",
+   "orgId": "gssz0009005",
+   "zwjc": "示例05A"
+  },
+  {
+   "code": "009006",
+   "pinyin": "sl06",
+   "category": "A股",
+   "orgId": "gssz0009006",
+   "zwjc": "示例06"
+  },
+  {
+   "code": "009007",
+   "pinyin": "sl07",
+   "category": "A股",
+   "orgId": "gssz0009007",
+   "zwjc": "示例07"
+  },
+  {
+   "code": "009008",
+   "pinyin": "sl08",
+   "category": "A股",
+   "orgId": "gssz0009008",
+   "zwjc": "示例08A"
+  },
+  {
+   "code": "009009",
+   "pinyin": "sl09",
+   "category": "A股",
+   "orgId": "gssz0009009",
+   "zwjc": "示例09"
+  },
+  {
+   "code": "009010",
+   "pinyin": "sl10",
+   "category": "A股",
+   "orgId": "gssz0009010",
+   "zwjc": "*ST示例10"
+  },
+  {
+   "code": "009011",
+   "pinyin": "sl11",
+   "category": "A股",
+   "orgId": "gssz0009011",
+   "zwjc": "示例11"
+  },
+  {
+   "code": "009012",
+   "pinyin": "sl12",
+   "category": "A股",
+   "orgId": "gssz0009012",
+   "zwjc": "示例12"
+  },
+  {
+   "code": "009013",
+   "pinyin": "sl13",
+   "category": "A股",
+   "orgId": "gssz0009013",
+   "zwjc": "示例13A"
+  },
+  {
+   "code": "009014",
+   "pinyin": "sl14",
+   "category": "A股",
+   "orgId": "gssz0009014",
+   "zwjc": "示例14"
+  },
+  {
+   "code": "009015",
+   "pinyin": "sl15",
+   "category": "A股",
+   "orgId": "gssz0009015",
+   "zwjc": "示例15"
+  },
+  {
+   "code": "009016",
+   "pinyin": "sl16",
+   "category": "A股",
+   "orgId": "gssz0009016",
+   "zwjc": "示例16A"
+  },
+  {
+   "code": "009017",
+   "pinyin": "sl17",
+   "category": "A股",
+   "orgId": "gssz0009017",
+   "zwjc": "示例17"
+  },
+  {
+   "code": "009018",
+   "pinyin": "sl18",
+   "category": "A股",
+   "orgId": "gssz0009018",
+   "zwjc": "*ST示例18"
+  },
+  {
+   "code": "009019",
+   "pinyin": "sl19",
+   "category": "A股",
+   "orgId": "gssz0009019",
+   "zwjc": "示例19"
+  },
+  {
+   "code": "009020",
+   "pinyin": "sl20",
+   "category": "A股",
+   "orgId": "gssz0009020",
+   "zwjc": "示例20"
+  },
+  {
+   "code": "009021",
+   "pinyin": "sl21",
+   "category": "A股",
+   "orgId": "gssz0009021",
+   "zwjc": "示例21A"
+  },
+  {
+   "code": "009022",
+   "pinyin": "sl22",
+   "category": "A股",
+   "orgId": "gssz0009022",
+   "zwjc": "示例22"
+  },
+  {
+   "code": "009023",
+   "pinyin": "sl23",
+   "category": "A股",
+   "orgId": "gssz0009023",
+   "zwjc": "示例23"
+  },
+  {
+   "code": "009024",
+   "pinyin": "sl24",
+   "category": "A股",
+   "orgId": "gssz0009024",
+   "zwjc": "示例24A"
+  },
+  {
+   "code": "009025",
+   "pinyin": "sl25",
+   "category": "A股",
+   "orgId": "gssz0009025",
+   "zwjc": "示例25"
+  },
+  {
+   "code": "009026",
+   "pinyin": "sl26",
+   "category": "A股",
+   "orgId": "gssz0009026",
+   "zwjc": "*ST示例26"
+  },
+  {
+   "code": "009027",
+   "pinyin": "sl27",
+   "category": "A股",
+   "orgId": "gssz0009027",
+   "zwjc": "示例27"
+  },
+  {
+   "code": "009028",
+   "pinyin": "sl28",
+   "category": "A股",
+   "orgId": "gssz0009028",
+   "zwjc": "示例28"
+  },
+  {
+   "code": "009029",
+   "pinyin": "sl29",
+   "category": "A股",
+   "orgId": "gssz0009029",
+   "zwjc": "示例29A"
+  },
+  {
+   "code": "009030",
+   "pinyin": "sl30",
+   "category": "A股",
+   "orgId": "gssz0009030",
+   "zwjc": "示例30"
+  },
+  {
+   "code": "009031",
+   "pinyin": "sl31",
+   "category": "A股",
+   "orgId": "gssz0009031",
+   "zwjc": "示例31"
+  },
+  {
+   "code": "009032",
+   "pinyin": "sl32",
+   "category": "A股",
+   "orgId": "gssz0009032",
+   "zwjc": "示例32A"
+  },
+  {
+   "code": "009033",
+   "pinyin": "sl33",
+   "category": "A股",
+   "orgId": "gssz0009033",
+   "zwjc": "示例33"
+  },
+  {
+   "code": "009034",
+   "pinyin": "sl34",
+   "category": "A股",
+   "orgId": "gssz0009034",
+   "zwjc": "*ST示例34"
+  },
+  {
+   "code": "009035",
+   "pinyin": "sl35",
+   "category": "A股",
+   "orgId": "gssz0009035",
+   "zwjc": "示例35"
+  },
+  {
+   "code": "009036",
+   "pinyin": "sl36",
+   "category": "A股",
+   "orgId": "gssz0009036",
+   "zwjc": "示例36"
+  },
+  {
+   "code": "009037",
+   "pinyin": "sl37",
+   "category": "A股",
+   "orgId": "gssz0009037",
+   "zwjc": "示例37A"
+  },
+  {
+   "code": "009038",
+   "pinyin": "sl38",
+   "category": "A股",
+   "orgId": "gssz0009038",
+   "zwjc": "示例38"
+  },
+  {
+   "code": "009039",
+   "pinyin": "sl39",
+   "category": "A股",
+   "orgId": "gssz0009039",
+   "zwjc": "示例39"
+  },
+  {
+   "code": "009040",
+   "pinyin": "sl40",
+   "category": "A股",
+   "orgId": "gssz0009040",
+   "zwjc": "示例40A"
+  },
+  {
+   "code": "009041",
+   "pinyin": "sl41",
+   "category": "A股",
+   "orgId": "gssz0009041",
+   "zwjc": "示例41"
+  }
+ ],
+ "_note": "synthetic: invented codes (009xxx, 309386, 609xxx, 689825, 439047, 920000), names and orgIds shaped like the CNINFO szse_stock.json list"
+}

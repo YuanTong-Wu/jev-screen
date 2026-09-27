@@ -1,0 +1,211 @@
+{
+ "_source": "Provider response (model, answers, usage) of one pilot request from the owner's earlier Jev tool: 4 issuers x 4 questions; question ids use the old 'item_{i}_{dim}' form. Answers only; no issuer text.",
+ "criteria_labels": {
+  "agent_revenue_disclosure": [
+   "explicit_zero",
+   "quantified_agent_revenue",
+   "unspecified"
+  ],
+  "business_relation": [
+   "direct_agent_vendor",
+   "enabling_software",
+   "insufficient",
+   "other_business",
+   "physical_infrastructure"
+  ],
+  "paid_status": [
+   "explicit_paid",
+   "explicit_unpaid",
+   "unspecified"
+  ],
+  "production_stage": [
+   "announcement",
+   "pilot",
+   "production",
+   "unspecified"
+  ]
+ },
+ "items": 4,
+ "response": {
+  "answers": {
+   "item_0_agent_revenue_disclosure": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_zero": 0,
+     "quantified_agent_revenue": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_0_business_relation": {
+    "choice": "physical_infrastructure",
+    "confidence": 0.85,
+    "probabilities": {
+     "direct_agent_vendor": 0,
+     "enabling_software": 0,
+     "insufficient": 0.02,
+     "other_business": 0.09,
+     "physical_infrastructure": 0.89
+    },
+    "type": "choice"
+   },
+   "item_0_paid_status": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_paid": 0,
+     "explicit_unpaid": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_0_production_stage": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "announcement": 0,
+     "pilot": 0,
+     "production": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_1_agent_revenue_disclosure": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_zero": 0,
+     "quantified_agent_revenue": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_1_business_relation": {
+    "choice": "other_business",
+    "confidence": 0.9,
+    "probabilities": {
+     "direct_agent_vendor": 0,
+     "enabling_software": 0,
+     "insufficient": 0.08,
+     "other_business": 0.92,
+     "physical_infrastructure": 0
+    },
+    "type": "choice"
+   },
+   "item_1_paid_status": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_paid": 0,
+     "explicit_unpaid": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_1_production_stage": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "announcement": 0,
+     "pilot": 0,
+     "production": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_2_agent_revenue_disclosure": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_zero": 0,
+     "quantified_agent_revenue": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_2_business_relation": {
+    "choice": "other_business",
+    "confidence": 0.92,
+    "probabilities": {
+     "direct_agent_vendor": 0,
+     "enabling_software": 0,
+     "insufficient": 0.07,
+     "other_business": 0.93,
+     "physical_infrastructure": 0
+    },
+    "type": "choice"
+   },
+   "item_2_paid_status": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_paid": 0,
+     "explicit_unpaid": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_2_production_stage": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "announcement": 0,
+     "pilot": 0,
+     "production": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_3_agent_revenue_disclosure": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_zero": 0,
+     "quantified_agent_revenue": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_3_business_relation": {
+    "choice": "other_business",
+    "confidence": 0.94,
+    "probabilities": {
+     "direct_agent_vendor": 0,
+     "enabling_software": 0,
+     "insufficient": 0.04,
+     "other_business": 0.95,
+     "physical_infrastructure": 0.01
+    },
+    "type": "choice"
+   },
+   "item_3_paid_status": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "explicit_paid": 0,
+     "explicit_unpaid": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   },
+   "item_3_production_stage": {
+    "choice": "unspecified",
+    "confidence": 1,
+    "probabilities": {
+     "announcement": 0,
+     "pilot": 0,
+     "production": 0,
+     "unspecified": 1
+    },
+    "type": "choice"
+   }
+  },
+  "model": "typesafe/jev-1.13-20260917",
+  "usage": {
+   "cost": 0.000219534,
+   "input_tokens": 5227,
+   "output_tokens": 886
+  }
+ }
+}

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jev-screen"
+version = "0.0.1"
+description = "Turn an investment idea into a short, evidence-backed stock list: local data layer plus Jev screening."
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["duckdb>=1.0"]
+
+[project.optional-dependencies]
+pdf = ["pypdf>=4"]       # China A-share annual-report PDFs (CNINFO), fetched on demand by quickstart
+
+[project.scripts]
+jevscreen = "jevscreen.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jevscreen = ["words_en.txt"]   # calib.ordinary_word: the English word list of the idea_en check

@@ -1,0 +1,43 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 3,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "00990001",
+   "corp_name": "테스트전자",
+   "stock_code": "999990",
+   "corp_cls": "Y",
+   "report_nm": "[기재정정]사업보고서 (2025.12)",
+   "rcept_no": "20260415000101",
+   "flr_nm": "테스트전자",
+   "rcept_dt": "20260415",
+   "rm": "정"
+  },
+  {
+   "corp_code": "00990001",
+   "corp_name": "테스트전자",
+   "stock_code": "999990",
+   "corp_cls": "Y",
+   "report_nm": "사업보고서 (2025.12)",
+   "rcept_no": "20260318000101",
+   "flr_nm": "테스트전자",
+   "rcept_dt": "20260318",
+   "rm": "연정"
+  },
+  {
+   "corp_code": "00990001",
+   "corp_name": "테스트전자",
+   "stock_code": "999990",
+   "corp_cls": "Y",
+   "report_nm": "사업보고서 (2024.12)",
+   "rcept_no": "20250319000101",
+   "flr_nm": "테스트전자",
+   "rcept_dt": "20250319",
+   "rm": "연"
+  }
+ ]
+}

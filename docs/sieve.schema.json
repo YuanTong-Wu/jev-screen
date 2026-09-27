@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/YuanTong-Wu/jev-screen/blob/main/docs/sieve.schema.json",
+  "title": "jev-screen sieve author draft",
+  "description": "What an AI agent may write into an idea's sieve with `jevscreen sieve new|set --from DRAFT`. The draft is a JSON merge patch (RFC 7386) of these author fields only: a null value removes a field, objects merge, lists replace. Everything else in the sieve (card answers, pins, rules, keyword learning, `resolved`, idea_en_reprice) is written by the tool. Pins need the human's own yes: `jevscreen sieve pin`. Kept in sync with jevscreen.sieve_author (tests/test_cli_why.py).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "jevscreen.sieve/1", "description": "optional; ignored"},
+    "idea": {
+      "type": "string",
+      "description": "The exact idea text (after trimming spaces) the sieve belongs to. A draft whose idea differs from the sieve's is refused."
+    },
+    "idea_en": {
+      "type": ["string", "null"],
+      "maxLength": 300,
+      "description": "English rendering of a non-English idea, used in the Jev questions instead of the local model's. Ignored for an English idea or another idea's sieve; frozen once a paid run of the idea used another one (sieve set --reprice, human's yes). Must not name a company the sieve lists."
+    },
+    "seed_terms": {
+      "type": ["object", "null"],
+      "description": "Excerpt keyword terms per annual-report language, used after the user's --keywords flags and before generated terms.",
+      "additionalProperties": false,
+      "properties": {
+        "en": {"$ref": "#/$defs/terms"},
+        "zh": {"$ref": "#/$defs/terms"},
+        "ja": {"$ref": "#/$defs/terms"},
+        "ko": {"$ref": "#/$defs/terms"}
+      }
+    },
+    "facets": {
+      "type": ["object", "null"],
+      "description": "English slots the library rules are rendered with: category and target are required when facets is set; mechanism is optional.",
+      "additionalProperties": {"type": "string"},
+      "properties": {"category": {"type": "string"}, "target": {"type": "string"}, "mechanism": {"type": "string"}}
+    },
+    "facets_zh": {
+      "type": ["object", "null"],
+      "description": "The same slots in Chinese, for the cards and the report only (never sent to Jev).",
+      "additionalProperties": {"type": "string"}
+    },
+    "target_terms": {
+      "type": ["object", "null"],
+      "description": "Terms naming the idea's object, per language (used by the scope card).",
+      "additionalProperties": false,
+      "properties": {
+        "en": {"type": "array", "items": {"type": "string"}},
+        "zh": {"type": "array", "items": {"type": "string"}},
+        "ja": {"type": "array", "items": {"type": "string"}},
+        "ko": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "should_pass": {
+      "type": ["array", "null"],
+      "maxItems": 30,
+      "description": "应该有（检查）: companies the human expects in the list. Always read by layer 2 and reported; never pinned. Resolved once, when written (ticker, exchange code, security id or exact name).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["company"],
+        "properties": {
+          "company": {"type": "string", "minLength": 1},
+          "want": {"enum": ["explicit", "partial"], "default": "explicit"},
+          "why": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "should_fail": {
+      "type": ["array", "null"],
+      "maxItems": 30,
+      "description": "不该有（检查）: companies the human expects NOT to be in the list. Same rules as should_pass; a company may not be in both.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["company"],
+        "properties": {
+          "company": {"type": "string", "minLength": 1},
+          "why": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "notes": {"type": ["string", "null"], "maxLength": 2000, "description": "Free notes for the human; never sent to Jev."}
+  },
+  "$defs": {
+    "terms": {"type": "array", "maxItems": 15, "items": {"type": "string", "minLength": 1, "maxLength": 60}}
+  },
+  "examples": [
+    {
+      "idea": "人形机器人：给工厂和仓库用的双足或轮式人形机器人及其关键零部件",
+      "idea_en": "Humanoid robots for factories and warehouses, and their key components",
+      "seed_terms": {"en": ["humanoid robot", "biped"], "zh": ["人形机器人", "灵巧手"], "ja": ["ヒューマノイド"], "ko": ["휴머노이드"]},
+      "should_pass": [{"company": "NYSE:ROBO", "want": "explicit", "why": "sells humanoid robots"}],
+      "should_fail": [{"company": "NASDAQ:BANK", "why": "a bank"}],
+      "notes": "drafted by the agent after the first dry run"
+    },
+    {"should_pass": null, "notes": "clear the checks"}
+  ]
+}

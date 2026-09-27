@@ -1,0 +1,1304 @@
+{
+ "official": {
+  "calls": [
+   {
+    "items": [
+     [
+      "isin:US0000000004",
+      "BankCo",
+      "[tradingview_profile] BankCo offers retail banking.",
+      "8db7e6e33f3faadb96c6c8f3d02cde0f"
+     ],
+     [
+      "isin:KR7090000008",
+      "KoRobo",
+      "[tradingview_profile] KoRobo builds collaborative robot arms.",
+      "f3538555b20fc0057ad1bdf926a5c6d9"
+     ],
+     [
+      "isin:CNE000000009",
+      "China Robo",
+      "[tradingview_profile] China Robo makes industrial robot systems.",
+      "824b26737de4b5097db84e03eafa8b1d"
+     ],
+     [
+      "isin:US0000000001",
+      "RoboCorp",
+      "[tradingview_profile] RoboCorp makes industrial robot arms.\n\n[financedatabase_local] RoboCorp Inc. designs automation equipment and humanoid machines for warehouses.",
+      "9dbbda2f8c2bb6a4b0f823019ea4fbe6"
+     ],
+     [
+      "isin:US0000000007",
+      "Robo Two",
+      "[sec_filing_text] Robo Two provides motion control software and robot controllers.",
+      "76f76ddb7fb497c662ac261bbd4f3c67"
+     ],
+     [
+      "isin:GB0000000003",
+      "GearCo",
+      "[tradingview_profile] GearCo makes gearbox units for trucks.",
+      "b764231115e8ddfaad70f77a5b91cdbc"
+     ],
+     [
+      "isin:JP0000000002",
+      "ServoJP",
+      "[financedatabase_local] ServoJP manufactures servo motors for factory automation.",
+      "3afd2703db061758e7664cc66f2861f9"
+     ]
+    ],
+    "layer": "l1",
+    "question": {
+     "criteria": {
+      "adjacent": "Some product line is related to the idea or is a clear enabler of it, but it is not central to the company's business.",
+      "core": "A main product or service of the company directly implements, sells or supplies what the idea is about.",
+      "insufficient": "The description is too vague or too short to tell.",
+      "unrelated": "The description shows businesses that are unrelated to the idea."
+     },
+     "instructions": "Judge ONLY from state.text how state.issuer's CURRENT business relates to the investment idea \"Humanoid robots (original: 人形机器人)\". Do not use outside knowledge about the company. The company name alone is not evidence. Former businesses that the text says were sold or discontinued do not count.",
+     "key": "fit"
+    },
+    "read": 0
+   },
+   {
+    "items": [
+     [
+      "isin:KR7090000008",
+      "KoRobo",
+      "[annual report excerpts: DART 사업보고서 filed 2026-03-10; language ko]\n\n당사는 산업용 로봇과 협동 로봇을 설계하고 제조하는 기업으로, 자동차 및 전자 산업의 고객에게 제품을 공급하고 있습니다. 주요 생산 시설은 국내에 위치하고 있습니다. 당사의 임직원 수는 약 800명이며, 연구개발 인력이 전체 인원의 40% 이상을 차지하고 있습니다.\n\n[...]\n\n당사는 물류 창고용 휴머노이드 로봇을 개발하여 판매하고 있으며, 휴머노이드 로봇 매출은 전년 대비 크게 증가하였습니다.",
+      "3835499215df89669497e323ea4d98bb"
+     ],
+     [
+      "isin:CNE000000009",
+      "China Robo",
+      "[annual report excerpts: CNINFO 年度报告 + summary filed 2026-04-19; language zh]\n\n本摘要只列示年度报告的要点，完整的经营数据、财务报表以及下一年度的发展计划，请以同日发布在公司网站上的年度报告全文为准。公司主要从事工业自动化设备的研发、生产和销售。 公司是国内领先的工业自动化设备供应商，主要产品包括伺服系统、运动控制器和工业机器人整机，产品广泛应用于汽车、消费电子、锂电池和仓储物流等行业，客户覆盖国内外主要制造企业。 公司拥有完整的研发体系和专利布局，在运动控制算法、精密减速器和多传感器融合方面具有核心技术优势，研发人员占员工总数的比例超过三成。\n\n[...]\n\n公司研发并销售人形机器人，主要用于仓储拣选和装配作业。报告期内人形机器人业务收入同比大幅增长，已在多家客户现场实现批量部署。",
+      "fcada26ffa269832b6a66f1f0c10e25d"
+     ],
+     [
+      "isin:US0000000001",
+      "RoboCorp",
+      "[annual report excerpts: SEC 10-K filed 2026-02-01; language en]\n\nRoboCorp designs and manufactures industrial automation equipment for factories in North America, Europe and Asia. Our products are sold to automotive, electronics and logistics customers through direct sales teams.\n\n[...]\n\nWe develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.\n\n[...]\n\nWe compete with large industrial conglomerates and with specialised automation vendors on price and reliability.",
+      "7493ba582ad7741fc8b9a14fcff238a3"
+     ],
+     [
+      "isin:US0000000007",
+      "Robo Two",
+      "[annual report excerpts: SEC 10-K filed 2026-03-01; language en]\n\nRobo Two provides motion control software and robot controllers used by machine builders and system integrators. Our controller platform runs on standard industrial PCs and supports third-party robot arms from many vendors.",
+      "60db748c94b2e82ed0b680335a9515d9"
+     ],
+     [
+      "isin:JP0000000002",
+      "ServoJP",
+      "[annual report excerpts: EDINET 有価証券報告書 filed 2026-06-25; language ja]\n\n当社グループは、工場自動化向けのサーボモーターおよび精密減速機の製造・販売を主な事業としております。主要な顧客は自動車メーカーおよび電子部品メーカーであり、国内外に販売拠点を有しております。\n\n[...]\n\n当社は、ヒューマノイドロボット向けの小型アクチュエーターの開発を進めており、一部の顧客に試作品を出荷しております。",
+      "b585f410aa4d37dcc5309310bceac85a"
+     ]
+    ],
+    "layer": "l2",
+    "question": {
+     "criteria": {
+      "contradicted": "The text explicitly says that the related activity was sold, discontinued or wound down, or that the company does not offer it.",
+      "explicit": "The text explicitly states that the company offers or operates a product or service that directly implements the idea.",
+      "insufficient": "The text does not say enough to decide, including when it only describes other businesses of the company.",
+      "partial": "The text describes a related product, a small or planned activity, or an enabler, but not an explicit offering that directly implements the idea."
+     },
+     "instructions": "state.text is evidence about state.issuer: either excerpts from its latest annual report (it starts with \"[annual report excerpts\") or, when no annual report text is available, a short company profile (it starts with \"[company profile\"). Using ONLY state.text, decide whether it EXPLICITLY states that the company offers or operates a product or service that directly implements the investment idea \"Humanoid robots (original: 人形机器人)\". Do not use outside knowledge. The company name alone is not evidence. Excerpts that simply do not mention the idea are not a contradiction: they are insufficient.",
+     "key": "evidence"
+    },
+    "read": 0
+   }
+  ],
+  "cost_usd": 0.02,
+  "csv": [
+   {
+    "cagr_currency": "",
+    "cagr_years": "",
+    "company_key": "isin:KR7090000008",
+    "country": "South Korea",
+    "doc_lang": "ko",
+    "evidence_excerpt": "당사는 물류 창고용 휴머노이드 로봇을 개발하여 판매하고 있으며, 휴머노이드 로봇 매출은 전년 대비 크게 증가하였습니다.",
+    "evidence_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260310000999",
+    "filing_date": "2026-03-10",
+    "filing_form": "사업보고서",
+    "filing_source": "dart_business_report",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": "0.9",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "dart_business_report:사업보고서",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "True",
+    "l2_label": "explicit",
+    "l2_p_top": "0.8",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": "7000000000.0",
+    "name": "KoRobo",
+    "rank": "1",
+    "region": "South Korea",
+    "revenue_cagr_3y_local": "",
+    "revenue_ttm_usd": "",
+    "score": "4.8985",
+    "security_id": "KRX:090000"
+   },
+   {
+    "cagr_currency": "",
+    "cagr_years": "",
+    "company_key": "isin:CNE000000009",
+    "country": "China",
+    "doc_lang": "zh",
+    "evidence_excerpt": "公司研发并销售人形机器人，主要用于仓储拣选和装配作业。报告期内人形机器人业务收入同比大幅增长，已在多家客户现场实现批量部署。",
+    "evidence_url": "http://www.cninfo.com.cn/f25.pdf",
+    "filing_date": "2026-04-19",
+    "filing_form": "年度报告",
+    "filing_source": "cninfo_annual_report",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": "0.9",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "cninfo_annual_report:年度报告",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "True",
+    "l2_label": "explicit",
+    "l2_p_top": "0.8",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": "6000000000.0",
+    "name": "China Robo",
+    "rank": "2",
+    "region": "China",
+    "revenue_cagr_3y_local": "",
+    "revenue_ttm_usd": "",
+    "score": "4.8978",
+    "security_id": "SZSE:300999"
+   },
+   {
+    "cagr_currency": "USD",
+    "cagr_years": "2022-2025",
+    "company_key": "isin:US0000000001",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "We develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.",
+    "evidence_url": "https://www.sec.gov/robo.htm",
+    "filing_date": "2026-02-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": "0.9",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "True",
+    "l2_label": "explicit",
+    "l2_p_top": "0.8",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": "5000000000.0",
+    "name": "RoboCorp",
+    "rank": "3",
+    "region": "US",
+    "revenue_cagr_3y_local": "0.10000000000000009",
+    "revenue_ttm_usd": "1500000000.0",
+    "score": "4.897",
+    "security_id": "NYSE:ROBO"
+   },
+   {
+    "cagr_currency": "JPY",
+    "cagr_years": "2021-2024",
+    "company_key": "isin:JP0000000002",
+    "country": "Japan",
+    "doc_lang": "ja",
+    "evidence_excerpt": "当社は、ヒューマノイドロボット向けの小型アクチュエーターの開発を進めており、一部の顧客に試作品を出荷しております。",
+    "evidence_url": "https://disclosure2.edinet-fsa.go.jp/S100TEST",
+    "filing_date": "2026-06-25",
+    "filing_form": "有価証券報告書",
+    "filing_source": "edinet_yuho",
+    "l1_input_tier": "gray-private",
+    "l1_label": "adjacent",
+    "l1_p_core": "0.35",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "edinet_yuho:有価証券報告書",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "True",
+    "l2_label": "explicit",
+    "l2_p_top": "0.8",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": "1000000000.0",
+    "name": "ServoJP",
+    "rank": "4",
+    "region": "Japan",
+    "revenue_cagr_3y_local": "0.10000000000000009",
+    "revenue_ttm_usd": "9000000.0",
+    "score": "3.79",
+    "security_id": "TSE:6000"
+   },
+   {
+    "cagr_currency": "",
+    "cagr_years": "",
+    "company_key": "isin:US0000000007",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "Robo Two provides motion control software and robot controllers used by machine builders and system integrators. Our controller platform runs on standard industrial PCs and supports third-party robot arms from many vendors.",
+    "evidence_url": "https://www.sec.gov/rob2.htm",
+    "filing_date": "2026-03-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "official-private",
+    "l1_label": "core",
+    "l1_p_core": "0.9",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "False",
+    "l2_label": "partial",
+    "l2_p_top": "0.6",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "partial",
+    "market_cap_usd": "4000000000.0",
+    "name": "Robo Two",
+    "rank": "5",
+    "region": "US",
+    "revenue_cagr_3y_local": "",
+    "revenue_ttm_usd": "",
+    "score": "3.396",
+    "security_id": "NASDAQ:ROB2"
+   }
+  ],
+  "db": [
+   [
+    "isin:CNE000000009",
+    "SZSE:300999",
+    "l1",
+    "core",
+    "{\"adjacent\": 0.05, \"core\": 0.9, \"insufficient\": 0.02, \"unrelated\": 0.03}",
+    0.9,
+    "l1-req-1",
+    "tradingview_profile",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:GB0000000003",
+    "LSE:GEAR",
+    "l1",
+    "adjacent",
+    "{\"adjacent\": 0.3, \"core\": 0.1, \"insufficient\": 0.1, \"unrelated\": 0.5}",
+    0.5,
+    "l1-req-1",
+    "tradingview_profile",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:JP0000000002",
+    "TSE:6000",
+    "l1",
+    "adjacent",
+    "{\"adjacent\": 0.4, \"core\": 0.35, \"insufficient\": 0.05, \"unrelated\": 0.2}",
+    0.4,
+    "l1-req-1",
+    "financedatabase_local",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:KR7090000008",
+    "KRX:090000",
+    "l1",
+    "core",
+    "{\"adjacent\": 0.05, \"core\": 0.9, \"insufficient\": 0.02, \"unrelated\": 0.03}",
+    0.9,
+    "l1-req-1",
+    "tradingview_profile",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000001",
+    "NYSE:ROBO",
+    "l1",
+    "core",
+    "{\"adjacent\": 0.05, \"core\": 0.9, \"insufficient\": 0.02, \"unrelated\": 0.03}",
+    0.9,
+    "l1-req-1",
+    "tradingview_profile+financedatabase_local",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000004",
+    "NASDAQ:BANK",
+    "l1",
+    "unrelated",
+    "{\"adjacent\": 0.04, \"core\": 0.01, \"insufficient\": 0.05, \"unrelated\": 0.9}",
+    0.9,
+    "l1-req-1",
+    "tradingview_profile",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000007",
+    "NASDAQ:ROB2",
+    "l1",
+    "core",
+    "{\"adjacent\": 0.05, \"core\": 0.9, \"insufficient\": 0.02, \"unrelated\": 0.03}",
+    0.9,
+    "l1-req-1",
+    "sec_filing_text",
+    "official-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:CNE000000009",
+    "SZSE:300999",
+    "l2",
+    "explicit",
+    "{\"contradicted\": 0.05, \"explicit\": 0.8, \"insufficient\": 0.05, \"partial\": 0.1}",
+    0.8,
+    "l2-req-1",
+    "cninfo_annual_report:年度报告",
+    "official-private",
+    "http://www.cninfo.com.cn/f25.pdf",
+    "公司研发并销售人形机器人，主要用于仓储拣选和装配作业。报告期内人形机器人业务收入同比大幅增长，已在多家客户现场实现批量部署。",
+    "ok",
+    null
+   ],
+   [
+    "isin:JP0000000002",
+    "TSE:6000",
+    "l2",
+    "explicit",
+    "{\"contradicted\": 0.05, \"explicit\": 0.8, \"insufficient\": 0.05, \"partial\": 0.1}",
+    0.8,
+    "l2-req-1",
+    "edinet_yuho:有価証券報告書",
+    "official-private",
+    "https://disclosure2.edinet-fsa.go.jp/S100TEST",
+    "当社は、ヒューマノイドロボット向けの小型アクチュエーターの開発を進めており、一部の顧客に試作品を出荷しております。",
+    "ok",
+    null
+   ],
+   [
+    "isin:KR7090000008",
+    "KRX:090000",
+    "l2",
+    "explicit",
+    "{\"contradicted\": 0.05, \"explicit\": 0.8, \"insufficient\": 0.05, \"partial\": 0.1}",
+    0.8,
+    "l2-req-1",
+    "dart_business_report:사업보고서",
+    "official-private",
+    "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260310000999",
+    "당사는 물류 창고용 휴머노이드 로봇을 개발하여 판매하고 있으며, 휴머노이드 로봇 매출은 전년 대비 크게 증가하였습니다.",
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000001",
+    "NYSE:ROBO",
+    "l2",
+    "explicit",
+    "{\"contradicted\": 0.05, \"explicit\": 0.8, \"insufficient\": 0.05, \"partial\": 0.1}",
+    0.8,
+    "l2-req-1",
+    "sec_filing_text:10-K",
+    "official-private",
+    "https://www.sec.gov/robo.htm",
+    "We develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.",
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000007",
+    "NASDAQ:ROB2",
+    "l2",
+    "partial",
+    "{\"contradicted\": 0.1, \"explicit\": 0.2, \"insufficient\": 0.1, \"partial\": 0.6}",
+    0.6,
+    "l2-req-1",
+    "sec_filing_text:10-K",
+    "official-private",
+    "https://www.sec.gov/rob2.htm",
+    "Robo Two provides motion control software and robot controllers used by machine builders and system integrators. Our controller platform runs on standard industrial PCs and supports third-party robot arms from many vendors.",
+    "ok",
+    null
+   ]
+  ],
+  "funnel": {
+   "below_min_mcap": 1,
+   "below_min_volume": 0,
+   "described": 7,
+   "l1_inputs": 7,
+   "l1_ok": 7,
+   "l1_pass": 5,
+   "l1_sent": 7,
+   "l2_contradicted": 0,
+   "l2_inputs": 5,
+   "l2_ok": 5,
+   "l2_profile_inputs": 0,
+   "l2_sec_inputs": 5,
+   "l2_sent": 5,
+   "l2_verified": 5,
+   "no_description": 1,
+   "null_mcap": 0,
+   "other_country": 0,
+   "output": 5,
+   "universe": 8,
+   "universe_rows": 9,
+   "unverified": 0
+  },
+  "gaps": {
+   "l1_failed": [],
+   "l1_skipped_budget": [],
+   "l2_contradicted": [],
+   "l2_failed": [],
+   "l2_not_sent_l2_max": [],
+   "l2_profile_only": [],
+   "l2_skipped_budget": [],
+   "no_description": [
+    {
+     "error": null,
+     "market_cap_usd": 2000000000.0,
+     "name": "NoDesc",
+     "security_id": "NYSE:NODS",
+     "status": null
+    }
+   ],
+   "sec_document_old": [],
+   "sec_text_fallback": []
+  },
+  "layers": {
+   "l1": {
+    "by_status": {
+     "ok": 7
+    },
+    "cache_hits": 0,
+    "cost_usd": 0.01,
+    "estimate": {
+     "basis": "fake",
+     "est_cost_usd": 0.01,
+     "est_input_tokens": 141,
+     "est_seconds": 4.0,
+     "items": 7,
+     "requests": 1
+    },
+    "inputs": 7,
+    "items": 7,
+    "labels": {
+     "adjacent": 2,
+     "core": 4,
+     "unrelated": 1
+    },
+    "requests": 1
+   },
+   "l2": {
+    "budget_usd": 2.99,
+    "by_status": {
+     "ok": 5
+    },
+    "cache_hits": 0,
+    "cost_usd": 0.01,
+    "estimate": {
+     "basis": "fake",
+     "est_cost_usd": 0.01,
+     "est_input_tokens": 453,
+     "est_seconds": 4.0,
+     "items": 5,
+     "requests": 1
+    },
+    "inputs": 5,
+    "inputs_by_lang": {
+     "en": 2,
+     "ja": 1,
+     "ko": 1,
+     "zh": 1
+    },
+    "inputs_by_source": {
+     "cninfo_annual_report": 1,
+     "dart_business_report": 1,
+     "edinet_yuho": 1,
+     "sec_filing_text": 2
+    },
+    "items": 5,
+    "keyword_excerpts": 4,
+    "labels": {
+     "explicit": 4,
+     "partial": 1
+    },
+    "profile_inputs": 0,
+    "requests": 1,
+    "sec_inputs": 5,
+    "summary_inputs": 0
+   }
+  },
+  "questions": {
+   "l1": {
+    "criteria": {
+     "adjacent": "Some product line is related to the idea or is a clear enabler of it, but it is not central to the company's business.",
+     "core": "A main product or service of the company directly implements, sells or supplies what the idea is about.",
+     "insufficient": "The description is too vague or too short to tell.",
+     "unrelated": "The description shows businesses that are unrelated to the idea."
+    },
+    "instructions": "Judge ONLY from state.text how state.issuer's CURRENT business relates to the investment idea \"Humanoid robots (original: 人形机器人)\". Do not use outside knowledge about the company. The company name alone is not evidence. Former businesses that the text says were sold or discontinued do not count.",
+    "key": "fit"
+   },
+   "l2": {
+    "criteria": {
+     "contradicted": "The text explicitly says that the related activity was sold, discontinued or wound down, or that the company does not offer it.",
+     "explicit": "The text explicitly states that the company offers or operates a product or service that directly implements the idea.",
+     "insufficient": "The text does not say enough to decide, including when it only describes other businesses of the company.",
+     "partial": "The text describes a related product, a small or planned activity, or an enabler, but not an explicit offering that directly implements the idea."
+    },
+    "instructions": "state.text is evidence about state.issuer: either excerpts from its latest annual report (it starts with \"[annual report excerpts\") or, when no annual report text is available, a short company profile (it starts with \"[company profile\"). Using ONLY state.text, decide whether it EXPLICITLY states that the company offers or operates a product or service that directly implements the investment idea \"Humanoid robots (original: 人形机器人)\". Do not use outside knowledge. The company name alone is not evidence. Excerpts that simply do not mention the idea are not a contradiction: they are insufficient.",
+    "key": "evidence"
+   }
+  },
+  "rows": [
+   {
+    "cagr_currency": null,
+    "cagr_years": null,
+    "company_key": "isin:KR7090000008",
+    "country": "South Korea",
+    "doc_lang": "ko",
+    "evidence_excerpt": "당사는 물류 창고용 휴머노이드 로봇을 개발하여 판매하고 있으며, 휴머노이드 로봇 매출은 전년 대비 크게 증가하였습니다.",
+    "evidence_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260310000999",
+    "filing_date": "2026-03-10",
+    "filing_form": "사업보고서",
+    "filing_source": "dart_business_report",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": 0.9,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "dart_business_report:사업보고서",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": true,
+    "l2_label": "explicit",
+    "l2_p_top": 0.8,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": 7000000000.0,
+    "name": "KoRobo",
+    "rank": 1,
+    "region": "South Korea",
+    "revenue_cagr_3y_local": null,
+    "revenue_ttm_usd": null,
+    "score": 4.8985,
+    "security_id": "KRX:090000"
+   },
+   {
+    "cagr_currency": null,
+    "cagr_years": null,
+    "company_key": "isin:CNE000000009",
+    "country": "China",
+    "doc_lang": "zh",
+    "evidence_excerpt": "公司研发并销售人形机器人，主要用于仓储拣选和装配作业。报告期内人形机器人业务收入同比大幅增长，已在多家客户现场实现批量部署。",
+    "evidence_url": "http://www.cninfo.com.cn/f25.pdf",
+    "filing_date": "2026-04-19",
+    "filing_form": "年度报告",
+    "filing_source": "cninfo_annual_report",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": 0.9,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "cninfo_annual_report:年度报告",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": true,
+    "l2_label": "explicit",
+    "l2_p_top": 0.8,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": 6000000000.0,
+    "name": "China Robo",
+    "rank": 2,
+    "region": "China",
+    "revenue_cagr_3y_local": null,
+    "revenue_ttm_usd": null,
+    "score": 4.8978,
+    "security_id": "SZSE:300999"
+   },
+   {
+    "cagr_currency": "USD",
+    "cagr_years": "2022-2025",
+    "company_key": "isin:US0000000001",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "We develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.",
+    "evidence_url": "https://www.sec.gov/robo.htm",
+    "filing_date": "2026-02-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": 0.9,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": true,
+    "l2_label": "explicit",
+    "l2_p_top": 0.8,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": 5000000000.0,
+    "name": "RoboCorp",
+    "rank": 3,
+    "region": "US",
+    "revenue_cagr_3y_local": 0.10000000000000009,
+    "revenue_ttm_usd": 1500000000.0,
+    "score": 4.897,
+    "security_id": "NYSE:ROBO"
+   },
+   {
+    "cagr_currency": "JPY",
+    "cagr_years": "2021-2024",
+    "company_key": "isin:JP0000000002",
+    "country": "Japan",
+    "doc_lang": "ja",
+    "evidence_excerpt": "当社は、ヒューマノイドロボット向けの小型アクチュエーターの開発を進めており、一部の顧客に試作品を出荷しております。",
+    "evidence_url": "https://disclosure2.edinet-fsa.go.jp/S100TEST",
+    "filing_date": "2026-06-25",
+    "filing_form": "有価証券報告書",
+    "filing_source": "edinet_yuho",
+    "l1_input_tier": "gray-private",
+    "l1_label": "adjacent",
+    "l1_p_core": 0.35,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "edinet_yuho:有価証券報告書",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": true,
+    "l2_label": "explicit",
+    "l2_p_top": 0.8,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": 1000000000.0,
+    "name": "ServoJP",
+    "rank": 4,
+    "region": "Japan",
+    "revenue_cagr_3y_local": 0.10000000000000009,
+    "revenue_ttm_usd": 9000000.0,
+    "score": 3.79,
+    "security_id": "TSE:6000"
+   },
+   {
+    "cagr_currency": null,
+    "cagr_years": null,
+    "company_key": "isin:US0000000007",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "Robo Two provides motion control software and robot controllers used by machine builders and system integrators. Our controller platform runs on standard industrial PCs and supports third-party robot arms from many vendors.",
+    "evidence_url": "https://www.sec.gov/rob2.htm",
+    "filing_date": "2026-03-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "official-private",
+    "l1_label": "core",
+    "l1_p_core": 0.9,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": false,
+    "l2_label": "partial",
+    "l2_p_top": 0.6,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "partial",
+    "market_cap_usd": 4000000000.0,
+    "name": "Robo Two",
+    "rank": 5,
+    "region": "US",
+    "revenue_cagr_3y_local": null,
+    "revenue_ttm_usd": null,
+    "score": 3.396,
+    "security_id": "NASDAQ:ROB2"
+   }
+  ],
+  "status": "ok",
+  "terms_by_lang": {
+   "en": [
+    "humanoid robot"
+   ],
+   "ja": [
+    "ヒューマノイド"
+   ],
+   "ko": [
+    "휴머노이드"
+   ],
+   "zh": [
+    "人形机器人"
+   ]
+  },
+  "tiers_used": [
+   "gray-private",
+   "official-private"
+  ],
+  "unverified": [],
+  "warnings": []
+ },
+ "sec": {
+  "calls": [
+   {
+    "items": [
+     [
+      "isin:US0000000004",
+      "BankCo",
+      "[tradingview_profile] BankCo offers retail banking.",
+      "49580ba01ce56d4d0852c96976b0eb70"
+     ],
+     [
+      "isin:US0000000001",
+      "RoboCorp",
+      "[tradingview_profile] RoboCorp makes industrial robot arms.\n\n[financedatabase_local] RoboCorp Inc. designs automation equipment and humanoid machines for warehouses.",
+      "9ae5a67ca8d6d486345abf89a6e26900"
+     ],
+     [
+      "isin:US0000000007",
+      "Robo Two",
+      "[sec_filing_text] Robo Two provides motion control software and robot controllers.",
+      "c0ebaf4a9917b05ecaafdf67d70ac1ef"
+     ],
+     [
+      "isin:GB0000000003",
+      "GearCo",
+      "[tradingview_profile] GearCo makes gearbox units for trucks.",
+      "13756387fddebed357ce777ea2a94bef"
+     ],
+     [
+      "isin:JP0000000002",
+      "ServoJP",
+      "[financedatabase_local] ServoJP manufactures servo motors for factory automation.",
+      "dfc7bcf185865502aba509e041c13af7"
+     ]
+    ],
+    "layer": "l1",
+    "question": {
+     "criteria": {
+      "adjacent": "Some product line is related to the idea or is a clear enabler of it, but it is not central to the company's business.",
+      "core": "A main product or service of the company directly implements, sells or supplies what the idea is about.",
+      "insufficient": "The description is too vague or too short to tell.",
+      "unrelated": "The description shows businesses that are unrelated to the idea."
+     },
+     "instructions": "Judge ONLY from state.text how state.issuer's CURRENT business relates to the investment idea \"humanoid robots\". Do not use outside knowledge about the company. The company name alone is not evidence. Former businesses that the text says were sold or discontinued do not count.",
+     "key": "fit"
+    },
+    "read": 0
+   },
+   {
+    "items": [
+     [
+      "isin:US0000000001",
+      "RoboCorp",
+      "[annual report excerpts: SEC 10-K filed 2026-02-01; language en]\n\nRoboCorp designs and manufactures industrial automation equipment for factories in North America, Europe and Asia. Our products are sold to automotive, electronics and logistics customers through direct sales teams.\n\n[...]\n\nWe develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.\n\n[...]\n\nWe compete with large industrial conglomerates and with specialised automation vendors on price and reliability.",
+      "06e6a0736533b5c04870ad500ecfb5c8"
+     ],
+     [
+      "isin:US0000000007",
+      "Robo Two",
+      "[annual report excerpts: SEC 10-K filed 2026-03-01; language en]\n\nRobo Two provides motion control software and robot controllers used by machine builders and system integrators. Our controller platform runs on standard industrial PCs and supports third-party robot arms from many vendors.\n\n[...]\n\nWe sell licences and maintenance subscriptions and we do not manufacture robots ourselves at this time.",
+      "0b2ee8a95fb865c80d9d0285d869b3eb"
+     ],
+     [
+      "isin:JP0000000002",
+      "ServoJP",
+      "[company profile; no annual report text available]\n\n[financedatabase_local] ServoJP manufactures servo motors for factory automation.",
+      "10e622e206748566a6f3f41030ab88c2"
+     ]
+    ],
+    "layer": "l2",
+    "question": {
+     "criteria": {
+      "contradicted": "The text explicitly says that the related activity was sold, discontinued or wound down, or that the company does not offer it.",
+      "explicit": "The text explicitly states that the company offers or operates a product or service that directly implements the idea.",
+      "insufficient": "The text does not say enough to decide, including when it only describes other businesses of the company.",
+      "partial": "The text describes a related product, a small or planned activity, or an enabler, but not an explicit offering that directly implements the idea."
+     },
+     "instructions": "state.text is evidence about state.issuer: either excerpts from its latest annual report (it starts with \"[annual report excerpts\") or, when no annual report text is available, a short company profile (it starts with \"[company profile\"). Using ONLY state.text, decide whether it EXPLICITLY states that the company offers or operates a product or service that directly implements the investment idea \"humanoid robots\". Do not use outside knowledge. The company name alone is not evidence. Excerpts that simply do not mention the idea are not a contradiction: they are insufficient.",
+     "key": "evidence"
+    },
+    "read": 0
+   }
+  ],
+  "cost_usd": 0.02,
+  "csv": [
+   {
+    "cagr_currency": "USD",
+    "cagr_years": "2022-2025",
+    "company_key": "isin:US0000000001",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "We develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.",
+    "evidence_url": "https://www.sec.gov/robo.htm",
+    "filing_date": "2026-02-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": "0.9",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "True",
+    "l2_label": "explicit",
+    "l2_p_top": "0.8",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": "5000000000.0",
+    "name": "RoboCorp",
+    "rank": "1",
+    "region": "US",
+    "revenue_cagr_3y_local": "0.10000000000000009",
+    "revenue_ttm_usd": "1500000000.0",
+    "score": "4.897",
+    "security_id": "NYSE:ROBO"
+   },
+   {
+    "cagr_currency": "",
+    "cagr_years": "",
+    "company_key": "isin:US0000000007",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "We sell licences and maintenance subscriptions and we do not manufacture robots ourselves at this time.",
+    "evidence_url": "https://www.sec.gov/rob2.htm",
+    "filing_date": "2026-03-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "official-private",
+    "l1_label": "core",
+    "l1_p_core": "0.9",
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": "False",
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": "True",
+    "l2_label": "partial",
+    "l2_p_top": "0.6",
+    "l2_request_id": "l2-req-1",
+    "l2_status": "partial",
+    "market_cap_usd": "4000000000.0",
+    "name": "Robo Two",
+    "rank": "2",
+    "region": "US",
+    "revenue_cagr_3y_local": "",
+    "revenue_ttm_usd": "",
+    "score": "3.396",
+    "security_id": "NASDAQ:ROB2"
+   }
+  ],
+  "db": [
+   [
+    "isin:GB0000000003",
+    "LSE:GEAR",
+    "l1",
+    "adjacent",
+    "{\"adjacent\": 0.3, \"core\": 0.1, \"insufficient\": 0.1, \"unrelated\": 0.5}",
+    0.5,
+    "l1-req-1",
+    "tradingview_profile",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:JP0000000002",
+    "TSE:6000",
+    "l1",
+    "adjacent",
+    "{\"adjacent\": 0.4, \"core\": 0.35, \"insufficient\": 0.05, \"unrelated\": 0.2}",
+    0.4,
+    "l1-req-1",
+    "financedatabase_local",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000001",
+    "NYSE:ROBO",
+    "l1",
+    "core",
+    "{\"adjacent\": 0.05, \"core\": 0.9, \"insufficient\": 0.02, \"unrelated\": 0.03}",
+    0.9,
+    "l1-req-1",
+    "tradingview_profile+financedatabase_local",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000004",
+    "NASDAQ:BANK",
+    "l1",
+    "unrelated",
+    "{\"adjacent\": 0.04, \"core\": 0.01, \"insufficient\": 0.05, \"unrelated\": 0.9}",
+    0.9,
+    "l1-req-1",
+    "tradingview_profile",
+    "gray-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000007",
+    "NASDAQ:ROB2",
+    "l1",
+    "core",
+    "{\"adjacent\": 0.05, \"core\": 0.9, \"insufficient\": 0.02, \"unrelated\": 0.03}",
+    0.9,
+    "l1-req-1",
+    "sec_filing_text",
+    "official-private",
+    null,
+    null,
+    "ok",
+    null
+   ],
+   [
+    "isin:JP0000000002",
+    "TSE:6000",
+    "l2",
+    "insufficient",
+    "{\"contradicted\": 0.1, \"explicit\": 0.05, \"insufficient\": 0.7, \"partial\": 0.15}",
+    0.7,
+    "l2-req-1",
+    "profile",
+    "gray-private",
+    null,
+    "ServoJP manufactures servo motors for factory automation.",
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000001",
+    "NYSE:ROBO",
+    "l2",
+    "explicit",
+    "{\"contradicted\": 0.05, \"explicit\": 0.8, \"insufficient\": 0.05, \"partial\": 0.1}",
+    0.8,
+    "l2-req-1",
+    "sec_filing_text:10-K",
+    "official-private",
+    "https://www.sec.gov/robo.htm",
+    "We develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.",
+    "ok",
+    null
+   ],
+   [
+    "isin:US0000000007",
+    "NASDAQ:ROB2",
+    "l2",
+    "partial",
+    "{\"contradicted\": 0.1, \"explicit\": 0.2, \"insufficient\": 0.1, \"partial\": 0.6}",
+    0.6,
+    "l2-req-1",
+    "sec_filing_text:10-K",
+    "official-private",
+    "https://www.sec.gov/rob2.htm",
+    "We sell licences and maintenance subscriptions and we do not manufacture robots ourselves at this time.",
+    "ok",
+    null
+   ]
+  ],
+  "funnel": {
+   "below_min_mcap": 1,
+   "below_min_volume": 0,
+   "described": 5,
+   "l1_inputs": 5,
+   "l1_ok": 5,
+   "l1_pass": 3,
+   "l1_sent": 5,
+   "l2_contradicted": 0,
+   "l2_inputs": 3,
+   "l2_ok": 3,
+   "l2_profile_inputs": 1,
+   "l2_sec_inputs": 2,
+   "l2_sent": 3,
+   "l2_verified": 2,
+   "no_description": 1,
+   "null_mcap": 0,
+   "other_country": 0,
+   "output": 2,
+   "universe": 6,
+   "universe_rows": 7,
+   "unverified": 1
+  },
+  "gaps": {
+   "l1_failed": [],
+   "l1_skipped_budget": [],
+   "l2_contradicted": [],
+   "l2_failed": [],
+   "l2_not_sent_l2_max": [],
+   "l2_profile_only": [
+    {
+     "error": null,
+     "market_cap_usd": 1000000000.0,
+     "name": "ServoJP",
+     "note": "no annual report text; L2 reads the profile",
+     "security_id": "TSE:6000",
+     "status": null
+    }
+   ],
+   "l2_skipped_budget": [],
+   "no_description": [
+    {
+     "error": null,
+     "market_cap_usd": 2000000000.0,
+     "name": "NoDesc",
+     "security_id": "NYSE:NODS",
+     "status": null
+    }
+   ],
+   "sec_document_old": [],
+   "sec_text_fallback": []
+  },
+  "layers": {
+   "l1": {
+    "by_status": {
+     "ok": 5
+    },
+    "cache_hits": 0,
+    "cost_usd": 0.01,
+    "estimate": {
+     "basis": "fake",
+     "est_cost_usd": 0.01,
+     "est_input_tokens": 109,
+     "est_seconds": 4.0,
+     "items": 5,
+     "requests": 1
+    },
+    "inputs": 5,
+    "items": 5,
+    "labels": {
+     "adjacent": 2,
+     "core": 2,
+     "unrelated": 1
+    },
+    "requests": 1
+   },
+   "l2": {
+    "budget_usd": 2.99,
+    "by_status": {
+     "ok": 3
+    },
+    "cache_hits": 0,
+    "cost_usd": 0.01,
+    "estimate": {
+     "basis": "fake",
+     "est_cost_usd": 0.01,
+     "est_input_tokens": 287,
+     "est_seconds": 4.0,
+     "items": 3,
+     "requests": 1
+    },
+    "inputs": 3,
+    "inputs_by_lang": {
+     "en": 2
+    },
+    "inputs_by_source": {
+     "sec_filing_text": 2
+    },
+    "items": 3,
+    "keyword_excerpts": 2,
+    "labels": {
+     "explicit": 1,
+     "insufficient": 1,
+     "partial": 1
+    },
+    "profile_inputs": 1,
+    "requests": 1,
+    "sec_inputs": 2,
+    "summary_inputs": 0
+   }
+  },
+  "questions": {
+   "l1": {
+    "criteria": {
+     "adjacent": "Some product line is related to the idea or is a clear enabler of it, but it is not central to the company's business.",
+     "core": "A main product or service of the company directly implements, sells or supplies what the idea is about.",
+     "insufficient": "The description is too vague or too short to tell.",
+     "unrelated": "The description shows businesses that are unrelated to the idea."
+    },
+    "instructions": "Judge ONLY from state.text how state.issuer's CURRENT business relates to the investment idea \"humanoid robots\". Do not use outside knowledge about the company. The company name alone is not evidence. Former businesses that the text says were sold or discontinued do not count.",
+    "key": "fit"
+   },
+   "l2": {
+    "criteria": {
+     "contradicted": "The text explicitly says that the related activity was sold, discontinued or wound down, or that the company does not offer it.",
+     "explicit": "The text explicitly states that the company offers or operates a product or service that directly implements the idea.",
+     "insufficient": "The text does not say enough to decide, including when it only describes other businesses of the company.",
+     "partial": "The text describes a related product, a small or planned activity, or an enabler, but not an explicit offering that directly implements the idea."
+    },
+    "instructions": "state.text is evidence about state.issuer: either excerpts from its latest annual report (it starts with \"[annual report excerpts\") or, when no annual report text is available, a short company profile (it starts with \"[company profile\"). Using ONLY state.text, decide whether it EXPLICITLY states that the company offers or operates a product or service that directly implements the investment idea \"humanoid robots\". Do not use outside knowledge. The company name alone is not evidence. Excerpts that simply do not mention the idea are not a contradiction: they are insufficient.",
+    "key": "evidence"
+   }
+  },
+  "rows": [
+   {
+    "cagr_currency": "USD",
+    "cagr_years": "2022-2025",
+    "company_key": "isin:US0000000001",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "We develop and sell humanoid robots for warehouse picking and assembly work. Our humanoid robots are deployed at customer sites under multi-year service contracts and are our fastest growing product line.",
+    "evidence_url": "https://www.sec.gov/robo.htm",
+    "filing_date": "2026-02-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "gray-private",
+    "l1_label": "core",
+    "l1_p_core": 0.9,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": true,
+    "l2_label": "explicit",
+    "l2_p_top": 0.8,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "explicit",
+    "market_cap_usd": 5000000000.0,
+    "name": "RoboCorp",
+    "rank": 1,
+    "region": "US",
+    "revenue_cagr_3y_local": 0.10000000000000009,
+    "revenue_ttm_usd": 1500000000.0,
+    "score": 4.897,
+    "security_id": "NYSE:ROBO"
+   },
+   {
+    "cagr_currency": null,
+    "cagr_years": null,
+    "company_key": "isin:US0000000007",
+    "country": "United States",
+    "doc_lang": "en",
+    "evidence_excerpt": "We sell licences and maintenance subscriptions and we do not manufacture robots ourselves at this time.",
+    "evidence_url": "https://www.sec.gov/rob2.htm",
+    "filing_date": "2026-03-01",
+    "filing_form": "10-K",
+    "filing_source": "sec_filing_text",
+    "l1_input_tier": "official-private",
+    "l1_label": "core",
+    "l1_p_core": 0.9,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "annual_report",
+    "l2_input_source": "sec_filing_text:10-K",
+    "l2_input_tier": "official-private",
+    "l2_keyword_hit": true,
+    "l2_label": "partial",
+    "l2_p_top": 0.6,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "partial",
+    "market_cap_usd": 4000000000.0,
+    "name": "Robo Two",
+    "rank": 2,
+    "region": "US",
+    "revenue_cagr_3y_local": null,
+    "revenue_ttm_usd": null,
+    "score": 3.396,
+    "security_id": "NASDAQ:ROB2"
+   }
+  ],
+  "status": "ok",
+  "terms_by_lang": {
+   "en": [
+    "humanoid robots",
+    "humanoid",
+    "robots"
+   ],
+   "ja": [],
+   "ko": [],
+   "zh": []
+  },
+  "tiers_used": [
+   "gray-private",
+   "official-private"
+  ],
+  "unverified": [
+   {
+    "cagr_currency": "JPY",
+    "cagr_years": "2021-2024",
+    "company_key": "isin:JP0000000002",
+    "country": "Japan",
+    "doc_lang": null,
+    "evidence_excerpt": "ServoJP manufactures servo motors for factory automation.",
+    "evidence_url": null,
+    "filing_date": null,
+    "filing_form": null,
+    "filing_source": null,
+    "l1_input_tier": "gray-private",
+    "l1_label": "adjacent",
+    "l1_p_core": 0.35,
+    "l1_request_id": "l1-req-1",
+    "l2_doc_stale": false,
+    "l2_evidence": "profile",
+    "l2_input_source": "profile",
+    "l2_input_tier": "gray-private",
+    "l2_keyword_hit": null,
+    "l2_label": "insufficient",
+    "l2_p_top": 0.7,
+    "l2_request_id": "l2-req-1",
+    "l2_status": "insufficient",
+    "market_cap_usd": 1000000000.0,
+    "name": "ServoJP",
+    "rank": null,
+    "region": "Japan",
+    "revenue_cagr_3y_local": 0.10000000000000009,
+    "revenue_ttm_usd": 9000000.0,
+    "score": 1.29,
+    "security_id": "TSE:6000"
+   }
+  ],
+  "warnings": []
+ }
+}

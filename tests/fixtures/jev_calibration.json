@@ -1,0 +1,471 @@
+{
+ "_source": "Counts reconstructed from the old project's journals (payloads rebuilt from the journaled inputs and question banks; request_results usage.input_tokens). Columns: n items, nq questions, qa/qn = ASCII/non-ASCII chars of json.dumps(questions, ensure_ascii=False), sa/sn = same for state, inp = provider input_tokens. three-world rows are every 5th request of the 7,120 ok requests.",
+ "by_source": {
+  "full-primary": {
+   "mean_input_tokens": 10174.1,
+   "mean_items": 7.999,
+   "mean_questions": 31.995,
+   "requests": 3797
+  },
+  "pilot-pack4": {
+   "mean_input_tokens": 4920.4,
+   "mean_items": 3.75,
+   "mean_questions": 15,
+   "requests": 8
+  },
+  "pilot-pack8": {
+   "mean_input_tokens": 9576.8,
+   "mean_items": 7.5,
+   "mean_questions": 30,
+   "requests": 4
+  },
+  "pilot-single": {
+   "mean_input_tokens": 1336.7,
+   "mean_items": 1,
+   "mean_questions": 4,
+   "requests": 30
+  },
+  "three-world": {
+   "mean_input_tokens": 19015.3,
+   "mean_items": 8,
+   "mean_questions": 24,
+   "requests": 1424
+  }
+ },
+ "fit": {
+  "max_abs_rel_error": 0.0113,
+  "mean_abs_rel_error": 0.0016,
+  "per_ascii_char": 0.1953,
+  "per_non_ascii_char": 1.0888,
+  "per_question": 31.4306,
+  "per_request": 235.4478,
+  "rows_fitted": 5263
+ },
+ "price": {
+  "evidence": "usage.cost == input_tokens * 0.042e-6 on all journaled requests",
+  "input_usd_per_million": 0.042,
+  "output_usd_per_million": 0.0
+ },
+ "rows": [
+  {
+   "inp": 18340,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 2652,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 18689,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 4188,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 18736,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 4660,
+   "sn": 1,
+   "src": "three-world"
+  },
+  {
+   "inp": 18817,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 5011,
+   "sn": 1,
+   "src": "three-world"
+  },
+  {
+   "inp": 18815,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 5351,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 18987,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 5632,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 19024,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 5953,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 19085,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 6292,
+   "sn": 4,
+   "src": "three-world"
+  },
+  {
+   "inp": 19162,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 6691,
+   "sn": 1,
+   "src": "three-world"
+  },
+  {
+   "inp": 19292,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 7131,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 19389,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 7848,
+   "sn": 0,
+   "src": "three-world"
+  },
+  {
+   "inp": 20053,
+   "n": 8,
+   "nq": 24,
+   "qa": 11944,
+   "qn": 13352,
+   "sa": 10778,
+   "sn": 5,
+   "src": "three-world"
+  },
+  {
+   "inp": 3982,
+   "n": 3,
+   "nq": 12,
+   "qa": 16629,
+   "qn": 0,
+   "sa": 621,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10163,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1261,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10145,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1287,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10154,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1306,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10162,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1323,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10166,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1341,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10170,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1364,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10162,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1390,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10175,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1435,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10237,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1574,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10241,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1686,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 10270,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1880,
+   "sn": 0,
+   "src": "full-primary"
+  },
+  {
+   "inp": 1329,
+   "n": 1,
+   "nq": 4,
+   "qa": 4852,
+   "qn": 0,
+   "sa": 138,
+   "sn": 0,
+   "src": "pilot-single"
+  },
+  {
+   "inp": 1336,
+   "n": 1,
+   "nq": 4,
+   "qa": 4852,
+   "qn": 0,
+   "sa": 152,
+   "sn": 0,
+   "src": "pilot-single"
+  },
+  {
+   "inp": 1336,
+   "n": 1,
+   "nq": 4,
+   "qa": 4852,
+   "qn": 0,
+   "sa": 158,
+   "sn": 0,
+   "src": "pilot-single"
+  },
+  {
+   "inp": 1329,
+   "n": 1,
+   "nq": 4,
+   "qa": 4852,
+   "qn": 0,
+   "sa": 168,
+   "sn": 0,
+   "src": "pilot-single"
+  },
+  {
+   "inp": 1336,
+   "n": 1,
+   "nq": 4,
+   "qa": 4852,
+   "qn": 0,
+   "sa": 183,
+   "sn": 0,
+   "src": "pilot-single"
+  },
+  {
+   "inp": 1340,
+   "n": 1,
+   "nq": 4,
+   "qa": 4852,
+   "qn": 0,
+   "sa": 213,
+   "sn": 0,
+   "src": "pilot-single"
+  },
+  {
+   "inp": 2746,
+   "n": 2,
+   "nq": 8,
+   "qa": 11086,
+   "qn": 0,
+   "sa": 325,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5227,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 654,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5240,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 667,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5218,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 671,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5226,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 699,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5225,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 715,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5227,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 721,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 5254,
+   "n": 4,
+   "nq": 16,
+   "qa": 22172,
+   "qn": 0,
+   "sa": 738,
+   "sn": 0,
+   "src": "pilot-pack4"
+  },
+  {
+   "inp": 7736,
+   "n": 6,
+   "nq": 24,
+   "qa": 33258,
+   "qn": 0,
+   "sa": 1052,
+   "sn": 0,
+   "src": "pilot-pack8"
+  },
+  {
+   "inp": 10194,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1327,
+   "sn": 0,
+   "src": "pilot-pack8"
+  },
+  {
+   "inp": 10188,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1358,
+   "sn": 0,
+   "src": "pilot-pack8"
+  },
+  {
+   "inp": 10189,
+   "n": 8,
+   "nq": 32,
+   "qa": 44344,
+   "qn": 0,
+   "sa": 1409,
+   "sn": 0,
+   "src": "pilot-pack8"
+  }
+ ]
+}

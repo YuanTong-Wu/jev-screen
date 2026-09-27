@@ -1,0 +1,30 @@
+# local data lake, raw vendor payloads and secrets never enter git
+data/
+*.duckdb
+*.duckdb.wal
+.env
+.secrets/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# release scrub (see docs/RELEASE_CHECKLIST.md): keys, local config and editor/OS noise
+*_api_key
+sec_user_agent
+.env.*
+!.env.example
+*.pem
+*.key
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+.idea/
+.vscode/
+
+# maintainer-only patterns for tools/release_check.py (never published)
+.release_private_patterns

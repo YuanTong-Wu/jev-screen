@@ -1,0 +1,298 @@
+{
+ "_source": "Provider response (field 'response') of one packed Jev request from the owner's earlier batch run: 8 issuers x 3 Chinese-language routing questions. Answers and usage only; no issuer text.",
+ "criteria_labels": {
+  "w1_route": [
+   "adjacent_business_fit",
+   "core_business_fit",
+   "insufficient_profile",
+   "no_stated_fit"
+  ],
+  "w2_route": [
+   "adjacent_business_fit",
+   "core_business_fit",
+   "insufficient_profile",
+   "no_stated_fit"
+  ],
+  "w7_route": [
+   "adjacent_business_fit",
+   "core_business_fit",
+   "insufficient_profile",
+   "no_stated_fit"
+  ]
+ },
+ "items": 8,
+ "response": {
+  "answers": {
+   "item_0_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.99,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0,
+     "no_stated_fit": 1
+    },
+    "type": "choice"
+   },
+   "item_0_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 1,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0,
+     "no_stated_fit": 1
+    },
+    "type": "choice"
+   },
+   "item_0_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 1,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0,
+     "no_stated_fit": 1
+    },
+    "type": "choice"
+   },
+   "item_1_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.74,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.19,
+     "no_stated_fit": 0.81
+    },
+    "type": "choice"
+   },
+   "item_1_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.73,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.2,
+     "no_stated_fit": 0.8
+    },
+    "type": "choice"
+   },
+   "item_1_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.84,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.12,
+     "no_stated_fit": 0.88
+    },
+    "type": "choice"
+   },
+   "item_2_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.89,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.08,
+     "no_stated_fit": 0.92
+    },
+    "type": "choice"
+   },
+   "item_2_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.93,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.05,
+     "no_stated_fit": 0.95
+    },
+    "type": "choice"
+   },
+   "item_2_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.92,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.06,
+     "no_stated_fit": 0.94
+    },
+    "type": "choice"
+   },
+   "item_3_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.76,
+    "probabilities": {
+     "adjacent_business_fit": 0.05,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.13,
+     "no_stated_fit": 0.82
+    },
+    "type": "choice"
+   },
+   "item_3_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.85,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.11,
+     "no_stated_fit": 0.89
+    },
+    "type": "choice"
+   },
+   "item_3_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.92,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.06,
+     "no_stated_fit": 0.94
+    },
+    "type": "choice"
+   },
+   "item_4_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.96,
+    "probabilities": {
+     "adjacent_business_fit": 0.03,
+     "core_business_fit": 0,
+     "insufficient_profile": 0,
+     "no_stated_fit": 0.97
+    },
+    "type": "choice"
+   },
+   "item_4_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.96,
+    "probabilities": {
+     "adjacent_business_fit": 0.02,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.01,
+     "no_stated_fit": 0.97
+    },
+    "type": "choice"
+   },
+   "item_4_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.95,
+    "probabilities": {
+     "adjacent_business_fit": 0.03,
+     "core_business_fit": 0,
+     "insufficient_profile": 0,
+     "no_stated_fit": 0.97
+    },
+    "type": "choice"
+   },
+   "item_5_w1_route": {
+    "choice": "adjacent_business_fit",
+    "confidence": 0.65,
+    "probabilities": {
+     "adjacent_business_fit": 0.74,
+     "core_business_fit": 0.02,
+     "insufficient_profile": 0.02,
+     "no_stated_fit": 0.22
+    },
+    "type": "choice"
+   },
+   "item_5_w2_route": {
+    "choice": "adjacent_business_fit",
+    "confidence": 0.45,
+    "probabilities": {
+     "adjacent_business_fit": 0.59,
+     "core_business_fit": 0.02,
+     "insufficient_profile": 0.05,
+     "no_stated_fit": 0.34
+    },
+    "type": "choice"
+   },
+   "item_5_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.87,
+    "probabilities": {
+     "adjacent_business_fit": 0.07,
+     "core_business_fit": 0.01,
+     "insufficient_profile": 0.02,
+     "no_stated_fit": 0.9
+    },
+    "type": "choice"
+   },
+   "item_6_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.97,
+    "probabilities": {
+     "adjacent_business_fit": 0.02,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.01,
+     "no_stated_fit": 0.97
+    },
+    "type": "choice"
+   },
+   "item_6_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.99,
+    "probabilities": {
+     "adjacent_business_fit": 0,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.01,
+     "no_stated_fit": 0.99
+    },
+    "type": "choice"
+   },
+   "item_6_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.99,
+    "probabilities": {
+     "adjacent_business_fit": 0.01,
+     "core_business_fit": 0,
+     "insufficient_profile": 0,
+     "no_stated_fit": 0.99
+    },
+    "type": "choice"
+   },
+   "item_7_w1_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.88,
+    "probabilities": {
+     "adjacent_business_fit": 0.03,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.06,
+     "no_stated_fit": 0.91
+    },
+    "type": "choice"
+   },
+   "item_7_w2_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.92,
+    "probabilities": {
+     "adjacent_business_fit": 0.01,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.05,
+     "no_stated_fit": 0.94
+    },
+    "type": "choice"
+   },
+   "item_7_w7_route": {
+    "choice": "no_stated_fit",
+    "confidence": 0.81,
+    "probabilities": {
+     "adjacent_business_fit": 0.12,
+     "core_business_fit": 0,
+     "insufficient_profile": 0.02,
+     "no_stated_fit": 0.86
+    },
+    "type": "choice"
+   }
+  },
+  "model": "typesafe/jev-1.13-20260917",
+  "usage": {
+   "cost": 0.000786156,
+   "input_tokens": 18718,
+   "output_tokens": 1491
+  }
+ }
+}

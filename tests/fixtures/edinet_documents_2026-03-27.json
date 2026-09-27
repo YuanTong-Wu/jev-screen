@@ -1,0 +1,48 @@
+{
+ "metadata": {
+  "title": "提出された書類を把握するためのAPI",
+  "parameter": {
+   "date": "2026-03-27",
+   "type": "2"
+  },
+  "resultset": {
+   "count": 1
+  },
+  "processDateTime": "2026-03-27 23:59",
+  "status": "200",
+  "message": "OK"
+ },
+ "results": [
+  {
+   "seqNumber": 1,
+   "docID": "S100T002",
+   "edinetCode": "E99902",
+   "secCode": "285A0",
+   "JCN": null,
+   "filerName": "株式会社サンプルエーアイ",
+   "fundCode": null,
+   "ordinanceCode": "010",
+   "formCode": "030000",
+   "docTypeCode": "120",
+   "periodStart": "2025-01-01",
+   "periodEnd": "2025-12-31",
+   "submitDateTime": "2026-03-27 13:00",
+   "docDescription": "有価証券報告書－第5期(2025/01/01－2025/12/31)",
+   "issuerEdinetCode": null,
+   "subjectEdinetCode": null,
+   "subsidiaryEdinetCode": null,
+   "currentReportReason": null,
+   "parentDocID": null,
+   "opeDateTime": null,
+   "withdrawalStatus": "0",
+   "docInfoEditStatus": "0",
+   "disclosureStatus": "0",
+   "xbrlFlag": "1",
+   "pdfFlag": "1",
+   "attachDocFlag": "1",
+   "englishDocFlag": "0",
+   "csvFlag": "1",
+   "legalStatus": "1"
+  }
+ ]
+}

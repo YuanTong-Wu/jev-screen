@@ -1,0 +1,192 @@
+# Daily open data pack (docs/OPEN_PACK.md).
+#
+# Builds the licence-clean subset (SEC ticker list, EDINET code list, EDINET 事業の内容) in a store of its own and
+# publishes it as a GitHub Release tagged pack-YYYY-MM-DD (the UTC date at job start; a second run for the same date
+# gets pack-YYYY-MM-DD.2, ...: a published pack is never overwritten); keeps the newest KEEP pack releases.
+# Tag, prune and publish-gate logic lives in jevscreen.pack_ci (tested in tests/test_pack_ci.py).
+# Repository secrets (optional; a missing one skips its source cleanly, never fails the job):
+#   JEVSCREEN_SEC_USER_AGENT  SEC fair-access User-Agent '<name> <email>' (SEC ticker list)
+#   EDINET_API_KEY            EDINET API v2 Subscription-Key (事業の内容)
+# No TradingView, FinanceDatabase, CNINFO, DART or SEC 10-K text is fetched here, and no Jev/OpenRouter call is made.
+name: daily-pack
+
+on:
+  schedule:
+    - cron: "40 21 * * *"          # 06:40 JST, after EDINET's overnight batch
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "pack releases to keep"
+        default: "7"
+      edinet_minutes:
+        description: "time budget for sync-edinet (minutes; the run resumes tomorrow)"
+        default: "240"
+      allow_shrink:
+        description: "publish even if a table has fewer than 95% of the previous pack's rows"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write                  # create releases
+
+concurrency:
+  group: daily-pack
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      JEVSCREEN_HOME: ${{ github.workspace }}/pack-home
+      JEVSCREEN_USER_AGENT: "Mozilla/5.0 (compatible; jev-screen-open-pack/0.1; +https://github.com/${{ github.repository }})"
+      KEEP: ${{ github.event.inputs.keep || '7' }}
+      EDINET_MINUTES: ${{ github.event.inputs.edinet_minutes || '240' }}
+    steps:
+      # Fixed once, at job start: a long EDINET backfill that ends after midnight UTC keeps this date.
+      - name: Pack date
+        id: date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      # The store (documents, list cache, text files) persists between runs so EDINET syncs are incremental.
+      - name: Restore pack store
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: pack-home
+          key: pack-home-${{ github.run_id }}
+          restore-keys: pack-home-
+
+      # A lost cache (evicted, or a failed restore) must not start from nothing: import the newest published pack.
+      - name: Bootstrap the store from the newest published pack
+        if: steps.restore.outputs.cache-matched-key == ''
+        run: |
+          set +e
+          jevscreen pack pull --repo "${{ github.repository }}"
+          rc=$?
+          if [ $rc -ne 0 ]; then echo "::warning::bootstrap pack pull exit $rc (the store starts empty)"; fi
+          exit 0
+
+      - name: Open lists (SEC ticker list, EDINET code list)
+        env:
+          JEVSCREEN_SEC_USER_AGENT: ${{ secrets.JEVSCREEN_SEC_USER_AGENT }}
+        run: |
+          if [ -z "$JEVSCREEN_SEC_USER_AGENT" ]; then
+            echo "::notice::JEVSCREEN_SEC_USER_AGENT is not set: the SEC ticker list is skipped"
+          fi
+          set +e
+          jevscreen pack fetch-open --seed-lines
+          rc=$?
+          if [ $rc -eq 2 ]; then echo "::warning::a provider refused a request (403/429): stopped, no retry"; fi
+          if [ $rc -ne 0 ]; then echo "::warning::pack fetch-open exit $rc (the pack is built from what exists)"; fi
+          exit 0
+
+      - name: EDINET 事業の内容
+        env:
+          JEVSCREEN_EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+          JEVSCREEN_EDINET_REUSE_CODELIST_HOURS: "6"      # the code list fetch-open just downloaded
+        run: |
+          if [ -z "$JEVSCREEN_EDINET_API_KEY" ]; then
+            echo "::notice::EDINET_API_KEY is not set: EDINET documents are skipped"
+            exit 0
+          fi
+          set +e
+          # at most 280 minutes, so the job (330) always reaches the cache save
+          case "$EDINET_MINUTES" in (''|*[!0-9]*) EDINET_MINUTES=240 ;; esac
+          [ "$EDINET_MINUTES" -gt 280 ] && EDINET_MINUTES=280
+          # SIGTERM at the time budget: sync-edinet flushes and exits 130; the next run continues where it stopped.
+          timeout --signal=TERM --kill-after=120 "${EDINET_MINUTES}m" jevscreen sync-edinet
+          rc=$?
+          case $rc in
+            0) ;;
+            124|130) echo "::notice::sync-edinet reached its time budget; it resumes tomorrow" ;;
+            2) echo "::warning::sync-edinet stopped: blocked or in cooldown (no retry)" ;;
+            *) echo "::warning::sync-edinet exit $rc" ;;
+          esac
+          exit 0
+
+      - name: Build pack
+        id: build
+        env:
+          JEVSCREEN_SEC_USER_AGENT: ${{ secrets.JEVSCREEN_SEC_USER_AGENT }}   # only to scan the output for it
+          JEVSCREEN_EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}             # only to scan the output for it
+          GH_TOKEN: ${{ github.token }}
+          PACK_DATE: ${{ steps.date.outputs.date }}
+          MIN_RATIO: "0.95"
+          ALLOW_SHRINK: ${{ github.event.inputs.allow_shrink || 'false' }}
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' > release-tags.txt
+          TAG=$(python -m jevscreen.pack_ci tag --date "$PACK_DATE" < release-tags.txt)
+          jevscreen pack build --out dist/pack --tag "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          ls -l dist/pack
+          # publish only a pack that holds data and in which no table fell below 95% of the previous pack's rows
+          PREV=$(python -m jevscreen.pack_ci newest < release-tags.txt)
+          GATE="--manifest dist/pack/manifest.json --min-ratio $MIN_RATIO"
+          if [ "$ALLOW_SHRINK" = "true" ]; then GATE="$GATE --allow-shrink"; fi
+          if [ -n "$PREV" ]; then
+            if gh release download "$PREV" --pattern manifest.json --dir prev-pack; then
+              GATE="$GATE --previous prev-pack/manifest.json"
+            else
+              echo "::warning::could not read the previous pack ($PREV): not published"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if python -m jevscreen.pack_ci gate $GATE; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::the pack is empty or shrank against $PREV: not published (rerun with allow_shrink to override)"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prune raw payloads older than 14 days (the EDINET list cache is kept)
+        if: always()
+        run: |
+          if [ -d pack-home/raw ]; then
+            find pack-home/raw -mindepth 2 -maxdepth 2 -type d -name '20??-??-??' -mtime +14 \
+              -not -path 'pack-home/raw/edinet/*' -exec rm -rf {} +
+          fi
+
+      - name: Save pack store
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: pack-home
+          key: pack-home-${{ github.run_id }}
+
+      - name: Publish release
+        if: steps.build.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.build.outputs.tag }}
+        run: |
+          # never overwrite a published pack (pullers would see missing assets or sha mismatches)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::release $TAG already exists: not overwritten"
+            exit 1
+          fi
+          gh release create "$TAG" dist/pack/* --title "Open data pack $TAG" \
+            --notes-file dist/pack/ATTRIBUTION.txt --latest=false
+
+      - name: Keep the newest packs
+        if: steps.build.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # KEEP is validated in Python (a non-number means 7, at least 1 is kept); no shell arithmetic on input
+          gh release list --limit 200 --json tagName --jq '.[].tagName' \
+            | python -m jevscreen.pack_ci prune --keep="$KEEP" \
+            | while read -r old; do
+                echo "deleting $old"
+                gh release delete "$old" --yes --cleanup-tag
+              done
