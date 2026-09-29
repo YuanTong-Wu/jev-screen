@@ -353,7 +353,8 @@ class Chat(unittest.TestCase):
         self.assertEqual(tc["n"], 7)
         self.assertEqual(len(tc["rows"]), 7)
         self.assertEqual(set(tc["rows"][0]), {"name", "name_en", "ticker", "country", "verdict_words_zh",
-                                              "verdict_words_en", "evidence_kind", "agent", "moved_by_agent",
+                                              "verdict_words_en", "evidence_kind", "agent", "agent_level",
+                                              "agent_words_zh", "agent_words_en", "moved_by_agent",
                                               "unchecked", "security_id"})
         self.assertEqual(len(page.top_rows(d, section="all")), 10)
         s = page.summary_of(d, None)

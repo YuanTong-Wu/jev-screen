@@ -360,7 +360,8 @@ ONE_PAGE_STRINGS: dict[str, dict[str, str]] = {
            "results_none": "还没有结果。", "rows_title": "每家的证据（按原排名，{n} 家，点开看）",
            "refreshing": "这页每 3 秒自动刷新", "st_ok": "已完成", "st_run": "进行中", "st_wait": "还没开始",
            "st_need": "需要你处理", "st_fail": "出错", "st_opt": "可选", "open_row": "点开看证据",
-           "agent_tag": "你的 AI 判断", "agent_yes": "符合", "agent_no": "不符合", "agent_unsure": "拿不准",
+           "agent_tag": "你的 AI 判断", "agent_yes": "符合", "agent_partial": "部分相关", "agent_no": "不符合",
+           "agent_unsure": "拿不准",
            "agent_wait": "等你决定（见上面的问题）", "agent_not_applied": "没采用，按你的回答"},
     "en": {"sec_ready": "Getting ready", "sec_optional": "Optional ({k} of {n} set; this result does not need them)",
            "show_checks": "Show each check", "sec_progress": "Progress",
@@ -375,7 +376,8 @@ ONE_PAGE_STRINGS: dict[str, dict[str, str]] = {
            "refreshing": "This page refreshes itself every 3 seconds", "st_ok": "done", "st_run": "running",
            "st_wait": "not started", "st_need": "needs you", "st_fail": "error", "st_opt": "optional",
            "open_row": "Tap to see the evidence",
-           "agent_tag": "Your AI's call", "agent_yes": "fits", "agent_no": "does not fit", "agent_unsure": "not sure",
+           "agent_tag": "Your AI's call", "agent_yes": "fits", "agent_partial": "partly related",
+           "agent_no": "does not fit", "agent_unsure": "not sure",
            "agent_wait": "waiting for you (see the questions above)", "agent_not_applied": "not used: your answer "
                                                                                          "wins"},
 }
@@ -984,8 +986,9 @@ def _row(r: dict[str, Any], one_line: str | None, today: dt.date | None, terms: 
                         "p_pos": r.get("l2_p_pos"), "p_core": None if r.get("l1_p_core") is None
                         else round(float(r["l1_p_core"]), 2)},
             # your AI's call on this row (its own layer, never the human's) and a scope answer's demotion
-            "agent": ({"v": r.get("agent_verdict"), "state": r.get("agent_state"), "chip": r.get("agent_chip"),
-                       "why": r.get(f"agent_why_{lang}")} if r.get("agent_verdict") else None),
+            "agent": ({"v": r.get("agent_verdict"), "level": r.get("agent_level"), "state": r.get("agent_state"),
+                       "chip": r.get("agent_chip"), "why": r.get(f"agent_why_{lang}")}
+                      if r.get("agent_verdict") else None),
             "scope_demoted": bool(r.get("scope_demoted")),
             # screen --shortlist: high (L1 core + L2 explicit) / confirm; None without the lever
             "tier": r.get("shortlist_tier") if r.get("shortlist_tier") in ("high", "confirm") else None,
@@ -1427,15 +1430,33 @@ def shown_text(holder: dict[str, Any] | None, field: str) -> str | None:
     return holder.get(f"{field}_tr") or holder.get(field)
 
 
+def agent_key(a: dict[str, Any] | None) -> str | None:
+    """The STRINGS key of your AI's call {v, level}: yes + explicit 'agent_yes' (符合 / fits), yes + partial
+    'agent_partial' (部分相关 / partly related), no 'agent_no', unsure 'agent_unsure'; None for anything else. A yes is
+    never called 符合 / fits unless its level is explicit (a partial yes often gives a reason it does not fit). The page's
+    script mirrors this (agentKey)."""
+    v = (a or {}).get("v")
+    if v == "yes":
+        return "agent_yes" if (a or {}).get("level") in ("explicit", None) else "agent_partial"
+    return f"agent_{v}" if v in ("no", "unsure") else None
+
+
+def agent_label(v: str | None, level: str | None, lang: str) -> str | None:
+    """The words of your AI's call (agent_key) in `lang`, None when there is no call."""
+    k = agent_key({"v": v, "level": level})
+    return STRINGS[lang][k] if k else None
+
+
 def agent_words(r: dict[str, Any], lang: str) -> str | None:
     """'你的 AI 判断：拿不准——why · 等你决定' of a row your AI answered (None when it did not)."""
     a = r.get("agent") or {}
-    if a.get("v") not in ("yes", "no", "unsure"):
+    key = agent_key(a)
+    if not key:
         return None
     S = STRINGS[lang]
     zh = lang == "zh"
     why = a.get("why")
-    text = S["agent_tag"] + ("：" if zh else ": ") + S[f"agent_{a['v']}"] + (
+    text = S["agent_tag"] + ("：" if zh else ": ") + S[key] + (
         (("——" if zh else ": ") + str(why)) if why else "")
     state = {"escalated": "agent_wait", "not_applied": "agent_not_applied"}.get(a.get("state") or "")
     return text + (" · " + S[state] if state else "")
@@ -1636,115 +1657,174 @@ def render_text(data: dict[str, Any], lang: str | None = None) -> str:
 
 # --------------------------------------------------------------------------------------------------- render
 
+# The plain page (the HUD's 文字视图 / text view, the page without JavaScript) in the HUD's design language (owner,
+# 2026-09-29): black #050505, ink #f2ede0, hairlines instead of filled cards, the HUD's sans at weights 400 / 500 with
+# generous line height, numbers and tickers in its monospace, ONE amber accent (#EF9F27) kept for AI inference and the
+# single active highlight (a chosen answer, the keyboard focus). The five evidence tags differ by text AND line style,
+# never by colour alone: fact = ink solid, inference = amber, gap = dashed ink, your call = double ink, AI translation =
+# dim dotted. Contrast on #050505: ink 17.4:1, --fg2 12.2:1, --muted 6.8:1 (smallest body text), --dim 4.1:1 (small
+# labels only, >= 3:1), amber 9.4:1. Printing swaps in the light palette below; screen only is dark.
+# The colour settings, defined once: the text view's :root, its print palette, the results panel and the checklist
+# pop-up (page_hud) and printing from the 3D view all read these two strings (tests/test_page_style.py checks the
+# contrast and that page_hud uses them). --ink-rgb is the ink as an rgb triple for the HUD's translucent inks.
+TOKENS_DARK = ("--bg:#050505;--fg:#f2ede0;--fg2:#ccc8bd;--muted:#98958d;--dim:#72706a;--line:rgba(242,237,224,.16);"
+               "--line2:rgba(242,237,224,.4);--card:rgba(242,237,224,.022);--accent:#f2ede0;--fact:#f2ede0;"
+               "--infer:#ef9f27;--gap:#ccc8bd;--user:#f2ede0;--ai:#98958d;--badge:transparent;--on:#050505;"
+               "--ok:#72c07a;--bad:#e5534b;--say:#f1b3ad;--badbg:transparent;--track:rgba(242,237,224,.12);"
+               "--ink-rgb:242,237,224")
+TOKENS_LIGHT = ("--bg:#fbfaf7;--fg:#1d1d1b;--fg2:#3a3935;--muted:#6b6a64;--dim:#77756e;--line:#e3e0d8;--line2:#c9c5bb;"
+                "--card:#ffffff;--accent:#1f5f8b;--fact:#1d1d1b;--infer:#7a4b12;--gap:#3a3935;--user:#1d1d1b;"
+                "--ai:#6b6a64;--badge:transparent;--on:#ffffff;--ok:#2e7d40;--bad:#b3261e;--say:#b3261e;"
+                "--badbg:#fdf0ee;--track:#ebe8e0;--ink-rgb:29,29,27")
 CSS = """
-:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#6b6a64;--line:#e3e0d8;--card:#ffffff;--accent:#1f5f8b;--fact:#2f6b3a;
---infer:#7a4b12;--gap:#8a2d2d;--user:#4a3a8a;--badge:#f3ede0;--on:#ffffff;--ok:#2e7d40;--bad:#b3261e;
---badbg:#fdf0ee;--track:#ebe8e0}
-@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe6;--muted:#a3a198;--line:#34332f;--card:#1f1f1c;
---accent:#7fb6de;--fact:#8fcf9a;--infer:#e2b36d;--gap:#ef9a9a;--user:#b9aef2;--badge:#2b2a26;--on:#111110;
---ok:#7fcb8e;--bad:#f28b82;--badbg:#2c1a18;--track:#34332f}}
+:root{TOKENS_DARK;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",monospace;
+color-scheme:dark}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",
-"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI",
+"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif;letter-spacing:.01em;
+-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
 main{max-width:980px;margin:0 auto;padding:16px}
-h1{font-size:1.35rem;margin:.1rem 0 .5rem;line-height:1.35}h2{font-size:1.08rem;margin:0 0 .5rem}
-.muted{color:var(--muted)}.small{font-size:.88rem}
-button{font:inherit;min-height:44px;min-width:44px;padding:6px 14px;border-radius:10px;border:1px solid var(--line);
-background:var(--card);color:var(--fg);cursor:pointer}
-button.on{background:var(--accent);color:var(--on);border-color:var(--accent)}
-button:disabled{opacity:.5;cursor:default}
+main>header>.muted.small:first-child{font-size:11px;line-height:1.6;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:1.4rem;font-weight:400;letter-spacing:.03em;margin:.15rem 0 .6rem;line-height:1.45}
+h2{font-size:1rem;font-weight:500;letter-spacing:.015em;color:var(--fg);margin:0 0 .7rem;line-height:1.6}
+:lang(zh) h1,:lang(zh) h2,:lang(zh) h3{letter-spacing:0}
+section.results>h2{margin-top:2rem}
+.muted{color:var(--muted)}.small{font-size:.86rem}strong,b{font-weight:500}
+button{font:inherit;font-size:.88rem;letter-spacing:.04em;min-height:44px;min-width:44px;padding:6px 16px;border-radius:2px;
+border:1px solid var(--line2);background:transparent;color:var(--fg);cursor:pointer}
+button:not(:disabled):hover{border-color:var(--fg2)}
+button.on{background:rgba(var(--ink-rgb),.08);color:var(--fg);border-color:var(--fg);box-shadow:inset 0 0 0 1px var(--fg)}
+button.on::before{content:"\\2713\\00a0"}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:1px solid var(--infer);outline-offset:2px}
 .pillrow{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 4px}
-.pill{display:inline-flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;border-radius:999px;
-padding:3px 12px;border:1px solid var(--accent);color:var(--accent);background:var(--card)}
-.pill.p-done{border-color:var(--ok);color:var(--ok)}.pill.p-bad{border-color:var(--bad);color:var(--bad)}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:500;line-height:1.6;letter-spacing:.12em;
+text-transform:uppercase;border-radius:2px;padding:2px 10px;border:1px solid var(--line2);color:var(--fg2);background:transparent}
+.pill.p-done{border-color:var(--fg2);color:var(--fg)}.pill.p-bad{border-color:var(--bad);color:var(--say)}
 .pill.p-idle{border-color:var(--line);color:var(--muted)}
-section.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:14px 0}
-section.box.secondary{background:transparent;border-style:dashed}section.box.secondary h2{color:var(--muted)}
-section.box.secondary .rank{color:var(--muted);font-weight:normal}
+.pill .ic-run{flex-basis:12px;width:12px;height:12px;margin:0;border-width:1px}
+section.box{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0 6px;margin:18px 0}
+section.box.questions{border:1px solid var(--line2);border-radius:2px;background:var(--card);padding:14px 16px}
+section.box.secondary{background:transparent;border:0;border-top:1px dashed var(--line2);border-radius:0;padding:14px 0 0;margin-top:40px}
+section.box.secondary h2{color:var(--fg2)}
+section.box.secondary .rank{color:var(--dim);font-weight:400}
+section.box.secondary .row .name{font-weight:400;color:var(--fg2)}
 .rank.tc{display:none}
-p.empty{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
-section.box.defaults{border:2px solid var(--infer)}section.box.defaults .qline{flex-wrap:wrap}
-section.box.defaults code{font:13px/1.35 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+p.empty{padding:10px 14px;border:1px solid var(--line);border-radius:2px;background:transparent}
+section.box.defaults{border:1px solid var(--line2);border-radius:2px;padding:14px 16px}section.box.defaults .qline{flex-wrap:wrap}
+section.box.defaults code{font:12.5px/1.5 var(--mono);color:var(--fg2);overflow-wrap:anywhere}
 p.mainhint{display:none}
-.chk{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line)}
+.chk{display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}
 .chk.first{border-top:0}
-.ic{flex:0 0 22px;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;
-justify-content:center;font-size:13px;font-weight:700;line-height:1;margin-top:2px}
-.ic-ok{background:var(--ok);color:var(--on)}.ic-need,.ic-fail{background:var(--bad);color:var(--on)}
-.ic-wait{border:2px solid var(--line)}.ic-opt{border:2px dashed var(--line)}
-.ic-run{border:3px solid var(--track);border-top-color:var(--accent);animation:spin 1s linear infinite}
+.ic{flex:0 0 18px;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;
+justify-content:center;font-size:10px;font-weight:500;line-height:1;margin-top:4px}
+.ic-ok{border:1px solid var(--fg2);color:var(--fg)}.ic-need,.ic-fail{border:1px solid var(--bad);color:var(--bad)}
+.ic-wait{border:1px solid var(--line2)}.ic-opt{border:1px dashed var(--line2)}
+.ic-run{border:2px solid var(--track);border-top-color:var(--fg);animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.ct{min-width:0;flex:1 1 auto}.fix{font-size:.9rem;color:var(--muted);margin-top:2px}
-.chk-need .fix,.chk-fail .fix{color:var(--bad)}.chk-need .tx,.chk-fail .tx{font-weight:600}
+.ct{min-width:0;flex:1 1 auto}.fix{font-size:.86rem;color:var(--muted);margin-top:2px}
+.chk-need .fix,.chk-fail .fix{color:var(--say)}.chk-need .tx,.chk-fail .tx{font-weight:500}
 .chk-wait .tx,.chk-opt .tx{color:var(--muted)}
-details.okline>summary{list-style:none;display:flex;gap:10px;align-items:center;cursor:pointer}
+details.okline>summary{list-style:none;display:flex;gap:12px;align-items:center;cursor:pointer}
 details.okline>summary::-webkit-details-marker{display:none}
-.okt{color:var(--ok);font-weight:600;flex:1 1 auto;min-width:0}
-.more-link{font-size:.85rem;color:var(--muted);white-space:nowrap}
-.subhead{font-size:.85rem;color:var(--muted);margin:12px 0 0}
-details.opt>summary{cursor:pointer;font-size:.88rem;color:var(--muted);margin-top:10px}
-.alert{border:1px solid var(--bad);background:var(--badbg);color:var(--bad);border-radius:10px;padding:9px 12px;
+details.okline>summary .ic{margin-top:0}
+.okt{color:var(--fg2);font-weight:400;flex:1 1 auto;min-width:0}
+.more-link{font-size:.8rem;line-height:1.6;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+.subhead{font-size:.82rem;color:var(--muted);margin:12px 0 0}
+details.opt>summary{cursor:pointer;font-size:.84rem;color:var(--muted);margin-top:10px}
+.alert{border:1px solid rgba(229,83,75,.55);background:transparent;color:var(--say);border-radius:2px;padding:9px 14px;
 margin:0 0 10px}
-.alert.note{border-color:var(--line);background:transparent;color:var(--fg)}
-.pr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);
+.alert.note{border-color:var(--line);background:transparent;color:var(--fg2)}
+.pr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:10px 0;border-top:1px solid var(--line);
 align-items:baseline}
-.pr.first{border-top:0}.pr .lab{font-weight:600;min-width:0}.pr.s-wait .lab{color:var(--muted);font-weight:400}
-.pr .num{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-size:.9rem}
-.bar{grid-column:1/-1;height:8px;border-radius:99px;background:var(--track);overflow:hidden;position:relative}
-.bar .fill{height:100%;background:var(--accent);border-radius:99px}
-.pr.s-ok .bar .fill{background:var(--ok)}.pr.s-fail .lab,.pr.s-fail .num{color:var(--bad)}
-.pr.s-fail .bar{background:var(--badbg);border:1px solid var(--bad)}
+.pr.first{border-top:0}.pr .lab{font-weight:400;color:var(--fg2);min-width:0}.pr.s-wait .lab{color:var(--muted)}
+.pr .num{text-align:right;color:var(--muted);font:11.5px/1.6 var(--mono);letter-spacing:.06em}
+.bar{grid-column:1/-1;height:2px;border-radius:0;background:var(--track);overflow:hidden;position:relative}
+.bar .fill{height:100%;background:var(--fg2);border-radius:0}
+.pr.s-ok .bar .fill{background:var(--muted)}.pr.s-fail .lab,.pr.s-fail .num{color:var(--say)}
+.pr.s-fail .bar{background:transparent;border-top:1px dashed var(--bad)}
 .bar.ind .fill{position:absolute;left:0;top:0;width:30%;animation:slide 1.3s ease-in-out infinite}
 @keyframes slide{0%{left:-30%}100%{left:100%}}
-.money{font-weight:600;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
-@media (prefers-reduced-motion:reduce){.ic-run{animation:none;border-color:var(--accent)}
+.money{font:12px/1.6 var(--mono);letter-spacing:.06em;color:var(--fg2);margin-top:8px;padding-top:10px;border-top:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){.ic-run{animation:none;border-color:var(--fg2)}
 .bar.ind .fill{animation:none;left:0;width:100%;opacity:.35}}
-.q{padding:8px 0;border-top:1px solid var(--line)}.q.first{border-top:0}
-.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.q{padding:10px 0;border-top:1px solid var(--line)}.q.first{border-top:0}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .qline{display:flex;gap:8px;align-items:center;margin-top:10px}
-.qline textarea{flex:1 1 auto;min-width:0;height:48px;font:13px/1.35 ui-monospace,Menlo,Consolas,monospace;
-padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:none}
-.banner{border:1px solid var(--gap);color:var(--gap);border-radius:10px;padding:9px 12px;margin:12px 0}
-.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.88rem;margin:8px 0}
-.tag{display:inline-block;font-size:.75rem;border-radius:6px;padding:0 6px;margin-right:6px;border:1px solid}
-.t-fact{color:var(--fact);border-color:var(--fact)}.t-inference{color:var(--infer);border-color:var(--infer)}
-.t-gap{color:var(--gap);border-color:var(--gap)}.t-user{color:var(--user);border-color:var(--user)}
-.t-ai{color:var(--accent);border-color:var(--accent)}.t-orig{color:var(--muted);border-color:var(--muted)}
-.orig{margin:4px 0;padding:4px 8px;border-left:3px solid var(--line);color:var(--muted)}
-details.row{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:8px 0}
-details.row>summary{list-style:none;cursor:pointer;padding:10px 14px;display:flex;gap:4px 10px;flex-wrap:wrap;
-align-items:baseline}
+.qline textarea{flex:1 1 auto;min-width:0;height:48px;font:12.5px/1.45 var(--mono);
+padding:6px 8px;border-radius:2px;border:1px solid var(--line2);background:transparent;color:var(--fg);resize:none;
+overflow-wrap:anywhere;word-break:normal}
+.qline textarea::placeholder{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",
+"Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif;letter-spacing:.02em;color:var(--muted)}
+.banner{position:relative;border:1px solid var(--line);color:var(--fg2);border-radius:2px;padding:10px 14px 10px 30px;margin:14px 0;
+font-size:.9rem}
+.banner::before{content:"";position:absolute;left:14px;top:.95em;width:2px;height:1em;border-radius:0;background:var(--fg)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:.84rem;color:var(--muted);margin:12px 0}
+.legend>span{display:grid;grid-template-columns:auto 1fr;column-gap:.6em;align-items:baseline}.legend>span>.tag{margin-right:0}
+.tag{display:inline-block;font-size:.74rem;font-weight:500;line-height:1.55;letter-spacing:.05em;border-radius:2px;padding:0 6px;margin-right:8px;
+border:1px solid;background:transparent;vertical-align:1px}
+.t-fact{color:var(--fact);border-color:var(--fg2)}.t-inference{color:var(--infer);border-color:var(--infer)}
+.t-gap{color:var(--gap);border-color:var(--gap);border-style:dashed}
+.t-user{color:var(--user);border:3px double var(--fg2);padding:0 5px;line-height:1.3}
+.t-ai{color:var(--ai);border-color:var(--dim);border-style:dotted}.t-orig{color:var(--muted);border-color:var(--line2)}
+.orig{margin:6px 0;padding:2px 0 2px 14px;border-left:1px solid var(--fg);color:var(--fg)}
+details.row{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;margin:0}
+details.row:not(:has(+details.row)){border-bottom:1px solid var(--line)}
+details.row>summary{position:relative;list-style:none;cursor:pointer;padding:12px 28px 12px 2px;display:flex;gap:4px 14px;
+flex-wrap:wrap;align-items:baseline}
 details.row>summary::-webkit-details-marker{display:none}
-details.row>summary::after{content:"+";margin-left:auto;color:var(--muted);font-weight:700}
+details.row>summary::after{content:"+";position:absolute;right:4px;top:14px;font:12px/1.75 var(--mono);color:var(--muted);font-weight:400}
 details.row[open]>summary::after{content:"\\2212"}
-details.row .body{padding:0 14px 12px}
-.rank{font-weight:700;color:var(--accent)}.name{font-weight:600}
-.badge{background:var(--badge);border-radius:6px;padding:1px 8px;font-size:.82rem}
-blockquote{margin:8px 0;padding:6px 10px;border-left:3px solid var(--fact);background:transparent}
-blockquote.gapq{border-left-color:var(--gap)}
-details.tech{margin-top:6px}details.tech>summary{cursor:pointer;color:var(--muted);font-size:.9rem}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:.9rem}
-a{color:var(--accent)}
+details.row>summary>.muted.small{font-size:.8rem;line-height:1.6;letter-spacing:.02em}
+.tk{font:11.5px/1.6 var(--mono);letter-spacing:.06em}
+details.row>summary>.small:not(.muted){color:var(--fg2)}
+details.row .body{padding:0 2px 18px}
+details.row .body>*+*{margin-top:6px}
+.rank{font:400 .8rem var(--mono);letter-spacing:.06em;color:var(--muted)}.name{font-weight:500}
+.badge{background:transparent;border:1px solid var(--line2);border-radius:2px;padding:0 7px;font-size:.74rem;line-height:1.6;
+letter-spacing:.04em;color:var(--muted)}
+.badge.via{border-color:var(--fg2);color:var(--fg2)}
+blockquote{margin:10px 0;padding:2px 0 2px 16px;border-left:2px solid var(--fg);background:transparent;line-height:1.85}
+.t-ai~blockquote{border-left-color:var(--dim);color:var(--fg2);font-size:.86rem;line-height:1.75}
+blockquote.gapq{border-left:2px dashed var(--gap)}
+details.tech{margin-top:10px}details.tech>summary{cursor:pointer;color:var(--muted);font-size:.8rem;line-height:1.8;letter-spacing:.04em}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:.86rem;margin-top:6px}
+a{color:var(--fg);text-decoration-color:var(--line2);text-underline-offset:3px}a:hover{text-decoration-color:var(--fg)}
 .clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-button.more{min-height:32px;padding:2px 0;border:0;background:transparent;color:var(--accent);font-size:.88rem}
+button.more{min-height:32px;padding:2px 0;border:0;background:transparent;color:var(--muted);font-size:.8rem;line-height:1.6;
+letter-spacing:.04em}
+button.more:hover{color:var(--fg)}
 .tablewrap{max-width:100%;overflow-x:auto}
-table.top10{width:100%;border-collapse:collapse;font-size:.92rem;background:var(--card);border:1px solid var(--line)}
-table.top10 th,table.top10 td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid var(--line);
+table.top10{width:100%;border-collapse:collapse;font-size:.9rem;background:transparent;border:0;border-top:1px solid var(--line2)}
+table.top10 th,table.top10 td{text-align:left;vertical-align:top;padding:10px 8px;border-bottom:1px solid var(--line);
 overflow-wrap:anywhere}
-table.top10 th{color:var(--muted);font-weight:600;font-size:.82rem;overflow-wrap:normal}
+table.top10 th{color:var(--muted);font-size:11px;font-weight:400;line-height:1.6;letter-spacing:.12em;text-transform:uppercase;overflow-wrap:normal}
 table.top10 td:first-child,table.top10 th:first-child{white-space:nowrap;width:1%;overflow-wrap:normal}
+table.top10 td:first-child a{font:12px var(--mono);letter-spacing:.04em;color:var(--muted);text-decoration:none}
+table.top10 td:first-child a:hover,table.top10 td:first-child a:focus-visible{text-decoration:underline;text-decoration-color:var(--fg)}
+table.top10 td .name{font-weight:500}
+table.top10 td>.small.muted:last-child{font-size:.8rem;line-height:1.7;letter-spacing:.02em}
 table.top10 td:nth-child(3),table.top10 td:nth-child(4){word-break:keep-all;overflow-wrap:normal}
-table.top10 td.t-gap{color:var(--gap)}table.top10 td.t-user{color:var(--user)}
-table.top10 tr.edge td:first-child a{color:var(--gap)}
-details.unv{margin:12px 0}details.unv>summary{cursor:pointer}details.unv .names{margin:0 0 10px 0}
+table.top10 td:nth-child(3),table.top10 td:nth-child(4){color:var(--fg2)}
+table.top10 td.t-gap{color:var(--gap);text-decoration:underline dashed var(--gap);text-underline-offset:4px}
+table.top10 td.t-user{color:var(--user);text-decoration:underline double var(--fg2);text-underline-offset:4px}
+details.unv{margin:16px 0}details.unv>summary{cursor:pointer;color:var(--fg2)}details.unv .names{margin:0 0 10px 0}
 main,blockquote,.row,section.box{overflow-wrap:anywhere}
-pre.plain{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.5;font-family:inherit;padding:0 16px}
-footer{margin:28px 0 8px;font-size:.82rem;color:var(--muted)}
+pre.plain{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6;font-family:inherit;padding:0 16px}
+footer{margin:32px 0 8px;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.7;letter-spacing:.04em;
+color:var(--muted)}
 @media (max-width:520px){.pr{grid-template-columns:1fr}.pr .num{text-align:left}}
-@media (max-width:720px){.grid{grid-template-columns:1fr}main{padding:12px 16px}
+@media (max-width:480px){details.okline>summary{flex-wrap:wrap;row-gap:2px}
+details.okline>summary .okt{flex:1 1 calc(100% - 30px)}details.okline>summary .more-link{flex:1 0 100%;padding-left:30px}
+section.questions .qline{flex-wrap:wrap}section.questions .qline textarea{flex:1 0 100%;height:auto;min-height:calc(3 * 1.45em + 14px)}
+details.row>summary>.rank:not(.tc){flex:0 0 30px}details.row>summary>.name{flex:1 1 calc(100% - 44px)}
+section.box.secondary details.row>summary>.name{flex-basis:100%}}
+@media (max-width:720px){.grid{grid-template-columns:1fr}main{padding:12px 16px}body{font-size:14.5px}
 table.top10 td:nth-child(4),table.top10 th:nth-child(4){display:none}}
-@media print{button,.qline{display:none}body{padding:0}}
-"""
+@media print{:root{TOKENS_LIGHT;color-scheme:light}
+button,.qline{display:none}body{padding:0;background:#fff}}
+""".replace("TOKENS_DARK", TOKENS_DARK).replace("TOKENS_LIGHT", TOKENS_LIGHT)
 
 JS = r"""
 (function(){
@@ -1772,6 +1852,8 @@ function link(u){var a=E('a',null,S('open_link'));a.href=u;a.rel='noopener noref
 function money(v){return v===null||v===undefined?'?':(v>=0.1?v.toFixed(2):v.toFixed(4));}
 function dur(s){if(s===null||s===undefined)return '?';s=Math.round(s);return s>=60?fmt(S('dur_ms'),{m:Math.floor(s/60),s:s%60}):fmt(S('dur_s'),{s:s});}
 function ctry(o){return o.country_text||(L==='zh'?(o.country_zh||o.country):o.country)||null;}
+// the code · country line: the code in the HUD's monospace, the words in its sans (same text as before)
+function meta(tg,cls,r){var e=E(tg,cls),c=ctry(r);if(r.ticker)e.appendChild(E('span','tk',r.ticker));if(c)e.appendChild(T((r.ticker?' · ':'')+c));return e;}
 function nm(o){return (L==='zh'&&(o.name_zh||o.name_tr))||o.name||o.ticker||'?';}
 function sub(o){return (L==='zh'&&!o.name_zh&&o.name_tr)?o.name:null;}
 function nmFull(o){var s=sub(o);return nm(o)+(s?'（'+s+'）':'');}
@@ -1850,8 +1932,8 @@ function secQuestions(m){var q=D.questions||{};var notes=(q.defaults||[]).length
  function refresh(){var line=qLine(q);ta.value=line;ta.placeholder=S('q_empty');cp.disabled=!line;cp.textContent=S('copy');}
  q.items.forEach(function(it,i){var d=E('div','q'+(i===0?' first':''));d.appendChild(E('div',null,(i+1)+'. '+it.text));var bt=E('div','btns');
   if(it.note)d.appendChild(E('div','small muted',it.note));
-  (it.options||[]).forEach(function(o){var b=E('button',A[it.id]===o.value?'on':null,o.label);b.onclick=function(){A[it.id]=(A[it.id]===o.value?null:o.value);
-   var kids=bt.children||[];for(var k=0;k<kids.length;k++){kids[k].className=(kids[k]===b&&A[it.id])?'on':'';}refresh();save();};bt.appendChild(b);});
+  (it.options||[]).forEach(function(o){var b=E('button',A[it.id]===o.value?'on':null,o.label);b.setAttribute('aria-pressed',A[it.id]===o.value?'true':'false');b.onclick=function(){A[it.id]=(A[it.id]===o.value?null:o.value);
+   var kids=bt.children||[];for(var k=0;k<kids.length;k++){var sel=kids[k]===b&&!!A[it.id];kids[k].className=sel?'on':'';kids[k].setAttribute('aria-pressed',sel?'true':'false');}refresh();save();};bt.appendChild(b);});
   d.appendChild(bt);box.appendChild(d);});
  var row=E('div','qline');row.appendChild(ta);
  cp.onclick=function(){var text=ta.value;function ok(){cp.textContent=S('copied');}
@@ -1886,17 +1968,19 @@ function topTable(m){var SL=!!D.shortlist;var all=SL?mainRows():(D.rows||[]);var
  rows.forEach(function(r){var tr=E('tr',r.verdict==='edge'?'edge':null);tr.setAttribute('data-rank',String(r.rank));var a=E('a',null,'#'+r.rank);a.href='#r'+r.rank;
   a.onclick=function(){var d=document.getElementById('r'+r.rank);if(d&&d.tagName&&String(d.tagName).toLowerCase()==='details'){d.open=true;OPEN['r'+r.rank]=1;save();}};
   var c0=E('td');c0.appendChild(a);tr.appendChild(c0);
-  var c1=E('td');c1.appendChild(E('div','name',nm(r)));if(sub(r))c1.appendChild(E('div','small muted',sub(r)));c1.appendChild(E('div','small muted',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));tr.appendChild(c1);
+  var c1=E('td');c1.appendChild(E('div','name',nm(r)));if(sub(r))c1.appendChild(E('div','small muted',sub(r)));c1.appendChild(meta('div','small muted',r));tr.appendChild(c1);
   tr.appendChild(E('td',null,vword(r)+(viaWord(r)?' · '+viaWord(r):'')+(r.unchecked?' · '+S('badge_unchecked'):'')+(agentShort(r)?' · '+agentShort(r):'')));
   var ev=evCell(r);tr.appendChild(E('td',ev[1],ev[0]));t.appendChild(tr);});
  var w=E('div','tablewrap');w.appendChild(t);m.appendChild(w);}
-function agentLine(r){var a=r.agent;if(!a||['yes','no','unsure'].indexOf(a.v)<0)return null;var d=E('div','small');
- d.appendChild(tag('inference',S('agent_tag')));var t=S('agent_'+a.v)+(a.why?(L==='zh'?'——':': ')+a.why:'');
+function agentKey(a){if(!a)return null;if(a.v==='yes')return (a.level==='explicit'||a.level==null)?'agent_yes':'agent_partial';
+ return (a.v==='no'||a.v==='unsure')?'agent_'+a.v:null;}
+function agentLine(r){var a=r.agent;if(!agentKey(a))return null;var d=E('div','small');
+ d.appendChild(tag('inference',S('agent_tag')));var t=S(agentKey(a))+(a.why?(L==='zh'?'——':': ')+a.why:'');
  var st={escalated:'agent_wait',not_applied:'agent_not_applied'}[a.state];d.appendChild(T(' '+t+(st?' · '+S(st):'')));return d;}
 function agentShort(r){var a=r.agent;if(r.main_via==='agent_no')return null;return (a&&(a.v==='no'||a.v==='unsure'))?S('agent_tag')+(L==='zh'?'：':': ')+S('agent_'+a.v):null;}
 function rowBox(r){var d=fold('r'+r.rank,'row',false);var sm=E('summary');var tc=!!D.shortlist&&!inMain(r);
  var rk=E('span',tc?'rank tc':'rank',tc?'':'#'+r.rank);if(tc)rk.setAttribute('aria-hidden','true');sm.appendChild(rk);sm.appendChild(E('span','name',nm(r)));
- sm.appendChild(E('span','muted small',[r.ticker,ctry(r)].filter(Boolean).join(' · ')));
+ sm.appendChild(meta('span','muted small',r));
  sm.appendChild(E('span','small',vword(r)));
  if(viaWord(r))sm.appendChild(E('span',r.main_via==='agent'?'badge via':'badge via-no',viaWord(r)));
  if((r.badges||[]).length)sm.appendChild(E('span','badge',S('badge_'+r.badges[0])));
@@ -2473,6 +2557,9 @@ def to_confirm_brief(data: dict[str, Any] | None, n: int = 10) -> dict[str, Any]
          "country": r.get("country"), "verdict_words_zh": STRINGS["zh"].get(verdict_key(r, True)),
          "verdict_words_en": STRINGS["en"].get(verdict_key(r, True)),
          "evidence_kind": r.get("evidence"), "agent": (r.get("agent") or {}).get("v"),
+         "agent_level": (r.get("agent") or {}).get("level"),
+         "agent_words_zh": agent_label((r.get("agent") or {}).get("v"), (r.get("agent") or {}).get("level"), "zh"),
+         "agent_words_en": agent_label((r.get("agent") or {}).get("v"), (r.get("agent") or {}).get("level"), "en"),
          "moved_by_agent": r.get("main_via") == "agent_no", "unchecked": bool(r.get("unchecked")),
          "security_id": r.get("security_id")} for r in confirm[:n]]}
 
@@ -2517,6 +2604,12 @@ def top_rows(data: dict[str, Any] | None, n: int = 10, *, section: str = "main")
                     "excerpt_mentions_idea": q.get("mentions"), "edge": bool(r.get("edge")),
                     "user": bool(r.get("user")), "verdict_from_user": bool(r.get("user_only")),
                     "agent": (r.get("agent") or {}).get("v"), "agent_state": (r.get("agent") or {}).get("state"),
+                    # your AI's level on a yes (explicit / partial) and its call in words (部分相关 for a partial yes)
+                    "agent_level": (r.get("agent") or {}).get("level"),
+                    "agent_words_zh": agent_label((r.get("agent") or {}).get("v"), (r.get("agent") or {}).get("level"),
+                                                  "zh"),
+                    "agent_words_en": agent_label((r.get("agent") or {}).get("v"), (r.get("agent") or {}).get("level"),
+                                                  "en"),
                     f"agent_why_{lang}": (r.get("agent") or {}).get("why"),
                     "scope_demoted": bool(r.get("scope_demoted")),
                     # in the main list because your AI confirmed it from the text (say so: 你的 AI 核对)

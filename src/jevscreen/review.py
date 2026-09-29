@@ -817,7 +817,9 @@ def parse_answers(deck: dict[str, Any], data: Any, sieve: dict[str, Any] | None 
         if ok:
             ans["quote_ids"] = list(ids)       # an unsure answer may cite what it is unsure about (optional)
         elif v in ("yes", "no"):
-            ans.update(v="unsure", unsure_kind="meaning", quote_bad=True, was=v, level=None, chip=None)
+            # the level your AI gave is kept (was_level): the question names its call in the page's words
+            ans.update(v="unsure", unsure_kind="meaning", quote_bad=True, was=v, was_level=ans.get("level"),
+                       level=None, chip=None)
         # the human reads why / short in their one language: text in the other language falls back to the chip or
         # level words (a zh text needs Chinese characters, Latin names inside are fine; an en text has none)
         why = _in_lang(_clip(a.get("why"), WHY_MAX[lang]), lang)
@@ -876,6 +878,8 @@ ESC_EN_CONFIRM = {
 }
 ESC_EN_MAIN_NO = ("{name} (confirmed list #{rank}, moved to confirm for now): the system says it fits, your AI says "
                   "it does not{why}. {quote}Put it back in the confirmed list?")
+# E1b's "your AI says {was}": page.STRINGS['en'] words as a clause
+WAS_EN = {"agent_yes": "it fits", "agent_partial": "it is partly related", "agent_no": "it does not fit"}
 QUOTE_ZH, QUOTE_EN = "摘录：「{q}」{tr}。", "Excerpt: \"{q}\"{tr}. "
 FALLBACK_SENTS = 2              # an escalation without cited sentences quotes the item's first sentences
 DEFAULT_WHY = {"zh": ("拿不准", ""), "en": ("not sure", "")}
@@ -904,7 +908,8 @@ def row_ctx(item: dict[str, Any], row: dict[str, Any] | None, *, max_out: int, c
 def classify(ans: dict[str, Any], ctx: dict[str, Any], human: dict[str, Any] | None = None) -> tuple[str, str | None]:
     """(state, escalation code) of one answer (§6.5): E4 a conflict with a human answer; E1 unsure about the
     meaning (or bad quote ids) on a listed / gap / below-cut row; E2 a no on a row the system is confident about;
-    E3 a yes on an unverified row that would make the list. Thin evidence is a badge, never an escalation; weak
+    E3 an explicit yes on an unverified row that would make the list (only an explicit yes promotes a row: a partial
+    one leaves it to confirm, so it is applied without asking). Thin evidence is a badge, never an escalation; weak
     disagreements are applied without asking."""
     v = ans.get("v")
     if human:
@@ -921,7 +926,7 @@ def classify(ans: dict[str, Any], ctx: dict[str, Any], human: dict[str, Any] | N
                 and ctx.get("mentions_idea"):
             return "escalated", "E2"
         return "applied", None
-    if v == "yes" and ctx.get("would_list") and ans.get("quote_ids"):
+    if v == "yes" and ans.get("level") == "explicit" and ctx.get("would_list") and ans.get("quote_ids"):
         return "escalated", "E3"
     return "applied", None
 
@@ -945,7 +950,8 @@ def verdict_of(item: dict[str, Any], ans: dict[str, Any], *, deck: dict[str, Any
     return {**extra, "company_key": item["company_key"], "security_id": item.get("security_id"), "name": item.get("name"),
             "name_zh": item.get("name_zh"), "evidence_sha": item.get("evidence_sha"), "v": ans["v"],
             "level": ans.get("level"), "chip": ans.get("chip"), "unsure_kind": ans.get("unsure_kind"),
-            "quote_bad": bool(ans.get("quote_bad")), "was": ans.get("was"), "quote_ids": ans.get("quote_ids") or [],
+            "quote_bad": bool(ans.get("quote_bad")), "was": ans.get("was"),
+            "was_level": ans.get("was_level"), "quote_ids": ans.get("quote_ids") or [],
             "why_zh": ans.get("why_zh"), "why_en": ans.get("why_en"), "quote_tr": ans.get("quote_tr"),
             "held_sid": item.get("held_sid"), "held_kind": item.get("held_kind"), "in_group": ans.get("in_group"),
             "short_zh": ans.get("short_zh"), "short_en": ans.get("short_en"), "state": state, "escalation": code,
@@ -959,7 +965,7 @@ def verdict_of(item: dict[str, Any], ans: dict[str, Any], *, deck: dict[str, Any
 def escalation_item(v: dict[str, Any], cid: str, *, text: str | None, lang_ev: str | None, sieve: dict[str, Any]
                     | None, relayed_top: int = 10, human: dict[str, Any] | None = None) -> dict[str, Any]:
     """The question of one escalated verdict (one template per reason, zh and en)."""
-    from . import calib
+    from . import calib, page
     code = v.get("escalation") or "E1"
     ctx = v.get("ctx") or {}
     quote = cited_text(text, v.get("quote_ids") or [], v.get("quotes"))
@@ -991,8 +997,11 @@ def escalation_item(v: dict[str, Any], cid: str, *, text: str | None, lang_ev: s
     tr = v.get("quote_tr") if cited else None      # a translation belongs to the cited sentences only
     if code == "E1" and v.get("quote_bad") and v.get("was") in ("yes", "no"):
         code = "E1b"
-    was_zh = {"yes": "符合", "no": "不符合"}.get(v.get("was") or "", "")
-    was_en = {"yes": "it fits", "no": "it does not fit"}.get(v.get("was") or "", "")
+    # your AI's call in the page's words (page.agent_key): a partial yes is 部分相关 / partly related, never 符合
+    was_key = page.agent_key({"v": v.get("was"), "level": v.get("was_level")}) \
+        if v.get("was") in ("yes", "no") else None
+    was_zh = page.STRINGS["zh"][was_key] if was_key else ""
+    was_en = WAS_EN.get(was_key or "", "")
     # the templates end the why with their own full stop: one of the AI's own would double it ("。。")
     why_zh = (v.get("why_zh") or "").rstrip().rstrip("。．.！!")
     why_en = (v.get("why_en") or "").rstrip().rstrip(".!")

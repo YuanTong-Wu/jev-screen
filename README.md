@@ -2,115 +2,90 @@
 
 **English** · [中文说明](README.zh-CN.md)
 
-<p align="center"><img src="docs/assets/hero-en.gif" width="800" alt="The loop opens on the three sieves lying flat as one grid, which expands into a 3D stack while sand standing for about 20,000 listed companies pours onto the first of three sieves stacked one above the other in 3D (market-cap floor, AI reads the profiles, annual-report check); each sieve's progress runs around its rim, and as a stage completes its sieve shakes once and its numbers appear under it for a moment; a few amber grains stay on the last sieve, joined by one thin line, while a one-line caption fades in and out; a faint log in the lower left types a few per-company reads, and the stack settles back into the flat grid (illustrative numbers and codes, not a real run)"></p>
-<p align="center"><sub>20,000 companies, sifted layer by layer into a short list — each pick with its evidence (illustrative numbers and names)</sub></p>
+<p align="center"><img src="docs/assets/hero-en.gif" width="800" alt="The loop opens on the three sieves lying flat as one grid, which expands into a 3D stack while sand standing for nearly 50,000 listed companies pours onto the first of three sieves stacked one above the other in 3D (market-cap floor, AI reads the profiles, annual-report check); each sieve's progress runs around its rim, and as a stage completes its sieve shakes once and its numbers appear under it for a moment; a few amber grains stay on the last sieve, joined by one thin line, while a one-line caption fades in and out; a faint log in the lower left types a few per-company reads, and the stack settles back into the flat grid (illustrative numbers and codes, not a real run)"></p>
+<p align="center"><sub>Sifted layer by layer into a short list, each pick with its evidence (illustrative numbers and names)</sub></p>
 
-**jev-screen turns an investment idea, written in any language, into a ranked list of listed companies worldwide
-whose annual report, or a public company profile, says they do it, with the quote that says so.**
+**Your GPT (or Claude) thinks up the question and checks the answers; Jev does the reading. Say one investment idea,
+get a short list of listed companies worldwide, each with the text that says they do it.**
 
-It runs on your computer. An AI model (Jev) reads the text for you, and you pay a few tens of cents per idea for it,
-through TypeSafe's official API, OpenRouter or Vercel AI Gateway: whichever account you have, at the same price.
-The list is where your research starts; it is not investment advice.
+- **The pain.** There are nearly 50,000 listed companies. Having a big model like GPT read them one by one is too
+  expensive and too slow, and answering from memory it may make things up.
+- **The split.** Jev, a fast judging model, reads the profiles of the about 10,000 companies worth $1B or more, then
+  annual-report excerpts of the ones that pass, and gives a yes/no judgement on each: a few minutes, about $0.30. Your
+  GPT or Claude puts your idea into the question, then checks the few dozen that matter against the original text.
+- **The result.** A short confirmed list, each company with its annual-report or profile text; the rest kept apart
+  to confirm, never used to pad the list.
 
-**How accurate is it?** On 24 test ideas, about 9 in 10 companies in the confirmed list were right (91.7% after your
-AI's review, 90.2% before it). Those right/wrong labels come from AI readers of official filings, not yet checked by
-a person; with a looser AI doing the review the list fell to about 80%; and 90% is not a guarantee
-([details and limits](#accuracy-and-limits)). Read the rows marked **annual report** first: rows marked **profile
-only** rest on weaker evidence.
+Stock screening is the first use of this GPT + Jev division of labour. It runs on your computer, and the list is
+where your research starts, not investment advice.
 
-## An example
+## Who does what
 
-You tell your AI agent:
-
-> Find companies that sell identity and access control for enterprise AI agents.
-
-About 15 minutes later on a first run (about 4 minutes for later ideas), it answers in chat and a page opens in your
-browser. The companies below are placeholders, because real rows quote filings and profiles that are for personal use
-only. The count, cost and time are typical first-run values.
-
-```text
-Done: 3 confirmed; 21 more to confirm (not in the confirmed list). Cost $0.31, took 12 min. Results page:
-opened in your browser. For your personal research only; please do not share.
-The confirmed list only takes companies judged central on the first read whose text the AI found states this business
-plainly; it is not padded to 10. The 21 to confirm (e.g. Company D, Company E, Company F) look related to the AI, but
-the first read did not judge it their central business, their texts do not state it plainly, there is only a profile,
-or they were moved down; they are in the page's "To confirm" section.
-
-1. Company A (NASDAQ:AAAA, US) - identity security for human and machine accounts; Stated, annual report
-2. Company B (TSE:0000, JP) - privileged-access management software; Stated, annual report
-3. Company C (SZSE:000000, CN) - zero-trust access gateway for enterprises; Clearly fits, annual report, checked by
-   your AI
+```mermaid
+flowchart LR
+    A(["You: one investment idea, in any language"]) --> B["Your AI (GPT or Claude)<br/>puts the idea into the question"]
+    B --> C["Jev reads about 10,000 company profiles<br/>then annual-report excerpts of the ones that pass<br/>a few minutes, about $0.30"]
+    C --> D["Confirmed list + companies to confirm<br/>each with the quote it rests on"]
+    D --> E["Your AI checks the about 30-45 listed companies<br/>against the source text"]
+    E --> F(["You: a short list with its evidence"])
 ```
 
-The numbered list holds only the companies the first read judged central and whose text the AI found states the
-business plainly (an inference, with the passage under each); how many that is depends on the idea, and a list of
-three, or none, is a normal result. Everything else the AI found related (a related business on the first read, a
-profile only, a text that does not say it plainly) is kept apart under **To confirm**, never used to fill the list.
-Your own AI reads those first, and one whose text it finds plainly states the business, citing the sentences, moves
-into the list, marked "checked by your AI".
+## What we measured
 
-On the page, every row carries its evidence, and four kinds of statement are kept apart:
+On 24 test ideas (5 of them held out: not looked at while the product was tuned), the share of companies in the
+confirmed list that were labelled right (strict), and how many of the companies an idea must include made that list:
 
-| Label | What it is |
-|---|---|
-| **Fact** | The passage from the company's latest annual report (with the filing date and a link to the filing), or its profile when no report is available |
-| **Inference** | The AI's verdict: **Clearly fits** (`explicit`: the text says it plainly), **Related** (`partial`: related, or only part of the business) or **Borderline** (listed, but shaky; see below) |
-| **Gap** | What is missing: no annual report, a stale filing, or no description at all |
-| **Your call** | A judgement you, or your AI on your behalf, gave on a calibration question (below) |
+| Who checks the list | Confirmed rows labelled right | Must-include companies found |
+|---|---|---|
+| Jev alone, before your AI's review | 90.2% of 123 rows | 39 of 61 |
+| Jev + GPT review (Codex, `gpt-6-astra`), 21 of the 24 ideas | 89.7% of 145 rows (same 21 ideas: 91.3% before, 91.6% with Opus) | 33 of 49 (same 21 ideas: 31 before, 39 with Opus) |
+| Jev + Claude Opus review | 91.7% of 181 rows | 50 of 61 |
+| Jev + a looser AI (Claude Sonnet / Haiku) review | 80.8% / 77.3% | 49–50 of 61 |
 
-**Borderline** (边缘 on a Chinese page) is the third verdict. The company is listed, but its read is shaky: the AI's
-repeated reads disagree (their average lands between 0.40 and 0.60, so another read could flip it), the quoted
-excerpt does not mention your idea at all, or your answer to a scope question moved it down. Check a Borderline row
-before you count it. It is not the same as the **edge** label of the evaluation below, which judges the business
-itself.
+- The right/wrong labels were written by AI readers of official filings, with a third AI deciding where two
+  disagreed. **No person has checked them yet**, and 90% is not a guarantee.
+- The full ranked list is much weaker: its top 10 is only about **65%** right. That is why the confirmed list is never
+  padded to 10.
+- With GPT as your AI the confirmed list stayed about as precise as without a review, but GPT moved fewer companies
+  in and took out 9 right ones, so it found only 2 more must-include companies (Claude Opus found 8 more). Finding
+  the missed companies has so far been measured with Claude Opus only: the review works best with a strong model.
+- A looser AI doing the review made the list worse than no review. Every row your AI adds is marked "checked by your
+  AI", and rows marked **annual report** rest on stronger evidence than rows marked **profile only**
+  ([details and limits](#accuracy-and-limits)).
 
-It is one page per idea, and it opens in your browser at the first step: on top a checklist of what is ready (green
-checks, or a red cross with one plain sentence and the fix; it folds into one green line once everything passes),
-then the live progress (downloads, the AI's reads, the money spent) while the work runs, then the whole confirmed
-list (every confirmed company, not only 10; the chat names the first 10 and says how many more the page has) and,
-apart from it, the companies to confirm. It refreshes itself while the work runs. Below them you find the companies
-that passed the first read but could not be confirmed (**unverified**) and the gaps. The page is a local HTML file, all in your language (Chinese or
-English), and opening it makes no network requests. Profiles and excerpts in other languages are translated by your own AI agent, marked
-"AI translation", with the original one tap away.
+## Where the data comes from
 
-**How it works, in five steps.**
+| What | Where it comes from | How you may use it |
+|---|---|---|
+| Stock list: 49,682 listed companies, with market caps | TradingView's public pages | Personal research only: their terms restrict automated use |
+| Company profiles | Yahoo, through the open-source FinanceDatabase | Personal research only |
+| Annual-report text, used as evidence | Official filings: SEC (US), CNINFO (China A shares), EDINET (Japan), DART (Korea), MOPS (Taiwan), BSE (India) | For your own use |
+| Who reads | Jev, paid per use | About $0.30 per idea |
+| Who checks | Your own AI (GPT or Claude) | On its own quota |
 
-1. It builds a local list of every primary listed stock worldwide (one main listing per company) with its market cap.
-   Blank-check shells (SPACs) are dropped, and A shares under an exchange risk warning (ST / \*ST) are flagged.
-2. The AI reads each company's profile once and asks: does its current business match the idea?
-3. For the companies that pass, jev-screen fetches the newest official annual report it can get (free, from official
-   sites; [which markets](#which-markets-get-an-annual-report-check)), and the AI checks short excerpts from it.
-4. It ranks the companies. A label confirmed by an annual report counts twice as much as the same label read from a
-   profile, and the model's confidence adds to that. Only the confirmed ones make the numbered list; the rest go to
-   the separate "To confirm" section.
-5. You get the page, plus `jevscreen why` to answer "why is X (not) in the list?".
+- **Coverage is uneven.** Annual-report text is read automatically for China A shares and India; for the US, Korea
+  and Taiwan when you allow it (SEC contact, your free OpenDART key, a yes for MOPS); for about 1,600 Japanese
+  companies from the open data pack. Hong Kong, Europe, the UK, Canada, Australia and everywhere else rely on profiles unless
+  the company files with the SEC; those rows are marked **profile only**
+  ([which markets](#which-markets-get-an-annual-report-check)).
+- **Every sentence on the result page is tagged** **Fact** (filing text, linked to its source), **Inference** (the
+  AI's judgement), **Gap** (not obtained) or **Your call** (a judgement you or your AI gave on a scope question).
 
-### About Jev, the model
+Every source with its tier and licence, and what leaves your computer: [Data and licences](#data-and-licences).
 
-The AI is **Jev** 1.13, made by [TypeSafe](https://docs.typesafe.ai). The project is named after it.
+## Get started
 
-- **Where you buy it:** Jev via TypeSafe's official API, OpenRouter or Vercel AI Gateway, same price: US$0.042 per
-  million input tokens, output free. Any one account is enough, and jev-screen uses the key you set last.
+Tell your AI agent (Claude Code, Codex, Cursor or another agent that can run commands on your computer):
 
-  | Provider | Model id jev-screen sends | Version | Key |
-  |---|---|---|---|
-  | [TypeSafe official API](https://console.typesafe.ai/keys) (sign-ups are sometimes paused) | `jev-1.13.0` | pinned | `jevscreen keys set typesafe` |
-  | [OpenRouter](https://openrouter.ai/settings/keys) | `typesafe/jev-1.13` | pinned to 1.13 | `jevscreen keys set openrouter` |
-  | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe) | `typesafe-ai/jev` | **version cannot be pinned**: Vercel offers only this unversioned id | `jevscreen keys set vercel` |
+> Install jev-screen from https://github.com/YuanTong-Wu/jev-screen and follow AGENTS.md. My idea: \<your idea\>.
 
-  With several keys set, the one set last is used (`jevscreen keys use typesafe|openrouter|vercel` switches without a
-  new key; `jevscreen keys clear <provider>` removes one). Answers are cached per provider, so switching provider
-  reads (and pays) again once; the switch says how much was already paid through the old one.
-- **Why this model:** it answers multiple-choice questions with a probability for each option, and it is cheap. A
-  first read of about 20,000 company profiles cost about $0.71. The probabilities let jev-screen rank by confidence
-  and re-read the companies near the borderline.
-- **Who gets your money:** you pay the provider you chose directly, with your own key. The code sends no referral,
-  affiliate or app id with its requests.
-- **Privacy:** if your idea is sensitive, check the chosen provider's data settings first (for example OpenRouter's
-  [privacy settings](https://openrouter.ai/settings/privacy), or Vercel AI Gateway's
-  [data handling](https://vercel.com/docs/ai-gateway/faq)).
+You need macOS or Linux and an account that pays for Jev: TypeSafe's official API, OpenRouter or Vercel AI Gateway,
+at the same price. The first top-up there is usually a few dollars; each idea then takes about $0.30 of it. The agent
+asks you one round of questions, and about 15–25 minutes later the first time (about 4 minutes for later ideas) a
+page with the list opens in your browser.
 
-## Start in about 15 minutes with your AI
+<details>
+<summary>What you need, the one round of questions, and what happens next</summary>
 
 **You need:**
 
@@ -131,10 +106,6 @@ The AI is **Jev** 1.13, made by [TypeSafe](https://docs.typesafe.ai). The projec
 - **On a Mac,** the first `git` command may open a box that offers to install the command line developer tools.
   Click Install; it takes a few minutes. If your computer has neither `uv` nor Python 3.10 or newer, the agent asks
   you to run one command that installs `uv`, which brings its own Python. jev-screen itself needs no admin rights.
-
-**Tell your agent:**
-
-> Install jev-screen from https://github.com/YuanTong-Wu/jev-screen and follow AGENTS.md. My idea: \<your idea\>.
 
 The agent installs it and then asks you **one round of questions**, all in one message:
 
@@ -185,6 +156,117 @@ when they help your idea (just say no if you like; the result stays):
 [AGENTS.md](AGENTS.md) is written for your AI agent (it is English and technical): let the agent follow it. Every
 command and flag is in [docs/REFERENCE.md](docs/REFERENCE.md).
 
+</details>
+
+## An example
+
+You tell your AI agent:
+
+> Find companies that sell identity and access control for enterprise AI agents.
+
+About 15 minutes later on a first run (about 4 minutes for later ideas), it answers in chat and a page opens in your
+browser. The companies below are placeholders, because real rows quote filings and profiles that are for personal use
+only. The count, cost and time are typical first-run values.
+
+```text
+Done: 3 confirmed; 21 more to confirm (not in the confirmed list). Cost $0.31, took 12 min. Results page:
+opened in your browser. For your personal research only; please do not share.
+The confirmed list only takes companies judged central on the first read whose text the AI found states this business
+plainly; it is not padded to 10. The 21 to confirm (e.g. Company D, Company E, Company F) look related to the AI, but
+the first read did not judge it their central business, their texts do not state it plainly, there is only a profile,
+or they were moved down; they are in the page's "To confirm" section.
+
+1. Company A (NASDAQ:AAAA, US) - identity security for human and machine accounts; Stated, annual report
+2. Company B (TSE:0000, JP) - privileged-access management software; Stated, annual report
+3. Company C (SZSE:000000, CN) - zero-trust access gateway for enterprises; Clearly fits, annual report, checked by
+   your AI
+```
+
+The numbered list holds only the companies the first read judged central and whose text the AI found states the
+business plainly (an inference, with the passage under each); how many that is depends on the idea, and a list of
+three, or none, is a normal result. Everything else the AI found related (a related business on the first read, a
+profile only, a text that does not say it plainly) is kept apart under **To confirm**, never used to fill the list.
+Your own AI reads those first, and one whose text it finds plainly states the business, citing the sentences, moves
+into the list, marked "checked by your AI".
+
+<details>
+<summary>What the result page shows</summary>
+
+On the page, every row carries its evidence, and four kinds of statement are kept apart:
+
+| Label | What it is |
+|---|---|
+| **Fact** | The passage from the company's latest annual report (with the filing date and a link to the filing), or its profile when no report is available |
+| **Inference** | The AI's verdict: **Clearly fits** (`explicit`: the text says it plainly), **Related** (`partial`: related, or only part of the business) or **Borderline** (listed, but shaky; see below) |
+| **Gap** | What is missing: no annual report, a stale filing, or no description at all |
+| **Your call** | A judgement you, or your AI on your behalf, gave on a calibration question (below) |
+
+**Borderline** (边缘 on a Chinese page) is the third verdict. The company is listed, but its read is shaky: the AI's
+repeated reads disagree (their average lands between 0.40 and 0.60, so another read could flip it), the quoted
+excerpt does not mention your idea at all, or your answer to a scope question moved it down. Check a Borderline row
+before you count it. It is not the same as the **edge** label of the evaluation below, which judges the business
+itself.
+
+It is one page per idea, and it opens in your browser at the first step: on top a checklist of what is ready (green
+checks, or a red cross with one plain sentence and the fix; it folds into one green line once everything passes),
+then the live progress (downloads, the AI's reads, the money spent) while the work runs, then the whole confirmed
+list (every confirmed company, not only 10; the chat names the first 10 and says how many more the page has) and,
+apart from it, the companies to confirm. It refreshes itself while the work runs. Below them you find the companies
+that passed the first read but could not be confirmed (**unverified**) and the gaps. The page is a local HTML file, all in your language (Chinese or
+English), and opening it makes no network requests. Profiles and excerpts in other languages are translated by your own AI agent, marked
+"AI translation", with the original one tap away.
+
+</details>
+
+## How it works, step by step
+
+1. It builds a local list of every primary listed stock worldwide (one main listing per company, nearly 50,000) with
+   its market cap. Blank-check shells (SPACs) are dropped, and A shares under an exchange risk warning (ST / \*ST) are
+   flagged. By default only companies worth $1B or more are read: about 10,000.
+2. Your AI puts the idea into the question Jev is asked. When the idea is not in English, it writes one English
+   sentence, which you see before anything is spent.
+3. Jev reads each company's profile once and asks: does its current business match the idea?
+4. For the companies that pass, jev-screen fetches the newest official annual report it can get (free, from official
+   sites; [which markets](#which-markets-get-an-annual-report-check)), and Jev checks short excerpts from it.
+5. It ranks the companies. A label confirmed by an annual report counts twice as much as the same label read from a
+   profile, and the model's confidence adds to that. Only the confirmed ones make the numbered list; the rest go to
+   the separate "To confirm" section.
+6. Your own AI reads the quoted sentences of every listed company (typically 30–45, the ones to confirm first) and
+   judges each from those sentences only, citing them. One whose text plainly states the business moves into the
+   list, marked "checked by your AI"; one whose text contradicts the idea leaves it. This runs on your AI's own quota
+   and takes 5–10 minutes.
+7. You get the page, plus `jevscreen why` to answer "why is X (not) in the list?".
+
+## About Jev, the model
+
+<details>
+<summary>Where you buy it, why this model, who gets your money, privacy</summary>
+
+The AI is **Jev** 1.13, made by [TypeSafe](https://docs.typesafe.ai). The project is named after it.
+
+- **Where you buy it:** Jev via TypeSafe's official API, OpenRouter or Vercel AI Gateway, same price: US$0.042 per
+  million input tokens, output free. Any one account is enough, and jev-screen uses the key you set last.
+
+  | Provider | Model id jev-screen sends | Version | Key |
+  |---|---|---|---|
+  | [TypeSafe official API](https://console.typesafe.ai/keys) (sign-ups are sometimes paused) | `jev-1.13.0` | pinned | `jevscreen keys set typesafe` |
+  | [OpenRouter](https://openrouter.ai/settings/keys) | `typesafe/jev-1.13` | pinned to 1.13 | `jevscreen keys set openrouter` |
+  | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe) | `typesafe-ai/jev` | **version cannot be pinned**: Vercel offers only this unversioned id | `jevscreen keys set vercel` |
+
+  With several keys set, the one set last is used (`jevscreen keys use typesafe|openrouter|vercel` switches without a
+  new key; `jevscreen keys clear <provider>` removes one). Answers are cached per provider, so switching provider
+  reads (and pays) again once; the switch says how much was already paid through the old one.
+- **Why this model:** it answers multiple-choice questions with a probability for each option, and it is cheap. A
+  first read of about 20,000 company profiles cost about $0.71. The probabilities let jev-screen rank by confidence
+  and re-read the companies near the borderline.
+- **Who gets your money:** you pay the provider you chose directly, with your own key. The code sends no referral,
+  affiliate or app id with its requests.
+- **Privacy:** if your idea is sensitive, check the chosen provider's data settings first (for example OpenRouter's
+  [privacy settings](https://openrouter.ai/settings/privacy), or Vercel AI Gateway's
+  [data handling](https://vercel.com/docs/ai-gateway/faq)).
+
+</details>
+
 ## What it costs
 
 jev-screen itself is free (MIT). It has no server and no account. Downloads and annual reports are free. The Jev
@@ -223,6 +305,9 @@ China, India and Taiwan reports are PDFs. The standard install includes a PDF re
 The code is MIT. **The data is not**: each source keeps its own terms, and the MIT licence grants nothing over that
 data. The full per-source table is in [DATA_LICENSES.md](DATA_LICENSES.md).
 
+<details>
+<summary>Every source, its tier and when it is used</summary>
+
 | Data | Source | Tier | When |
 |---|---|---|---|
 | Stock list, market caps | TradingView scanner | gray-private | after your consent; about 1 minute |
@@ -239,6 +324,8 @@ The tiers mean:
   redistributed, by this project or by you. "Gray" names that conflict with the terms. It is not a legal opinion.
 - **official-private:** official filings without a redistribution grant. They are personal use only: the full text
   stays on your machine, and only short excerpts are sent to the AI to be read.
+
+</details>
 
 ### What leaves your computer
 
@@ -260,6 +347,9 @@ and the annual report or profile says it outright, or your own AI read the quote
 never padded to 10. Everything else the AI found related goes under **To confirm**, below it, and is never counted
 as a result. A confirmed list of 3, or none, is a normal result.
 
+<details>
+<summary>Measured numbers, how they were measured, and known weaknesses</summary>
+
 **Measured numbers** (24 ideas, 5 of them held out: not looked at while the product was tuned; 2026-09-29):
 
 | | Before your AI's review | After your AI's review |
@@ -278,6 +368,13 @@ as a result. A confirmed list of 3, or none, is a normal result.
   of the must-include companies (49–50 of 61), but also confirmed component suppliers and planned businesses, and
   Haiku removed 12 companies that were right. If your AI is a small or fast model, trust the rows it did not add:
   every row it added is marked "checked by your AI".
+- **GPT as the reviewer** (via Codex, model `gpt-6-astra`; 21 of the 24 ideas, because the Codex quota ran out
+  before the last 3): **89.7%** strict of 145 rows (95% range 83.6–93.6%), 98.6% lenient, a median of 4 confirmed
+  rows per idea. On the same 21 ideas the list scored 91.3% before the review (median 3) and 91.6% after Claude
+  Opus's review (median 5). So GPT kept the list about as precise as no review, without the loose confirmations of
+  Sonnet and Haiku, but it answered "partial" or "unsure" more often and removed 9 right companies, so only 33 of
+  49 must-include companies made the list (31 before, 39 with Opus). One run, one model: the gain in companies
+  found is so far shown with Claude Opus only.
 - **The full ranked list is much weaker.** Its top 10 is only about **65%** right (strict). That is why the numbered
   list is not padded to 10, and why the to-confirm companies are there to check, not to count.
 
@@ -309,6 +406,8 @@ reproduced from it today. The method and the scoring tool are in [docs/EVAL.md](
 - It does not value companies, look at prices or tell you what to buy. The rank reflects how strong the evidence is,
   not investment merit.
 
+</details>
+
 ## Next time, stopping, and removing it
 
 - **A new idea:** open your AI agent in the jev-screen folder and say "Screen with jev-screen: \<new idea\>". It costs
@@ -328,6 +427,9 @@ Your agent runs these for you. `quickstart`, `doctor`, `why`, `answer`, `fetch-d
 [docs/REFERENCE.md](docs/REFERENCE.md), and `jevscreen <command> --help` lists them all. JSON formats are in
 [docs/AGENT_API.md](docs/AGENT_API.md).
 
+<details>
+<summary>All commands</summary>
+
 | Command | What it does | Cost |
 |---|---|---|
 | `jevscreen quickstart "<idea>" --json` | The whole path from an idea to the page, with one round of questions | within the cap you approve |
@@ -345,7 +447,12 @@ Your agent runs these for you. `quickstart`, `doctor`, `why`, `answer`, `fetch-d
 | `jevscreen refresh-universe`, `crawl-descriptions`, `sync-sec` / `-cninfo` / `-edinet` / `-dart` / `-mops` / `-bse` | Manual data syncs | free; some take hours |
 | `jevscreen import-fd` | Import profiles from a local FinanceDatabase DuckDB file. This is not needed with quickstart, which downloads the profiles itself | free |
 
+</details>
+
 ## Calibration cards
+
+<details>
+<summary>What the cards are and how your AI uses them</summary>
 
 An AI reading text makes the same few kinds of mistake over and over: it takes a buyer for a supplier, matches a
 word that means something else, or reads a one-line plan as a business. Only you know where your idea's borders
@@ -363,7 +470,12 @@ answers become rules, and keyword learning. The accepted answer forms are in the
 [docs/REFERENCE.md](docs/REFERENCE.md#commands). What your AI may write into an idea's settings file is in
 [docs/SIEVE.md](docs/SIEVE.md).
 
+</details>
+
 ## Open data pack
+
+<details>
+<summary>What is in it and how it is used</summary>
 
 The open data pack is free. It is published as GitHub Releases of this repository (`pack-YYYY-MM-DD`) when available;
 there is no fixed schedule yet. It holds only data whose licence allows redistribution:
@@ -382,7 +494,12 @@ nothing from TradingView or Yahoo and no other annual-report text.
 One caveat is still open: it is not confirmed that the EDINET licence covers issuer-written 事業の内容 text. The pack
 says so. Details are in [docs/OPEN_PACK.md](docs/OPEN_PACK.md).
 
+</details>
+
 ## FAQ
+
+<details>
+<summary>Investment advice, privacy, sharing, missing companies, other data sources</summary>
 
 **Is this investment advice?** No. It finds companies whose annual reports or profiles match your idea, and it shows
 the evidence. It does not value them, time them or recommend them. Check the filings yourself before any decision.
@@ -407,6 +524,8 @@ and what would change that. If you know X belongs, add it as a check (`sieve add
 **Can I use it without TradingView and Yahoo data?** No. There is no free, licence-clean list of the world's stocks
 with business descriptions that it could use instead, and the open data pack covers only US tickers and Japan. If
 you say no to those sources, jev-screen stops and does not ask again.
+
+</details>
 
 ## Licence
 

@@ -53,10 +53,10 @@ AMBER = (239, 159, 39)              # the final list only
 GREYS = 22                          # levels of the INK ramp in the GIF palette
 SECONDS = 8.0
 MAX_GIF = 2_560_000
-CAPTION = {"en": "20,000 companies, sifted layer by layer into a short list — each pick with its evidence",
-           "zh": "两万家公司，一层层淘出一份短名单，每一家都附证据"}
+CAPTION = {"en": "Nearly 50,000 companies, sifted layer by layer into a short list — each pick with its evidence",
+           "zh": "近五万家上市公司，一层层淘出一份短名单，每一家都附证据"}
 WORDMARK = "JEV-SCREEN"
-NUMS = [20000, 3100, 2150, 120, 5]                 # illustrative
+NUMS = [49682, 10200, 9900, 120, 5]                # illustrative (the README: nearly 50,000 listed, about 10,000 read)
 # each sieve's numbers, shown beside its rim for a moment when its stage completes (as on the page): the market-cap
 # pool of every listed company, what passed the first read of the profiles read, the list of what was checked
 RIMS = [(NUMS[1], NUMS[0]), (NUMS[3], NUMS[2]), (NUMS[4], NUMS[3])]

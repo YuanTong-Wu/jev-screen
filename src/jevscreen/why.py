@@ -1330,14 +1330,21 @@ def _in_output(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any]) -> dict[st
         state_zh = {"applied": "", "held": "（等你回答范围问题后才生效）", "escalated": "（和系统意见不同，等你定）"}
         state_en = {"applied": "", "held": " (waits for your scope answer)", "escalated": " (differs from the system; "
                                                                                           "waits for your call)"}
-        v = row["agent_verdict"]
-        out["facts"].append({"zh": f"你的 AI 判断：{ {'yes': '要', 'no': '不要', 'unsure': '拿不准'}.get(v, v)}"
-                                   + (f"——{row['agent_why_zh']}" if row.get("agent_why_zh") else "")
-                                   + state_zh.get(row["agent_state"], ""),
-                             "en": f"your AI's call: { {'yes': 'keep', 'no': 'drop', 'unsure': 'not sure'}.get(v, v)}"
-                                   + (f" ({row['agent_why_en']})" if row.get("agent_why_en") else "")
-                                   + state_en.get(row["agent_state"], "")})
+        f = _agent_fact(row)
+        out["facts"].append({"zh": f["zh"] + state_zh.get(row["agent_state"], ""),
+                             "en": f["en"] + state_en.get(row["agent_state"], "")})
     return out
+
+
+def _agent_fact(row: dict[str, Any]) -> dict[str, str]:
+    """{zh, en}: '你的 AI 判断：部分相关——why' of a row your AI answered, in the page's words (page.agent_label: a yes is
+    符合 / fits only at level explicit; a partial yes is 部分相关 / partly related)."""
+    from . import page
+    v, level = row.get("agent_verdict"), row.get("agent_level")
+    zh = page.agent_label(v, level, "zh") or str(v)
+    en = page.agent_label(v, level, "en") or str(v)
+    return {"zh": f"你的 AI 判断：{zh}" + (f"——{row['agent_why_zh']}" if row.get("agent_why_zh") else ""),
+            "en": f"your AI's call: {en}" + (f" ({row['agent_why_en']})" if row.get("agent_why_en") else "")}
 
 
 def _excluded(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], match) -> dict[str, Any]:

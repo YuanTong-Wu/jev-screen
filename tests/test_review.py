@@ -264,8 +264,9 @@ class Escalations(unittest.TestCase):
                          ("applied", None))
         self.assertEqual(C({"v": "no", "chip": "h"}, self.top), ("escalated", "E2"))
         self.assertEqual(C({"v": "no", "chip": "h"}, {**self.top, "l2_label": "partial"}), ("applied", None))
-        self.assertEqual(C({"v": "yes", "quote_ids": [1]}, {"group": "gap", "would_list": True}), ("escalated", "E3"))
-        self.assertEqual(C({"v": "yes", "quote_ids": [1]}, {"group": "gap", "would_list": False}), ("applied", None))
+        self.assertEqual(C({"v": "yes", "level": "explicit", "quote_ids": [1]}, {"group": "gap", "would_list": True}),
+                         ("escalated", "E3"))
+        self.assertEqual(C({"v": "yes", "level": "explicit", "quote_ids": [1]}, {"group": "gap", "would_list": False}), ("applied", None))
         self.assertEqual(C({"v": "yes"}, self.top, {"want": "no"}), ("escalated", "E4"))
 
     def test_templates_and_translation(self):

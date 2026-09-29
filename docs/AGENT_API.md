@@ -555,8 +555,13 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
                                     // main / to_confirm and counts every listed row
   "to_confirm": {"n": 36, "rows": [{"name": "…", "name_en": "…", "ticker": "…", "security_id": "…",
                                     "country": "…", "verdict_words_zh": "相关", "verdict_words_en": "Related",
-                                    "evidence_kind": "profile", "agent": null, "moved_by_agent": false,
+                                    "evidence_kind": "profile", "agent": null, "agent_level": null,
+                                    "agent_words_zh": null, "agent_words_en": null, "moved_by_agent": false,
                                     "unchecked": false}]},
+                                    // agent: your review's call (yes | no | unsure), agent_level its level on a
+                                    // yes (explicit | partial); agent_words_<lang> say it: 符合 / fits (yes,
+                                    // explicit), 部分相关 / partly related (yes, partial), 不符合 / does not fit,
+                                    // 拿不准 / not sure. Relay those words, never "fits" for a partial yes
                                     // the page's 待核对 / To confirm section in brief (the first 10 rows): never
                                     // numbered with `top`, never used to fill it; moved_by_agent: your review said no
                                     // to a main-list row. null for a single padded list
@@ -588,6 +593,8 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
            "user": false,                   // the human answered this company on a card
            "verdict_from_user": false,      // listed only because of that answer: say "your call", not
                                             // "annual report" (up to 10 rows)
+           "agent": null, "agent_state": null, "agent_level": null,   // your review's call on this row, as in
+           "agent_words_zh": null, "agent_words_en": null,             // to_confirm (agent_words_<lang>)
            "checked_by_agent": false,       // in the main list because your review confirmed it from the text (yes,
                                             // explicit, 1-3 quote_ids): say 你的 AI 核对 / "checked by your AI"
            "unchecked": false}],            // entered after a fill / re-rank and your AI has not checked it yet:
@@ -782,7 +789,8 @@ After the first result the human answers no calibration cards. Instead:
    never re-score and never list an unverified company; a verdict applies only to the evidence it was given for.
    Weak disagreements are applied without asking; an answer is **escalated** to the human (never applied) when:
    E1 unsure about the meaning on a listed / gap / below-cut row, E2 a no on a row the system is confident about,
-   E3 a yes on an unverified row that would make the list, E4 a conflict with the human's own answer. Thin
+   E3 an explicit yes on an unverified row that would make the list (a partial yes never promotes, so it is applied
+   without asking), E4 a conflict with the human's own answer. Thin
    evidence gets a gap badge, never a question. An escalation carries `section`: about a to-confirm row it names the
    section, not a rank ("X（待核对）：…要不要放进确认名单？" / "X (to confirm): … Add it to the confirmed list?") and
    is not asked in chat (`in_relayed_top` false: the page's question box has it); an E2 on a main-list row says it
