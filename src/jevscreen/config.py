@@ -45,7 +45,7 @@ class Config:
     fd_duckdb: Path | None = field(default_factory=lambda: (
         Path(os.environ["JEVSCREEN_FD_DUCKDB"]) if os.environ.get("JEVSCREEN_FD_DUCKDB") else None))
     user_agent: str = field(default_factory=lambda: os.environ.get(
-        "JEVSCREEN_USER_AGENT", "Mozilla/5.0 (compatible; jev-screen/0.0.1; personal research)"))
+        "JEVSCREEN_USER_AGENT", "Mozilla/5.0 (compatible; jev-screen/0.1.1; personal research)"))
     # Politeness: minimum seconds between requests to the same host.
     min_interval_s: float = field(default_factory=lambda: float(os.environ.get("JEVSCREEN_MIN_INTERVAL_S", "1.0")))
     timeout_s: float = 60.0

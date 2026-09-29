@@ -293,7 +293,7 @@ def _collect(con) -> dict[str, Any]:
             "fetched_at", "extractor"]
     out["edinet_docs"] = [dict(zip(cols, r)) for r in con.execute(
         f"SELECT {', '.join(cols)} FROM documents WHERE source_id = 'edinet_yuho' AND text_path IS NOT NULL "
-        "ORDER BY doc_id").fetchall()]
+        "AND section IS DISTINCT FROM 'business_deep' ORDER BY doc_id").fetchall()]    # never the on-demand deep rows
     return out
 
 

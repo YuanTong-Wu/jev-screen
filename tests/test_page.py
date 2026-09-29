@@ -113,14 +113,15 @@ class TestPage(PageCase):
                          (page.PAGE_FORMAT, rid, deck["deck_id"], IDEA))
         self.assertEqual([r["name"] for r in d["rows"]], ["RoboCorp", "Robo Two"])
         robo = d["rows"][0]
-        self.assertEqual((robo["verdict"], robo["evidence"], robo["ticker"]), ("explicit", "annual_report", "ROBO"))
+        # The L2 label alone cannot promote the page: the agent has not cited a matching application sentence.
+        self.assertEqual((robo["verdict"], robo["evidence"], robo["ticker"]), ("partial", "annual_report", "ROBO"))
         self.assertEqual(robo["quote"]["url"], "https://www.sec.gov/robo.htm")
         self.assertIn("humanoid robots", robo["quote"]["text"].lower())
         self.assertTrue(robo["one_line"])                        # the description's first sentence (store lookup)
         self.assertEqual(len(d["cards"]), len(deck["cards"]))
         self.assertEqual(d["cards"][0]["tokens"], {k: v for k, v in calib.answer_tokens(deck)[1].items()})
         self.assertTrue(page.stable_path(self.cfg, IDEA).exists())
-        self.assertEqual(d["gaps"][0]["id"], "no_description")
+        self.assertIn("no_description", [g["id"] for g in d["gaps"]])     # after thin_waiting (novice #4 P0-1)
         for bad in ("<link", "@import", "url(", 'src="http', "<iframe", "<img"):
             self.assertNotIn(bad, html)
         self.assertIn("Content-Security-Policy", html)
@@ -321,7 +322,9 @@ function walk(n,out){if(n._text)out.push(n._text);n.children.forEach(c=>walk(c,o
 const tbl=all.filter(n=>n.tagName==='table');
 const heads=all.filter(n=>n.tagName==='th').map(n=>n._text);
 const trs=tbl.length?tbl[0].children.filter(n=>n.tagName==='tr').length:0;
-console.log(JSON.stringify({text:walk(app,[]).join('\n'),heads:heads,trs:trs}));
+const table_ranks=tbl.length?tbl[0].children.slice(1).map(r=>r.children[0].textContent):[];
+const table_verdicts=tbl.length?tbl[0].children.slice(1).map(r=>r.children[2].textContent):[];
+console.log(JSON.stringify({text:walk(app,[]).join('\n'),heads:heads,trs:trs,table_ranks:table_ranks,table_verdicts:table_verdicts}));
 """)
     js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
     blob = re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S).group(1)
@@ -426,11 +429,12 @@ class TestNovicePageFixes(unittest.TestCase):
         self.assertIn("#1 青澜科技 399101 · 中国 — 相关 · 年报原文", text)
         self.assertIn("做什么：Baifeng makes aluminium.（原文，未翻译）", text)
         self.assertIn("#2 百峰铝业", text)
-        self.assertIn("年报摘录未提到（缺口） [边缘：摘录没提到你的想法", text)
+        self.assertIn("#2 百峰铝业 699102 · 中国 — 边缘 · 年报摘录未提到（缺口）\n", text)   # the gap said once
+        self.assertEqual(text.count("边缘"), 1)
         self.assertIn("4 家：年报/简介说得不够清楚", text)
         self.assertNotRegex(text, r"\{[a-z_]+\}")
         html = page.render_page(d)
-        m = re.search(r"<noscript>(.*?)</noscript>", html, re.S)
+        m = re.search(r"<div id=\"app\"><noscript>(.*?)</noscript>", html, re.S)
         self.assertIn("#1 青澜科技", m.group(1))
         en = page.render_text(self.data("en"))
         self.assertIn("#1 Qinglan Thermal Tech Co. Ltd. 399101 · China — Related · annual report", en)
@@ -443,6 +447,185 @@ class TestNovicePageFixes(unittest.TestCase):
     def test_unverified_groups(self):
         self.assertEqual(self.data()["unverified_groups"],
                          [{"key": "st_insufficient", "n": 4}, {"key": "st_contradicted", "n": 1}])
+
+
+class TestNoviceVerdictLevels(unittest.TestCase):
+    """P1-4: a clear page call needs the agent's cited, application-specific evidence."""
+
+    def fixture(self, *, text="公司为储能项目交付液冷机组。", row_updates=None, target="储能", category="液冷设备"):
+        result = _novice_result()
+        result["scope"] = {"facets": {"category": "liquid cooling units", "target": "battery storage"},
+                           "facets_zh": {"category": category, "target": target}}
+        row = dict(result["rows"][0], l2_label="explicit", evidence_sha="same-sha", evidence_excerpt=text,
+                   agent_verdict="yes", agent_state="applied", agent_level="explicit", agent_quote_ids=[1])
+        row.update(row_updates or {})
+        result["rows"] = [row]
+        l2 = {"k1": {"sha": "same-sha", "text": "[annual report]\n\n" + text, "pieces": [text]}}
+        return result, l2
+
+    def verdict(self, **kwargs):
+        result, l2 = self.fixture(**kwargs)
+        return page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"]
+
+    def test_only_applied_explicit_agent_with_a_cited_target_and_product_is_clear(self):
+        self.assertEqual(self.verdict(), "explicit")
+        cases = (
+            ({"agent_verdict": None}, "公司为储能项目交付液冷机组。"),
+            ({"agent_level": "partial"}, "公司为储能项目交付液冷机组。"),
+            ({"agent_state": "escalated"}, "公司为储能项目交付液冷机组。"),
+            ({"agent_quote_ids": []}, "公司为储能项目交付液冷机组。"),
+            ({"agent_quote_ids": [99]}, "公司为储能项目交付液冷机组。"),
+            ({"agent_quote_ids": [1]}, "公司生产液冷机组。公司进入储能市场。"),
+            ({"agent_quote_ids": [1]}, "公司计划拓展储能业务。"),
+        )
+        for updates, text in cases:
+            with self.subTest(updates=updates, text=text):
+                self.assertEqual(self.verdict(text=text, row_updates=updates), "partial")
+        self.assertEqual(self.verdict(text="公司生产液冷机组。公司为储能项目交付液冷机组。",
+                                      row_updates={"agent_quote_ids": [2]}), "explicit")
+        result, l2 = self.fixture()
+        l2["k1"]["sha"] = "other-sha"
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "partial")
+        self.assertEqual(self.verdict(row_updates={"evidence_sha": None}), "partial")
+        result, l2 = self.fixture()
+        result["scope"] = {}
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "explicit")
+        result, l2 = self.fixture()
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2,
+                                              extra={"unchecked": ["k1"]})["rows"][0]["verdict"], "partial")
+
+    def test_edge_is_a_verdict_until_a_direct_citation_resolves_it(self):
+        self.assertEqual(self.verdict(row_updates={"l2_edge": True, "agent_verdict": None}), "edge")
+        self.assertEqual(self.verdict(row_updates={"l2_edge": True}), "explicit")
+        result, l2 = self.fixture(row_updates={"user_verdict": "partial", "verdict_source": "user"})
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "partial")
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_a_direct_citation_has_one_clear_tier_in_the_top_table(self):
+        result, l2 = self.fixture(row_updates={"l2_edge": True})
+        data = page.build_page_data(result, None, l2_pieces=l2)
+        self.assertEqual(data["rows"][0]["verdict"], "explicit")
+        shown = dom_text(self, page.render_page(data))
+        self.assertIn("明确", shown["table_verdicts"][0])
+        self.assertNotIn("边缘", shown["table_verdicts"][0])
+
+    def test_english_citation_uses_the_english_target(self):
+        result, l2 = self.fixture(text="We sell liquid cooling units for battery storage.")
+        self.assertEqual(page.build_page_data(result, None, lang="en", l2_pieces=l2)["rows"][0]["verdict"],
+                         "explicit")
+
+    def test_cold_storage_is_not_battery_storage_or_a_profile_gap(self):
+        result, l2 = self.fixture(text="We sell liquid cooling units for cold storage warehouses.")
+        row = page.build_page_data(result, None, lang="en", descriptions={"k1": "Data center cooling"},
+                                   l2_pieces=l2)["rows"][0]
+        self.assertEqual(row["verdict"], "partial")
+        self.assertNotIn("profile_gap_report_target", row["badges"])
+        result, l2 = self.fixture(text="We sell liquid fuel for battery storage power stations.")
+        self.assertEqual(page.build_page_data(result, None, lang="en", l2_pieces=l2)["rows"][0]["verdict"],
+                         "partial")
+
+    def test_default_quickstart_without_optional_facets_can_show_a_direct_verdict(self):
+        result, l2 = self.fixture()
+        result.pop("scope")
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "explicit")
+        result, l2 = self.fixture(text="公司生产液冷温控系统。")
+        result.pop("scope")
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "partial")
+
+    def test_cited_sentences_can_jointly_name_product_and_application(self):
+        result, l2 = self.fixture(text="公司生产液冷机组。产品用于储能电站。",
+                                  row_updates={"agent_quote_ids": [1, 2]},
+                                  target="储能电站", category="液冷温控系统")
+        row = page.build_page_data(result, None, l2_pieces=l2)["rows"][0]
+        self.assertEqual(row["verdict"], "explicit")
+        self.assertIn("产品用于储能电站", row["quote"]["text"])
+        result["rows"][0]["agent_quote_ids"] = [1]
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "partial")
+        result, l2 = self.fixture(text="储能项目投资增长。公司生产液冷机组用于数据中心。",
+                                  row_updates={"agent_quote_ids": [1, 2]},
+                                  target="储能电站", category="液冷温控系统")
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "partial")
+        result, l2 = self.fixture(text="公司服务于储能客户。公司生产液冷机组用于数据中心。",
+                                  row_updates={"agent_quote_ids": [1, 2]},
+                                  target="储能电站", category="液冷温控系统")
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "partial")
+        result, l2 = self.fixture(text="We serve battery storage customers. We sell liquid cooling units for data centers.",
+                                  row_updates={"agent_quote_ids": [1, 2]})
+        self.assertEqual(page.build_page_data(result, None, lang="en", l2_pieces=l2)["rows"][0]["verdict"],
+                         "partial")
+        result, l2 = self.fixture(text="We sell liquid cooling units. They used battery storage at the factory.",
+                                  row_updates={"agent_quote_ids": [1, 2]})
+        self.assertEqual(page.build_page_data(result, None, lang="en", l2_pieces=l2)["rows"][0]["verdict"],
+                         "partial")
+
+    def test_cited_chinese_synonyms_need_not_repeat_the_whole_facet_phrase(self):
+        result, l2 = self.fixture(text="公司为储能项目交付液冷机组。",
+                                  target="储能电站", category="液冷温控系统")
+        self.assertEqual(page.build_page_data(result, None, l2_pieces=l2)["rows"][0]["verdict"], "explicit")
+
+    def test_page_names_when_the_report_fills_an_application_missing_from_the_profile(self):
+        result, l2 = self.fixture(text="公司为储能项目交付液冷机组。")
+        profile = "公司提供工业空调及液冷设备。"
+        row = page.build_page_data(result, None, descriptions={"k1": profile}, l2_pieces=l2)["rows"][0]
+        self.assertIn("profile_gap_report_target", row["badges"])
+        self.assertEqual(page.STRINGS["zh"]["badge_profile_gap_report_target"], "简介里没写，年报里写了")
+        row = page.build_page_data(result, None, descriptions={"k1": profile + "用于储能电站。"},
+                                   l2_pieces=l2)["rows"][0]
+        self.assertNotIn("profile_gap_report_target", row["badges"])
+        l2["k1"]["text"] = "[annual report]\n\n公司提供数据中心液冷设备。"
+        l2["k1"]["pieces"] = ["公司提供数据中心液冷设备。"]
+        row = page.build_page_data(result, None, descriptions={"k1": profile}, l2_pieces=l2)["rows"][0]
+        self.assertNotIn("profile_gap_report_target", row["badges"])
+        result, l2 = self.fixture(text="We sell liquid cooling units. They used battery storage at the factory.",
+                                  row_updates={"agent_quote_ids": [1, 2]})
+        row = page.build_page_data(result, None, lang="en", descriptions={"k1": "Data center cooling"},
+                                   l2_pieces=l2)["rows"][0]
+        self.assertNotIn("profile_gap_report_target", row["badges"])
+
+    def test_page_reads_the_cited_sentence_from_the_run_file(self):
+        result, l2 = self.fixture(text="公司生产工业液冷机组。公司为储能项目交付液冷机组。",
+                                  row_updates={"agent_quote_ids": [2]})
+        result["rows"][0]["evidence_excerpt"] = "公司生产工业液冷机组。"
+        with tempfile.TemporaryDirectory() as tmp:
+            result["output_dir"] = tmp
+            (Path(tmp) / "l2_inputs.jsonl").write_text(json.dumps({
+                "company_key": "k1", "evidence_sha": "same-sha", "text": l2["k1"]["text"],
+                "excerpts": [{"kind": "overview", "text": result["rows"][0]["evidence_excerpt"]}],
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+            row = page.build_page_data(result, None)["rows"][0]
+            self.assertEqual(row["verdict"], "explicit")
+            self.assertEqual(row["quote"]["text"], "公司为储能项目交付液冷机组。")
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_top_n_table_groups_levels_but_shows_the_original_ranks(self):
+        result, _ = self.fixture()
+        base = result["rows"][0]
+        rows, l2 = [], {}
+        for rank, text, edge, agent in (
+            (1, "公司提供普通工业液冷设备。", False, False),
+            (2, "公司提供普通工业液冷设备。", True, False),
+            (3, "公司为储能项目交付液冷机组。", False, True),
+            (4, "公司为储能项目交付液冷机组。", False, True),
+            (5, "公司为储能项目交付液冷机组。", False, True),
+        ):
+            key = f"k{rank}"
+            rows.append(dict(base, rank=rank, company_key=key, security_id=f"SZSE:39910{rank}",
+                             name=f"Company {rank}", evidence_excerpt=text, l2_edge=edge,
+                             agent_verdict="yes" if agent else None))
+            l2[key] = {"sha": "same-sha", "text": "[annual report]\n\n" + text, "pieces": [text]}
+        result["rows"] = rows
+        data = page.build_page_data(result, None, l2_pieces=l2)
+        data["top_n"] = 4
+        self.assertEqual([r["verdict"] for r in data["rows"]],
+                         ["partial", "edge", "explicit", "explicit", "explicit"])
+        self.assertEqual([r["rank"] for r in page.top_rows(data, 4)], [1, 2, 3, 4])
+        rendered = dom_text(self, page.render_page(data))
+        self.assertEqual(rendered["table_ranks"], ["#3", "#4", "#1", "#2"])
+        self.assertIn("原排名前 4 家", rendered["text"])
+        self.assertIn("每家的证据（按原排名", rendered["text"])
+        self.assertNotIn("#5", rendered["table_ranks"])
+        plain = page.render_text(data)
+        self.assertLess(plain.index("#1 "), plain.index("#3 "))
 
 
 class TestNoviceReviewFixes(unittest.TestCase):
@@ -478,6 +661,7 @@ class TestNoviceReviewFixes(unittest.TestCase):
             d = page.build_page_data(res, None)
             self.assertIs(d["rows"][1]["quote"]["mentions"], True)
             self.assertEqual(page.load_l2_pieces(tmp, ["k2"])["k2"]["pieces"][1], self.CONTEXT)
+            self.assertEqual(page.load_l2_pieces(tmp, ["k2"])["k2"]["text"], "[x]\nbody")
             self.assertEqual(page.load_l2_pieces(Path(tmp) / "missing"), {})
         # another document (evidence_sha differs): not used, still a gap
         res = _novice_result()
@@ -583,10 +767,11 @@ class TestDoneTextMatchesThePage(unittest.TestCase):
         row = {ln.split(".", 1)[0]: ln for ln in zh if re.match(r"^\d+\. ", ln)}
         self.assertTrue(row["1"].endswith("相关，年报原文"), row["1"])
         self.assertIn("中国", row["1"])
-        self.assertTrue(row["2"].endswith("相关，年报摘录未提到（缺口），边缘"), row["2"])
+        self.assertTrue(row["2"].endswith("；边缘，年报摘录未提到（缺口）"), row["2"])   # 边缘 said once
         self.assertTrue(row["3"].endswith("相关，按你的判断（AI 没从原文确认）"), row["3"])
         en = quickstart.human_text(job, "done", [], "en", None)
-        self.assertIn("Related, the filing excerpt does not mention it (gap), borderline", en)
+        self.assertIn("Borderline, the filing excerpt does not mention it (gap)\n", en)
+        self.assertNotIn("borderline", en.lower().replace("borderline, the filing", ""))
         self.assertIn("Related, your call (the AI did not confirm it from the text)", en)
 
 

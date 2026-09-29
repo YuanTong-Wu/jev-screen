@@ -108,6 +108,7 @@ from urllib.parse import quote
 from .. import guard, store
 from ..config import Config
 from ..http import Blocked, RequestTimeout
+from .deep_sections import DEEP_SECTION
 from .edinet import (FINAL_WAIT_S, ApiKeyMissing, ApiStop, SyncRun, date_or_none, deadline_note, decode_bytes,
                      err_note, filter_lines, is_zip, key_redactor, load_lines, normalise_text, prepare_client,
                      read_zip, short_description_cjk, sigterm_as_interrupt, split_sid, stale_flag, stored_documents,
@@ -132,6 +133,10 @@ ID_TYPE = "dart_corp_code"
 COMMAND = "sync-dart"
 EXTRACTOR_VERSION = "dart-v1"            # mode 'zip': extractor 'dart-v1/xml'
 WEB_EXTRACTOR_VERSION = "dart-web-v1"    # mode 'web'
+# v2 = v1 + the deep appendix ('매출 및 수주상황', 'IV. 이사의 경영진단 및 분석의견'; sources/deep_sections.py), written
+# only by an on-demand deep fetch (sync(deep=True) with codes) into its own row and text file (section
+# deep_sections.DEEP_SECTION); a plain sync never reads, settles on or replaces a deep row.
+DEEP_WEB_EXTRACTOR_VERSION = "dart-web-v2"
 MODES = ("web", "zip")
 WEB_RATE_KEY = "dart-web"                # dart.fss.or.kr: own limiter key and budget lock
 WEB_MIN_INTERVAL_S = 1.0                 # >= 1 s between website request starts
@@ -776,8 +781,8 @@ class WebPacer:
         self.last = clock()
 
 
-def text_path_for(cfg: Config, corp_code: str, rcept_no: str) -> Path:
-    return Path(cfg.home) / "docs" / "dart" / corp_code / f"{rcept_no}-{SECTION}.txt"
+def text_path_for(cfg: Config, corp_code: str, rcept_no: str, section: str = SECTION) -> Path:
+    return Path(cfg.home) / "docs" / "dart" / corp_code / f"{rcept_no}-{section}.txt"
 
 
 # ============================================================================================ sync
@@ -792,7 +797,7 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
          refresh: bool = False, min_mcap_usd: float | None = None, lookback_days: int = LOOKBACK_DAYS,
          batch_size: int = 25, progress_every: int = 100, only_universe: bool = True,
          as_of: dt.date | None = None, mode: str = "web", reuse_corpcode: bool = True,
-         on_company: Callable[[list[str], str, str | None], None] | None = None) -> dict:
+         on_company: Callable[[list[str], str, str | None], None] | None = None, deep: bool = False) -> dict:
     """Map KRX universe lines to DART corp codes and pull each company's latest 사업보고서 business section.
 
     Steps: (1) require cfg.opendart_api_key() (DartApiKeyMissing before any request); (2) reuse a raw corpCode zip
@@ -802,9 +807,14 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
     stored document has the same rcept_no and extractor (unless refresh), then mode 'web' (default): main.do TOC +
     viewer.do '사업의 개요' and '주요 제품 및 서비스'; mode 'zip': document.xml + '1. 사업의 개요'; write the text file;
     per batch one short session. Returns a summary whose 'status' is ok | blocked | stopped_errors | interrupted |
-    store_locked | error. on_company(security_ids, status, note): per-company events (SyncRun.on_company)."""
+    store_locked | error. on_company(security_ids, status, note): per-company events (SyncRun.on_company).
+    deep=True (on-demand only: mode 'web' and `codes` required; jevscreen.topn_fetch): after the overview and
+    products, the deep sections of the same report are fetched too (deep_sections.dart_deep_nodes, one viewer.do
+    page each) and appended (extractor DEEP_WEB_EXTRACTOR_VERSION); a stored shallow text is read again once."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
+    if deep and (mode != "web" or not codes):
+        raise ValueError("deep=True needs mode 'web' and codes (an on-demand fetch of named companies)")
     key = cfg.opendart_api_key()
     if not key:
         raise DartApiKeyMissing(missing_key_message(cfg))
@@ -821,7 +831,7 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
         return _sync(cfg, client, key, redact, limit=limit, codes=codes, refresh=refresh, min_mcap_usd=min_mcap_usd,
                      lookback_days=lookback_days, batch_size=batch_size, progress_every=progress_every,
                      only_universe=only_universe, as_of=as_of, mode=mode, reuse_corpcode=reuse_corpcode,
-                     on_company=on_company)
+                     on_company=on_company, deep=bool(deep))
 
 
 def _load_corp_codes(cfg: Config, run: SyncRun, key: str, redact, *, reuse: bool) -> tuple[list[dict], dict] | dict:
@@ -896,18 +906,21 @@ class _DartRun(SyncRun):
 
 def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, min_mcap_usd, lookback_days,
           batch_size, progress_every, only_universe, as_of, mode="web", reuse_corpcode=True,
-          on_company=None) -> dict:
+          on_company=None, deep: bool = False) -> dict:
     run = _DartRun(cfg, source_id=SOURCE_ID, command=COMMAND, client=client, rate_key=RATE_KEY, redact=redact,
                   key_placeholder=KEY_PLACEHOLDER, log_tag="dart", statuses=CRAWL_STATUSES,
                   batch_size=batch_size, progress_every=progress_every)
     run.on_company = on_company
     run.web = mode == "web"
     summary = run.summary
-    summary.update({"mode": mode, "corp_codes": 0, "ok_documents": 0, "web_sections": 0, "corpcode_reused": 0})
+    summary.update({"mode": mode, "corp_codes": 0, "ok_documents": 0, "web_sections": 0, "corpcode_reused": 0,
+                    "deep": bool(deep)})
     today = as_of or dt.datetime.now(KST).date()
     bgn_de = (today - dt.timedelta(days=max(1, int(lookback_days)))).strftime("%Y%m%d")
     end_de = today.strftime("%Y%m%d")
-    extractor = WEB_EXTRACTOR_VERSION if mode == "web" else f"{EXTRACTOR_VERSION}/xml"
+    extractor = (DEEP_WEB_EXTRACTOR_VERSION if deep else WEB_EXTRACTOR_VERSION) if mode == "web" \
+        else f"{EXTRACTOR_VERSION}/xml"
+    section_name = DEEP_SECTION if deep else SECTION     # a deep text: its own row and file, never over the shallow
     pacer = WebPacer(WEB_MIN_INTERVAL_S)
     run.start()
 
@@ -929,7 +942,7 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
             lines = filter_lines(load_lines(con, KR_VENUES, only_universe=only_universe), codes, min_mcap_usd)
             mapping = map_securities_to_corp(lines, corp_codes, report=report)
             run.write_mapping(con, lines, mapping, ID_TYPE, snap, report)
-            stored = stored_documents(con, SOURCE_ID)
+            stored = stored_documents(con, SOURCE_ID, section=section_name)
             run.attempts = dict(con.execute("SELECT security_id, attempts FROM crawl_state WHERE source_id = ?",
                                             [SOURCE_ID]).fetchall())
     except KeyboardInterrupt:
@@ -959,9 +972,9 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
     def doc_row(corp: str, filing: dict, raw: bytes, note: str, at: dt.datetime, partial: bool = False) -> dict:
         primary = run.groups[corp][0]
         rcept_no = filing["rcept_no"]
-        return {"doc_id": f"{SOURCE_ID}:{corp}:{rcept_no}:{SECTION}", "security_id": primary["security_id"],
+        return {"doc_id": f"{SOURCE_ID}:{corp}:{rcept_no}:{section_name}", "security_id": primary["security_id"],
                 "company_key": primary["company_key"], "source_id": SOURCE_ID, "cik": None, "form": FORM_LABEL,
-                "section": SECTION, "accession": rcept_no, "filing_date": date_or_none(filing["rcept_dt"]),
+                "section": section_name, "accession": rcept_no, "filing_date": date_or_none(filing["rcept_dt"]),
                 "report_date": filing["period_end"], "url": VIEWER_URL.format(rcept_no=rcept_no),
                 "raw_sha256": store.sha256(raw), "raw_bytes": len(raw), "text_path": None, "text_sha256": None,
                 "text_chars": None, "extractor": extractor + (PARTIAL_SUFFIX if partial else ""),
@@ -978,13 +991,13 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
             run.batch.docs.append(row)
             run.state(corp, "extract_failed", 200, note, at)
             return "extract_failed"
-        tp = text_path_for(cfg, corp, filing["rcept_no"])
+        tp = text_path_for(cfg, corp, filing["rcept_no"], section_name)
         tp.parent.mkdir(parents=True, exist_ok=True)
         data = section.encode("utf-8")
         tp.write_bytes(data)
         row.update(text_path=str(tp), text_sha256=store.sha256(data), text_chars=len(section))
         run.batch.docs.append(row)
-        desc = short_description_cjk(desc_source)
+        desc = None if deep else short_description_cjk(desc_source)    # a deep fetch never changes a profile
         if desc:
             run.add_description(corp, desc, "ko", row["url"], at, ID_TYPE)
         run.state(corp, "ok", 200, note, at)
@@ -1085,6 +1098,36 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
         run.state(corp, "error", resp.status, note, at)
         return "error"
 
+    def deep_blocks(corp: str, nodes: Sequence[Mapping[str, Any]], rcept_no: str, base: str,
+                    raws: list[bytes]) -> tuple[tuple[str, bool, bool], str]:
+        """((appendix, partial, truncated), note) of the deep sections (deep_sections.dart_deep_nodes); a failed
+        fetch keeps what arrived and makes the row partial (redone by the next deep fetch)."""
+        from .deep_sections import dart_appendix, dart_deep_nodes
+        texts: list[tuple[str, str]] = []
+        miss: list[str] = []
+        part = trunc = False
+        for name, node in dart_deep_nodes(nodes, title_key, lambda n: section_params(n) is not None):
+            try:
+                dresp, dtext, dok = fetch_section(corp, node, rcept_no)
+            except RequestTimeout as e:
+                miss.append(f"{name}_" + deadline_note(e).split(";", 1)[0])
+                part = True
+                continue
+            except (OSError, http.client.HTTPException) as e:
+                miss.append(f"{name}_network:{type(e).__name__}")
+                part = True
+                continue
+            if dresp.status != 200 or not dok:
+                miss.append(f"{name}_http_{dresp.status}" if dresp.status != 200 else f"{name}_unverified")
+                part = True
+                continue
+            raws.append(dresp.body or b"")
+            trunc |= bool(getattr(dresp, "truncated", False))
+            if dtext:
+                texts.append((name, dtext))
+        app, note = dart_appendix(base, texts)
+        return (app, part, trunc), ";".join([note] + miss)
+
     def process_web(corp: str, filing: dict, at: dt.datetime) -> str:
         rcept_no = filing["rcept_no"]
         mresp = web_get(corp, WEB_MAIN_URL.format(rcept_no=rcept_no))
@@ -1147,6 +1190,12 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
                             parts.append("products_empty")
             section = overview + (f"\n\n{PRODUCTS_HEADING}\n{products}" if products else "")
             desc_source = overview
+            if deep:
+                deep_partial, deep_note = deep_blocks(corp, nodes, rcept_no, section, raws)
+                section += deep_partial[0]
+                partial = partial or deep_partial[1]
+                truncated |= deep_partial[2]
+                parts.append(deep_note)
         elif found["chapter"] is not None:
             resp, chapter, ok = fetch_section(corp, found["chapter"], rcept_no)
             if not ok:
@@ -1162,6 +1211,12 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
                 chapter = chapter[:CHAPTER_MAX_CHARS]
                 parts.append("capped")
             section = desc_source = chapter
+            if deep:          # the chapter fallback is deepened too (else a deep row would hold a shallow text)
+                deep_partial, deep_note = deep_blocks(corp, nodes, rcept_no, section, raws)
+                section += deep_partial[0]
+                partial = partial or deep_partial[1]
+                truncated |= deep_partial[2]
+                parts.append(deep_note)
         else:
             note = "business_section_not_found" if not any(_is_chapter(title_key(n.get("text"))) for n in nodes) \
                 else "no_overview_in_toc"

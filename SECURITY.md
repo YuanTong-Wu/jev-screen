@@ -2,15 +2,17 @@
 
 ## Reporting a vulnerability or a leak
 
-Please do **not** open a public issue for:
+Please do **not** put the details of any of these in a public issue:
 
 - a leaked secret (API key, token, User-Agent contact e-mail) anywhere in the repository or its history;
 - personal data or a real third-party document that should not be in the repository;
 - a way to make jev-screen send a key, a local file or database content to a host other than the official
   source it is talking to.
 
-Use GitHub's private vulnerability reporting instead ("Security" tab -> "Report a vulnerability"). Describe where the
-problem is without pasting the secret or the material itself. You should get an answer within a week.
+Instead, open a new issue with the **Security contact** template. Say only that
+you have something to report privately and how you can be reached. Do not describe the problem, name the file, or
+paste the secret or the material. The maintainer will reply with a private way to send the details. You should get
+an answer within a week.
 
 ## How jev-screen handles secrets
 

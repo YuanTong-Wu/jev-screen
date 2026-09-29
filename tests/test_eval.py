@@ -61,6 +61,14 @@ class TestCheck(unittest.TestCase):
                                                                            url="https://xueqiu.com/S/A")]))))
         self.assertIn("checked must be", " ".join(evalset.check(idea(labels=[{**label("NYSE:A", "right"),
                                                                               "checked": "vibes"}]))))
+        self.assertEqual(evalset.check(idea(labels=[{**label("NYSE:A", "right"),
+                                                      "checked": "official_ir_read"}])), [])
+
+    def test_reviewed_must_be_a_boolean(self):
+        for value in ("false", "yes", 1, None):
+            with self.subTest(value=value):
+                problems = evalset.check(idea(labels=[{**label("NYSE:A", "right"), "reviewed": value}]))
+                self.assertIn("reviewed must be a boolean", " ".join(problems))
 
     def test_a_label_that_is_not_an_object_is_reported_not_a_crash(self):
         probs = evalset.check(idea(labels=["NYSE:A", 5, label("NYSE:B", "edge")]))
@@ -86,6 +94,19 @@ class TestCheck(unittest.TestCase):
         self.assertIn("min_mcap_usd", probs)
         self.assertIn("countries", probs)
         self.assertEqual(evalset.check(idea(min_mcap_usd=None, countries=["CN", "Hong Kong"])), [])
+
+    def test_markets_must_be_codes_the_screen_filter_knows(self):
+        # markets is the screen's filter when countries is null (eval run), so a typo would empty the universe
+        self.assertIn("markets", " | ".join(evalset.check(idea(markets="IN"))))
+        self.assertIn("XX", " | ".join(evalset.check(idea(markets=["IN", "XX"]))))
+        self.assertEqual(evalset.check(idea(markets=["CA", "AU", "US", "KZ", "HK"])), [])   # uranium's markets
+        self.assertEqual(evalset.check(idea(markets=None)), [])
+
+    def test_screen_scope_is_countries_else_markets(self):
+        self.assertEqual(evalset.screen_scope(idea(markets=["IN"], countries=None)), ["IN"])
+        self.assertEqual(evalset.screen_scope(idea(markets=["US", "CN"], countries=["CN"])), ["CN"])
+        self.assertIsNone(evalset.screen_scope(idea(markets=None, countries=None)))
+        self.assertIsNone(evalset.screen_scope(idea(markets=[], countries=[])))
 
     def test_two_files_with_the_same_id_are_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -180,6 +201,97 @@ class TestScore(unittest.TestCase):
         self.assertIn("1 checked only against a search summary", md)
         self.assertIn("| 2/3 (1 search summary) |", md)
 
+    def test_official_ir_read_is_distinct_from_a_filing_and_from_a_search_summary(self):
+        labs = [{**label("NYSE:A", "right"), "checked": "filing_read", "reviewed": True},
+                {**label("NYSE:B", "edge"), "checked": "official_ir_read", "reviewed": True},
+                {**label("NYSE:C", "wrong"), "checked": "search_summary"}]
+        s = evalset.score(idea(labels=labs), result(["NYSE:A", "NYSE:B", "NYSE:C"]))
+        self.assertEqual((s["official_ir_labels"], s["search_summary_labels"]), (1, 1))
+        md = evalset.report_md([s], evalset.aggregate([s]))
+        self.assertIn("1 checked against official IR material", md)
+        self.assertIn("1 official IR", md)
+
+    def test_reviewed_search_summary_still_has_an_overall_source_warning(self):
+        lab = {**label("NYSE:A", "right"), "reviewed": True, "checked": "search_summary"}
+        s = evalset.score(idea(labels=[lab]), result(["NYSE:A"]))
+        md = evalset.report_md([s], evalset.aggregate([s]))
+        self.assertIn("Every label is reviewed", md)
+        self.assertIn("1 checked only against a search summary", md)
+
+
+class TestLabelPolicy(unittest.TestCase):
+    """Owner label policy 2026-09-28 (docs/EVAL.md): diversified flag, owner-reviewed marker, evidence location,
+    unresolved search summaries, strict (headline) and lenient P@k, P@min(k, n) with n shown."""
+
+    def test_diversified_must_be_a_boolean_on_a_right_or_edge_label(self):
+        self.assertEqual(evalset.check(idea(labels=[{**label("NYSE:A", "right"), "diversified": True},
+                                                    {**label("NYSE:B", "edge"), "diversified": False}])), [])
+        probs = " | ".join(evalset.check(idea(labels=[{**label("NYSE:A", "right"), "diversified": "yes"}])))
+        self.assertIn("diversified must be a boolean", probs)
+        probs = " | ".join(evalset.check(idea(labels=[{**label("NYSE:C", "wrong"), "diversified": True}])))
+        self.assertIn("diversified only on a right or edge label", probs)
+
+    def test_by_accepts_ai_adjudicated_but_not_free_text(self):
+        self.assertEqual(evalset.check(idea(labels=[{**label("NYSE:A", "edge"), "by": "ai-adjudicated"}])), [])
+        probs = " | ".join(evalset.check(idea(labels=[{**label("NYSE:A", "edge"), "by": "robot"}])))
+        self.assertIn("by must be ai, ai-adjudicated, human", probs)
+
+    def test_owner_review_marker_needs_reviewed_true(self):
+        ok = {**label("NYSE:A", "right"), "reviewed": True, "reviewed_by": "owner"}
+        self.assertEqual(evalset.check(idea(labels=[ok])), [])
+        probs = " | ".join(evalset.check(idea(labels=[{**ok, "reviewed": False}])))
+        self.assertIn("reviewed_by needs reviewed: true", probs)
+        probs = " | ".join(evalset.check(idea(labels=[{**ok, "reviewed_by": "a friend"}])))
+        self.assertIn("reviewed_by must be owner", probs)
+
+    def test_evidence_location_is_short_text(self):
+        self.assertEqual(evalset.check(idea(labels=[{**label("NYSE:A", "right"),
+                                                     "evidence_at": "2025 10-K Item 1, p. 7"}])), [])
+        probs = " | ".join(evalset.check(idea(labels=[{**label("NYSE:A", "right"), "evidence_at": "x" * 201}])))
+        self.assertIn("evidence_at", probs)
+        probs = " | ".join(evalset.check(idea(labels=[{**label("NYSE:A", "right"), "evidence_at": 7}])))
+        self.assertIn("evidence_at", probs)
+
+    def test_unresolved_only_marks_a_search_summary_label(self):
+        ok = {**label("NYSE:B", "edge"), "checked": "search_summary", "unresolved": True}
+        self.assertEqual(evalset.check(idea(labels=[ok])), [])
+        probs = " | ".join(evalset.check(idea(labels=[{**ok, "checked": "filing_read"}])))
+        self.assertIn("unresolved only on a search_summary label", probs)
+        probs = " | ".join(evalset.check(idea(labels=[{**ok, "unresolved": "maybe"}])))
+        self.assertIn("unresolved must be a boolean", probs)
+
+    def test_fewer_rows_than_k_score_over_the_rows_shown_and_say_n(self):
+        s = evalset.score(idea(), result(["NYSE:A", "NYSE:B", "NYSE:C"]))
+        a = s["at"]["10"]
+        self.assertEqual((a["n"], a["right"], a["edge"], a["wrong"]), (3, 1, 1, 1))
+        self.assertAlmostEqual(a["precision"], 1 / 3, places=4)            # strict: right only
+        self.assertAlmostEqual(a["precision_lenient"], 2 / 3, places=4)    # lenient: right + edge
+        md = evalset.report_md([s], evalset.aggregate([s]))
+        self.assertIn("strict P@10 33%", md)
+        self.assertIn("lenient 67%", md)
+        self.assertIn("P@min(10, n)", md)
+        self.assertIn("| 3 | 33% (1/3; 1/1/1/0) | 67% |", md)    # n, strict (r / labelled; r/e/w/?), lenient
+
+    def test_diversified_rights_and_owner_reviews_are_counted_and_shown(self):
+        labs = [{**label("NYSE:A", "right", True), "diversified": True, "reviewed": True, "reviewed_by": "owner"},
+                {**label("NYSE:B", "edge"), "diversified": True},
+                {**label("NYSE:D", "right", True)},
+                {**label("NYSE:E", "edge"), "checked": "search_summary", "unresolved": True}]
+        s = evalset.score(idea(labels=labs), result(["NYSE:A", "NYSE:B", "NYSE:D"]))
+        self.assertEqual(s["at"]["10"]["diversified_right"], 1)
+        self.assertEqual((s["owner_reviewed_labels"], s["unresolved_labels"], s["diversified_labels"]), (1, 1, 2))
+        md = evalset.report_md([s], evalset.aggregate([s]))
+        self.assertIn("1 reviewed by the owner", md)
+        self.assertIn("1 unresolved", md)
+        self.assertIn("diversified", md)
+
+    def test_by_type_table_reports_strict_and_lenient(self):
+        s = evalset.score(idea(), result(["NYSE:A", "NYSE:B"]))
+        md = evalset.report_md([s], evalset.aggregate([s]))
+        self.assertIn("| type | ideas | strict P@10 | lenient P@10 | strict P@40 | lenient P@40 | must-include recall |",
+                      md)
+        self.assertIn("| product_category | 1 | 50% | 100% | 50% | 100% | 50% |", md)
+
 
 class TestCli(unittest.TestCase):
     def setUp(self):
@@ -229,6 +341,31 @@ class TestCli(unittest.TestCase):
         self.assertAlmostEqual(out["aggregate"]["all"]["p@10"], 0.5)
         self.assertTrue((Path(out["out_dir"]) / "report.md").exists())
         self.assertTrue((Path(out["out_dir"]) / "scores.json").exists())
+
+    def test_run_progress_marks_low_coverage_precision_as_provisional(self):
+        args = argparse.Namespace(set=self.set, json=False, budget_each=0.5, budget_total=0.5,
+                                  ideas="demo-idea", reads=None, read_offset=0)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = eval_cli._run(args, self.cfg, screen_fn=lambda cfg, text, **kw: result(["NYSE:A", "NYSE:X"]))
+        self.assertEqual(code, 0)
+        self.assertIn("provisional main list strict P@min(10, n_main)", out.getvalue())
+        self.assertIn("full list strict P@10", out.getvalue())
+        self.assertIn("coverage 1/2", out.getvalue())
+        self.assertIn("lenient", out.getvalue())
+        reviewed = {**label("NYSE:A", "right"), "reviewed": True, "checked": "filing_read"}
+        (self.set / "demo-idea.json").write_text(json.dumps(idea(labels=[reviewed])), encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(eval_cli._run(args, self.cfg, screen_fn=lambda cfg, text, **kw: result(["NYSE:A"])), 0)
+        self.assertIn("full list strict P@10 1.0, lenient 1.0 (n 1, coverage 1/1", out.getvalue())
+        self.assertNotIn("provisional", out.getvalue())
+        unresolved = {**label("NYSE:B", "edge"), "reviewed": True, "checked": "search_summary", "unresolved": True}
+        (self.set / "demo-idea.json").write_text(json.dumps(idea(labels=[reviewed, unresolved])), encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(eval_cli._run(args, self.cfg, screen_fn=lambda cfg, text, **kw: result(["NYSE:A"])), 0)
+        self.assertIn("provisional main list", out.getvalue())
 
     def test_run_needs_a_positive_finite_budget_and_a_valid_offset(self):
         from unittest import mock
@@ -381,6 +518,46 @@ class TestCli(unittest.TestCase):
         (run_dir / "results.json").write_text(json.dumps(fake(None, None)), encoding="utf-8")
         code, out = self.call(eval_cli.cmd_eval, eval_command="score", run=str(run_dir), idea="demo-idea")
         self.assertEqual((code, out["score"]["must_include"]["found"], out["score"]["not_in_store"]), (0, 1, []))
+
+    def test_run_passes_the_ideas_markets_as_the_screen_filter(self):
+        # 2026-09-28: runs before this fix passed countries only (null for most ideas: L1 read ~10k companies
+        # worldwide; india-ems's L2 read mostly Chinese filings)
+        (self.set / "demo-idea.json").write_text(json.dumps(idea(markets=["IN"], countries=None)), encoding="utf-8")
+        (self.set / "b-idea.json").write_text(json.dumps(idea(id="b-idea", markets=["US", "CN"], countries=["CN"])),
+                                              encoding="utf-8")
+        (self.set / "c-idea.json").write_text(json.dumps(idea(id="c-idea", markets=None)), encoding="utf-8")
+        calls = {}
+
+        def fake(cfg, text, **kw):
+            calls[kw["out_dir"].name] = kw["countries"]
+            return result(["NYSE:A"], params={"countries": kw["countries"]})
+        code, out = self.run_eval(fake, budget_total=2.0)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, {"demo-idea": ["IN"], "b-idea": ["CN"], "c-idea": None})
+        by = {s["id"]: s for s in out["scores"]}
+        self.assertEqual(by["demo-idea"]["screen_countries"], ["IN"])
+        self.assertIsNone(by["c-idea"]["screen_countries"])
+        md = (Path(out["out_dir"]) / "report.md").read_text(encoding="utf-8")
+        self.assertIn("IN", md.split("## By idea\n", 1)[1])
+
+    def test_right_labels_outside_the_screen_filter_are_reported(self):
+        # a must-include the filter can never show must be visible, not silently scored as missing
+        from jevscreen import store
+        with store.session(self.cfg) as con:
+            con.execute("INSERT INTO securities (security_id, company_key, country, exchange) VALUES "
+                        "('NSE:DIXON', 'isin:IN1', 'India', 'NSE'), ('SZSE:300454', 'isin:CN1', 'China', 'SZSE'), "
+                        "('HKEX:6699', 'isin:CN2', 'China', 'HKEX'), ('NYSE:X', 'isin:US9', 'United States', 'NYSE')")
+        (self.set / "demo-idea.json").write_text(json.dumps(idea(markets=["IN", "HK"], labels=[
+            label("NSE:DIXON", "right", True), label("SZSE:300454", "right", True), label("HKEX:6699", "right"),
+            label("NYSE:X", "wrong")])), encoding="utf-8")
+        code, out = self.run_eval(lambda cfg, text, **kw: result(["NSE:DIXON"], params={"countries": kw["countries"]}))
+        [s] = out["scores"]
+        # matched as the screen matches --countries: a country code is the country of incorporation, so a
+        # Hong Kong-listed company incorporated in China is outside "HK" (it needs CN); wrong labels do not matter
+        self.assertEqual(s["outside_scope"], ["SZSE:300454", "HKEX:6699"])
+        md = (Path(out["out_dir"]) / "report.md").read_text(encoding="utf-8")
+        self.assertIn("SZSE:300454", md)
+        self.assertIn("outside", md)
 
     def test_the_repository_set_is_well_formed(self):
         d = eval_cli.default_set_dir()

@@ -77,6 +77,7 @@ from .. import guard, store
 from ..config import Config
 from ..config import redact as redact_secrets
 from ..http import Blocked, Client, RequestTimeout
+from .deep_sections import DEEP_SECTION
 
 SOURCE_ID = "edinet_yuho"
 API_BASE = "https://api.edinet-fsa.go.jp/api/v2"
@@ -92,6 +93,10 @@ DEFAULT_MIN_INTERVAL_S = 1.0
 ID_TYPE = "edinet_code"
 COMMAND = "sync-edinet"
 EXTRACTOR_VERSION = "edinet-v2"     # v2: 経営方針… block appended (v1 rows are re-extracted on the next run)
+# v3 = v2 + the deep appendix (MD&A, segment note; sources/deep_sections.py), written only by an on-demand deep fetch
+# (sync(deep=True) with codes) into its own row and text file (section deep_sections.DEEP_SECTION); a plain sync
+# never reads, settles on or replaces a deep row.
+DEEP_EXTRACTOR_VERSION = "edinet-v3"
 FORM_LABEL = "有価証券報告書"
 SECTION = "business"
 ANNUAL_DOC_TYPE = "120"
@@ -442,12 +447,15 @@ def split_sid(sec: Mapping[str, Any]) -> tuple[str, str]:
     return str(sec.get("exchange") or exch).strip().upper(), str(sec.get("symbol") or sym).strip().upper()
 
 
-def stored_documents(con, source_id: str) -> dict[str, tuple[str, str | None]]:
-    """native id (2nd part of doc_id) -> (accession, extractor) of its newest stored document."""
+def stored_documents(con, source_id: str, section: str = SECTION) -> dict[str, tuple[str, str | None]]:
+    """native id (2nd part of doc_id) -> (accession, extractor) of its newest stored document of that section kind:
+    section DEEP_SECTION sees only the deep rows (an on-demand deep fetch), any other only the rest."""
     out: dict[str, tuple[str, str | None]] = {}
+    deep = section == DEEP_SECTION
     for doc_id, acc, extractor in con.execute(
-            "SELECT doc_id, accession, extractor FROM documents WHERE source_id = ? "
-            "ORDER BY filing_date DESC NULLS LAST, fetched_at DESC", [source_id]).fetchall():
+            "SELECT doc_id, accession, extractor FROM documents WHERE source_id = ? AND "
+            + ("section = ? " if deep else "section IS DISTINCT FROM ? ")
+            + "ORDER BY filing_date DESC NULLS LAST, fetched_at DESC", [source_id, DEEP_SECTION]).fetchall():
         parts = str(doc_id).split(":")
         if len(parts) >= 3:
             out.setdefault(parts[1], (acc, extractor))
@@ -1080,9 +1088,11 @@ def extract_business_section(zip_bytes: bytes) -> tuple[str | None, str]:
     return (None if business is None else business + policy), note
 
 
-def extract_business_blocks(zip_bytes: bytes) -> tuple[str | None, str, str]:
+def extract_business_blocks(zip_bytes: bytes, *, deep: bool = False) -> tuple[str | None, str, str]:
     """(事業の内容 text or None, policy block to append ('' or '\n\n<POLICY_HEADING>\n<text>'), note); see
-    extract_business_section. The short description is computed from the first element only."""
+    extract_business_section. The short description is computed from the first element only. deep=True (on-demand
+    only): the deep appendix (deep_sections.edinet_appendix, from every CSV of the ZIP) follows the policy block
+    (note ';deep:<blocks>')."""
     try:
         members = read_zip(zip_bytes)
     except (zipfile.BadZipFile, ValueError) as e:
@@ -1138,12 +1148,18 @@ def extract_business_blocks(zip_bytes: bytes) -> tuple[str | None, str, str]:
         note += f";blocks:{','.join(blocks)}"
         if len(section) < MIN_SECTION_CHARS:            # 事業の内容 alone: the policy block does not count
             return None, "", f"section_too_short:{len(section)};{note}"
+        if deep:
+            from .deep_sections import edinet_appendix
+            sets = [got[0] for got in (rows_of(n, d) for n, d in csvs) if got is not None]
+            app, dnote = edinet_appendix(sets, section + extra, text_block_to_text)
+            extra += app
+            note += f";{dnote}"
         return section, extra, note
     return None, "", "element_not_found"
 
 
-def text_path_for(cfg: Config, edinet_code: str, doc_id: str) -> Path:
-    return Path(cfg.home) / "docs" / "edinet" / edinet_code / f"{doc_id}-{SECTION}.txt"
+def text_path_for(cfg: Config, edinet_code: str, doc_id: str, section: str = SECTION) -> Path:
+    return Path(cfg.home) / "docs" / "edinet" / edinet_code / f"{doc_id}-{section}.txt"
 
 
 # ============================================================================================ sync
@@ -1158,8 +1174,14 @@ def missing_key_message(cfg: Config) -> str:
 def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: Iterable[str] | str | None = None,
          refresh: bool = False, min_mcap_usd: float | None = None, backfill_days: int = DEFAULT_BACKFILL_DAYS,
          batch_size: int = 25, progress_every: int = 100, only_universe: bool = True,
-         as_of: dt.date | None = None, reuse_codelist_hours: float | None = None) -> dict:
+         as_of: dt.date | None = None, reuse_codelist_hours: float | None = None,
+         on_company: Callable[[list[str], str, str | None], None] | None = None, deep: bool = False) -> dict:
     """Map JP universe lines to EDINET codes and pull each company's latest 有価証券報告書 事業の内容.
+
+    on_company(security_ids, status, note): per-company events (SyncRun.on_company; the on-demand fetch).
+    deep=True (on-demand only, requires `codes`; jevscreen.topn_fetch): the deep appendix of the same ZIP is added
+    (deep_sections.edinet_appendix: MD&A, segment note), extractor DEEP_EXTRACTOR_VERSION; a stored shallow text of
+    the same report is read again once.
 
     reuse_codelist_hours (default: env JEVSCREEN_EDINET_REUSE_CODELIST_HOURS, else 0 = off): reuse a code list
     snapshot fetched less than that many hours ago (raw file present and matching its sha256) instead of
@@ -1172,6 +1194,8 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
     skip when the stored document has the same docID and extractor (unless refresh), GET type=5, extract, write the
     text file; per batch one short session. Returns a summary whose 'status' is ok | blocked | stopped_errors |
     interrupted | store_locked | error. `client`: http.Client-compatible get(url, rate_key=, max_bytes=)."""
+    if deep and not codes:
+        raise ValueError("deep=True needs codes (an on-demand fetch of named companies, never a bulk re-crawl)")
     key = cfg.edinet_api_key()
     if not key:
         raise EdinetApiKeyMissing(missing_key_message(cfg))
@@ -1181,7 +1205,8 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
         return _sync(cfg, client, key, redact, limit=limit, codes=codes, refresh=refresh, min_mcap_usd=min_mcap_usd,
                      backfill_days=backfill_days, batch_size=batch_size, progress_every=progress_every,
                      only_universe=only_universe, as_of=as_of,
-                     reuse_codelist_hours=_reuse_codelist_hours(reuse_codelist_hours))
+                     reuse_codelist_hours=_reuse_codelist_hours(reuse_codelist_hours), on_company=on_company,
+                     deep=bool(deep))
 
 
 REUSE_CODELIST_ENV = "JEVSCREEN_EDINET_REUSE_CODELIST_HOURS"
@@ -1218,16 +1243,19 @@ def _recent_codelist(cfg: Config, hours: float) -> tuple[bytes, str] | None:
 
 
 def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, min_mcap_usd, backfill_days,
-          batch_size, progress_every, only_universe, as_of, reuse_codelist_hours: float = 0.0) -> dict:
+          batch_size, progress_every, only_universe, as_of, reuse_codelist_hours: float = 0.0,
+          on_company=None, deep: bool = False) -> dict:
     run = SyncRun(cfg, source_id=SOURCE_ID, command=COMMAND, client=client, rate_key=RATE_KEY, redact=redact,
                   key_placeholder=KEY_PLACEHOLDER, log_tag="edinet", statuses=CRAWL_STATUSES,
                   batch_size=batch_size, progress_every=progress_every)
+    run.on_company = on_company
     summary = run.summary
-    summary.update({"codelist_rows": 0, "list_days_scanned": 0, "list_days_cached": 0, "list_days_fetched": 0,
+    summary.update({"deep": bool(deep), "codelist_rows": 0, "list_days_scanned": 0, "list_days_cached": 0, "list_days_fetched": 0,
                     "list_days_failed": 0, "list_scan_stopped_early": False, "ok_documents": 0})
     backfill_days = max(1, min(int(backfill_days), MAX_BACKFILL_DAYS))
     today = as_of or dt.datetime.now(JST).date()
-    extractor = f"{EXTRACTOR_VERSION}/csv"
+    extractor = f"{DEEP_EXTRACTOR_VERSION if deep else EXTRACTOR_VERSION}/csv"
+    section_name = DEEP_SECTION if deep else SECTION     # a deep text: its own row and file, never over the shallow
     run.start()
 
     # ---- (2) code list (network first, then one short session) -------------------------------------------
@@ -1284,7 +1312,7 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
             lines = filter_lines(load_lines(con, JP_VENUES, only_universe=only_universe), codes, min_mcap_usd)
             mapping = map_securities_to_edinet(lines, entries, report=report)
             run.write_mapping(con, lines, mapping, ID_TYPE, snap, report)
-            stored = stored_documents(con, SOURCE_ID)
+            stored = stored_documents(con, SOURCE_ID, section=section_name)
             run.attempts = dict(con.execute("SELECT security_id, attempts FROM crawl_state WHERE source_id = ?",
                                             [SOURCE_ID]).fetchall())
     except KeyboardInterrupt:
@@ -1469,7 +1497,7 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
                 note = "document_not_zip"
             run.state(code, "error", resp.status, note, at)
             return "error"
-        business, policy_extra, xnote = extract_business_blocks(raw)
+        business, policy_extra, xnote = extract_business_blocks(raw, deep=deep)
         section = None if business is None else business + policy_extra
         if getattr(resp, "truncated", False):
             xnote += ";truncated"
@@ -1478,9 +1506,9 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
         if flag:
             xnote += f";{flag}"
         primary = run.groups[code][0]
-        row = {"doc_id": f"{SOURCE_ID}:{code}:{doc_id}:{SECTION}", "security_id": primary["security_id"],
+        row = {"doc_id": f"{SOURCE_ID}:{code}:{doc_id}:{section_name}", "security_id": primary["security_id"],
                "company_key": primary["company_key"], "source_id": SOURCE_ID, "cik": None, "form": FORM_LABEL,
-               "section": SECTION, "accession": doc_id, "filing_date": date_or_none(filing.get("submit_datetime")),
+               "section": section_name, "accession": doc_id, "filing_date": date_or_none(filing.get("submit_datetime")),
                "report_date": date_or_none(filing.get("period_end")), "url": public,
                "raw_sha256": store.sha256(raw), "raw_bytes": len(raw), "text_path": None, "text_sha256": None,
                "text_chars": None, "extractor": extractor, "extract_note": redact(xnote), "fetched_at": at}
@@ -1488,13 +1516,14 @@ def _sync(cfg: Config, client: Any, key: str, redact, *, limit, codes, refresh, 
             run.batch.docs.append(row)
             run.state(code, "extract_failed", 200, xnote, at)
             return "extract_failed"
-        tp = text_path_for(cfg, code, doc_id)
+        tp = text_path_for(cfg, code, doc_id, section_name)
         tp.parent.mkdir(parents=True, exist_ok=True)
         data = section.encode("utf-8")
         tp.write_bytes(data)
         row.update(text_path=str(tp), text_sha256=store.sha256(data), text_chars=len(section))
         run.batch.docs.append(row)
-        desc = short_description_cjk(business)          # 事業の内容 only, never the 経営方針 block
+        # 事業の内容 only, never the 経営方針 block; a deep fetch never changes a profile (descriptions)
+        desc = None if deep else short_description_cjk(business)
         if desc:
             run.add_description(code, desc, "ja", public, at, ID_TYPE)
         run.state(code, "ok", 200, xnote, at)

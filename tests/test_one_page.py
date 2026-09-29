@@ -211,8 +211,8 @@ class TestRenderedPage(Case):
         self.assertNotIn("jevscreen answer", html)
         done = dom_text(self, self.page_html("done"))["text"]
         self.assertIn("准备就绪：", done)
-        self.assertIn("前 3 名一览", done)
-        self.assertIn("每家的证据（3 家，点开看）", done)
+        self.assertIn("原排名前 3 家", done)
+        self.assertIn("每家的证据（按原排名，3 家，点开看）", done)
         self.assertIn("年报摘录未提到（缺口）", done)             # the evidence and its labels in the rows
         self.assertIn("出处：巨潮资讯 · 年报 · 2026年4月1日", done)
         self.assertNotIn("进度", done)                            # finished: no progress block
@@ -242,7 +242,7 @@ class TestRenderedPage(Case):
         self.assertIn("✗ OpenRouter 不接受这个 key（重新创建一个 key", text)
         self.assertIn("结果会在筛选完成后出现在这里", text)
         html = page.render_page(data)
-        self.assertIn("OpenRouter 不接受这个 key", re.search(r"<noscript>(.*?)</noscript>", html, re.S).group(1))
+        self.assertIn("OpenRouter 不接受这个 key", re.search(r"<div id=\"app\"><noscript>(.*?)</noscript>", html, re.S).group(1))
         done = page.render_text(page.read_page_data(S.write_state_page(self.cfg, "done")))
         self.assertIn("✓ 准备就绪：", done)
         self.assertIn("#1 青澜科技", done)

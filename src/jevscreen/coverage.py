@@ -249,10 +249,12 @@ def _ids_relation(con) -> str:
 
 
 def _docs_relation(con) -> str:
-    """'documents' when the table exists, else an empty stand-in (read-only connections never create tables)."""
+    """The documents a screen reads when no top-N lever is on (the deep rows of an on-demand deep fetch, section
+    'business_deep', are left out: sources/deep_sections.py), else an empty stand-in (read-only connections never
+    create tables)."""
     n = con.execute("SELECT count(*) FROM information_schema.tables "
                     "WHERE table_schema = 'main' AND table_name = 'documents'").fetchone()[0]
-    return "documents" if n else _NO_DOCS
+    return ("(SELECT * FROM documents WHERE section IS DISTINCT FROM 'business_deep')" if n else _NO_DOCS)
 
 
 def _iso(v: Any) -> str | None:

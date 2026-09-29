@@ -50,6 +50,38 @@ def pool_inputs(cfg, result: dict[str, Any]) -> tuple[list[dict[str, Any]], dict
     return pool, calib.load_inputs(result["output_dir"]), names
 
 
+def stored_filings(cfg, keys) -> dict[str, dict[str, Any]]:
+    """company_key -> {text, source_id, form, filing_date, section, doc_id} of the official filing stored for each
+    company (screen.load_documents inside a deep view: the deeper business text when a top-N fetch stored one, with
+    the same-year summary first; retrieval.doc_text). Read-only; {} when the store is busy or has none: the deck is
+    then built without evidence.more (it never blocks the review)."""
+    from . import retrieval, screen, store
+    from .sources import deep_sections
+    keys = [k for k in dict.fromkeys(keys or []) if k]
+    if not keys:
+        return {}
+    try:
+        with store.session(cfg, read_only=True, wait_s=10.0) as con, deep_sections.deep_view(keys):
+            docs = screen.load_documents(con, company_keys=keys)
+    except Exception:          # noqa: BLE001 - the extra text is optional; the review goes on without it
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, d in docs.items():
+        text = retrieval.doc_text(d)
+        if text:
+            out[k] = {"text": text, **{c: d.get(c) for c in ("source_id", "form", "filing_date", "section",
+                                                              "doc_id")}}
+    return out
+
+
+def with_more(cfg, result: dict[str, Any], deck: dict[str, Any]) -> dict[str, Any]:
+    """The deck with the stored-filing sentences of its companies (review.add_more)."""
+    from . import review
+    if not deck.get("items"):
+        return deck
+    return review.add_more(deck, stored_filings(cfg, [it["company_key"] for it in deck["items"]]), result)
+
+
 def newest_of(cfg, run_id: str, idea: str) -> str:
     """The newest ok / partial version screened from `run_id` (cli._newest_descendant), else run_id itself."""
     from . import cli, store
@@ -122,8 +154,8 @@ def prepare(cfg, result: dict[str, Any], *, lang: str | None = None) -> dict[str
     prov = splits_of(result, sieve, agent, cap=scope.SCOPE_Q_PROVISIONAL)
     old = review.load_review(result["output_dir"])
     qs = scope.questions(prov, sieve, n=max_out_of(result), names_zh=names, agent=agent, review=old)
-    deck = review.build_deck(result, inputs, sieve, agent, part="A", held=_held(qs), pool=pool, names_zh=names,
-                             human_lang=lang)
+    deck = with_more(cfg, result, review.build_deck(result, inputs, sieve, agent, part="A", held=_held(qs),
+                                                    pool=pool, names_zh=names, human_lang=lang))
     rv: dict[str, Any] = {"run_id": result["run_id"], "idea": idea, "lang": lang, "provisional": qs,
                           "questions": [], "escalations": [], "answered": {},
                           "defaults": defaults_of(result, sieve, names), "relayed": False}
@@ -215,9 +247,14 @@ def page_block(rv: dict[str, Any] | None, run_id: str | None, lang: str) -> dict
         items.append({"id": e["cid"], "text": e[f"question_{lang}"], "note": None, "kind": "company",
                       "options": [{"label": words[k], "value": e["tokens"][k]} for k in ("yes", "no", "unsure")]})
     notes = [d[f"text_{lang}"] for d in rv.get("defaults") or []]
+    # each scope default applied from the idea's own words, with its one-click undo line (the page copies it)
+    defaults = [{"sid": d.get("sid"), "text": d[f"text_{lang}"],
+                 "undo": f'jevscreen decide "{d["token"]}" --run {run_id} --via page'}
+                for d in rv.get("defaults") or [] if d.get("token")]
     if not items and not notes:
         return {"items": []}
-    return {"template": f'jevscreen decide "{{answers}}" --run {run_id} --via page', "items": items, "notes": notes}
+    return {"template": f'jevscreen decide "{{answers}}" --run {run_id} --via page', "items": items, "notes": notes,
+            "defaults": defaults}
 
 
 def page_questions(cfg, result: dict[str, Any], lang: str) -> dict[str, Any] | None:
@@ -338,16 +375,36 @@ def _lock(cfg, idea: str):
 TEXT = {
     "zh": {"applied": "我核对了 {n} 家的摘录（年报 {a} 家、简介 {b} 家）：移出 {x} 家{names}。",
            "applied0": "我核对了 {n} 家的摘录（年报 {a} 家、简介 {b} 家），名单不用改。",
+           "applied_ns": "我核对了 {n} 家的摘录：移出 {x} 家{names}。",
+           "applied0_ns": "我核对了 {n} 家的摘录，名单不用改。",
+           "applied_answers": "我核对了 {n} 家的摘录（年报 {a} 家、简介 {b} 家）；按你的范围回答和我的核对，共移出 {x} 家{names}。",
+           "applied_answers_ns": "我核对了 {n} 家的摘录；按你的范围回答和我的核对，共移出 {x} 家{names}。",
            "queued": "补简介还在进行，完成后会按你的回答自动重排。",
            "skipped": "你的 AI 没有核对，先用系统的名单。", "etc": "等",
            "paid": "这次需要重新读一部分摘录，花了 {c}（在你批准的预算内）。",
-           "decided": "已按你的回答调整（免费）。", "nothing": "没有要改的。"},
+           "decided": "已按你的回答调整（免费）。", "nothing": "没有要改的。",
+           # the sections: rows your AI moved between the confirmed list and the to-confirm section
+           "applied_moved": "我核对了 {n} 家的摘录（年报 {a} 家、简介 {b} 家），没有移出公司。",
+           "applied_moved_ns": "我核对了 {n} 家的摘录，没有移出公司。",
+           "moved_in": "从原文确认、放进确认名单的 {k} 家{names}。",
+           "moved_out": "我认为不符、先移到待核对的 {k} 家{names}（等你定）。"},
     "en": {"applied": "I checked the excerpts of {n} companies ({a} annual reports, {b} profiles): {x} removed{names}.",
            "applied0": "I checked the excerpts of {n} companies ({a} annual reports, {b} profiles); the list stands.",
+           "applied_ns": "I checked the excerpts of {n} companies: {x} removed{names}.",
+           "applied0_ns": "I checked the excerpts of {n} companies; the list stands.",
+           "applied_answers": "I checked the excerpts of {n} companies ({a} annual reports, {b} profiles); with your "
+                              "scope answers and my check, {x} removed{names}.",
+           "applied_answers_ns": "I checked the excerpts of {n} companies; with your scope answers and my check, "
+                                 "{x} removed{names}.",
            "queued": "The profile fill is still running; the list is re-ranked with your answers when it ends.",
            "skipped": "Your AI did not check the excerpts; the system's list stands.", "etc": " and more",
            "paid": "This needed a partial re-read of the excerpts and cost {c} (within the budget you approved).",
-           "decided": "Updated with your answers (free).", "nothing": "Nothing to change."},
+           "decided": "Updated with your answers (free).", "nothing": "Nothing to change.",
+           "applied_moved": "I checked the excerpts of {n} companies ({a} annual reports, {b} profiles); none "
+                            "removed.",
+           "applied_moved_ns": "I checked the excerpts of {n} companies; none removed.",
+           "moved_in": "Confirmed from the text and moved into the confirmed list: {k}{names}.",
+           "moved_out": "Moved to confirm because I judged they do not fit: {k}{names} (your call)."},
 }
 
 
@@ -377,26 +434,121 @@ def _removed_names(rows: list[dict[str, Any]], lang: str, sieve: dict[str, Any] 
     return ("——" + "、".join(parts) + more) if lang == "zh" else (": " + ", ".join(parts) + more)
 
 
+def _removed_rows(res: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
+    """The rows the page lists as removed (page._removed: your AI's no's and every scope removal, the idea-wording
+    defaults included), your AI's first; and whether a scope answer of the human removed any (the page's title
+    then names both)."""
+    scope_rows = list(res.get("excluded_by_scope") or [])
+    by_answer = any(r.get("scope_source") != "idea_wording" for r in scope_rows)
+    return list(res.get("excluded_by_agent") or []) + scope_rows, by_answer
+
+
+def _removed_by_agent(res: dict[str, Any]) -> int:
+    """How many your AI removed (its no's and the scope kinds it applied): how far part B looks below the cut."""
+    return len(res.get("excluded_by_agent") or []) + sum(1 for r in res.get("excluded_by_scope") or []
+                                                         if r.get("scope_by") == "agent")
+
+
+def summary_text(summ: dict[str, Any], lang: str, *, reviewed: int | None = None,
+                 removed: int | None = None, by_answers: bool | None = None) -> str:
+    """The chat line of your AI's check from its summary; `reviewed` / `removed` / `by_answers` from the version the
+    page shows (quickstart's result block) replace the summary's own when they differ, so the chat and the page
+    always say the same numbers (the annual-report split is then left out: it belongs to the summary's count)."""
+    if summ.get("skipped") or "read" not in summ:
+        return summ.get(f"text_{lang}") or TEXT[lang]["skipped"]
+    n = int(summ.get("read") or 0) if reviewed is None else int(reviewed)
+    x = int(summ.get("removed_total") or 0) if removed is None else int(removed)
+    ans = bool(summ.get("by_answers")) if by_answers is None else bool(by_answers)
+    if f"names_{lang}" not in summ and summ.get(f"text_{lang}") and n == int(summ.get("read") or 0) \
+            and x == int(summ.get("removed_total") or 0):
+        return summ[f"text_{lang}"]         # a summary saved before these fields: its own text, same numbers
+    a, b = summ.get("annual"), summ.get("profile")
+    split = a is not None and b is not None and n == int(summ.get("read") or 0)
+    T = TEXT[lang]
+    names = summ.get(f"names_{lang}") or ""
+    moved = [(k, summ.get(k) or []) for k in ("moved_in", "moved_out") if summ.get(k)]
+    if x and ans:
+        key = "applied_answers"
+    elif x:
+        key = "applied"
+    else:
+        key, names = ("applied_moved" if moved else "applied0"), ""
+    if x != int(summ.get("removed_total") or 0):
+        names = ""                          # the summary's examples belong to another version's removals
+    out = T[key if split else key + "_ns"].format(n=n, a=a, b=b, x=x, names=names)
+    for k, rows in moved:
+        sep = "、" if lang == "zh" else ", "
+        ns = sep.join(str(r.get(f"name_{lang}") or r.get("name_en") or r.get("security_id")) for r in rows[:5])
+        ns += T["etc"] if len(rows) > 5 else ""
+        out += ("" if lang == "zh" else " ") + T[k].format(k=len(rows), names=("：" + ns) if lang == "zh"
+                                                           else f" ({ns})")
+    return out
+
+
+def current_summary(summ: dict[str, Any] | None, res: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The agent_summary of the check restated with the counts of the version the page shows (`res`: quickstart's
+    result block, agent_reviewed / removed_n / removed_by_answers), so the JSON an agent reads directly says the
+    same numbers as the page and the chat. The removed examples and names are dropped when the count changed (they
+    belong to another version's removals); the annual-report split when the read count changed."""
+    if not summ or summ.get("skipped") or "read" not in summ or not res:
+        return summ
+    rn, xn, ans = res.get("agent_reviewed"), res.get("removed_n"), res.get("removed_by_answers")
+    n = int(summ.get("read") or 0) if rn is None else int(rn)
+    x = int(summ.get("removed_total") or 0) if xn is None else int(xn)
+    by = bool(summ.get("by_answers")) if ans is None else bool(ans)
+    if n == int(summ.get("read") or 0) and x == int(summ.get("removed_total") or 0) \
+            and by == bool(summ.get("by_answers")):
+        return summ
+    out = {**summ, "read": n, "removed_total": x, "by_answers": by}
+    if n != int(summ.get("read") or 0):
+        out.update(annual=None, profile=None)
+    if x != int(summ.get("removed_total") or 0):
+        out.update(removed=[], names_zh="", names_en="")
+    for lang in ("zh", "en"):
+        out[f"text_{lang}"] = summary_text(summ, lang, reviewed=n, removed=x, by_answers=by)
+    return out
+
+
 def agent_summary(res: dict[str, Any], deck: dict[str, Any] | None, answered: int, sieve: dict[str, Any] | None,
-                  names: dict[str, str] | None = None) -> dict[str, Any]:
+                  names: dict[str, str] | None = None, agent: dict[str, dict[str, Any]] | None = None
+                  ) -> dict[str, Any]:
     """What your AI's check did, in both languages; `names`: security_id -> the official Chinese short name (the
-    Chinese text names the removed companies by it)."""
+    Chinese text names the removed companies by it). The counts are the page's: every current verdict of your AI
+    (rank_only 'reviewed', all decks, not only this one) and every row the page lists as removed."""
+    from . import screen
     items = (deck or {}).get("items") or []
-    a = sum(1 for it in items if (it.get("evidence") or {}).get("kind") == "annual_report")
-    removed = list(res.get("excluded_by_agent") or []) + [r for r in res.get("excluded_by_scope") or []
-                                                         if r.get("scope_by") == "agent"]
+    cur = [v for v in (agent or {}).values() if v.get("state") in screen.STATES_AGENT]
+    reviewed = ((res.get("layers") or {}).get("rank_only") or {}).get("reviewed")
+    n = int(reviewed) if reviewed is not None else (len(cur) if agent is not None else answered)
+    if agent is not None and len(cur) == n and all(v.get("evidence_kind") for v in cur):
+        a: int | None = sum(1 for v in cur if v.get("evidence_kind") == "annual_report")
+    elif n == answered:
+        a = sum(1 for it in items if (it.get("evidence") or {}).get("kind") == "annual_report")
+    else:
+        a = None                            # verdicts recorded before the kind was kept: no split
+    removed, by_answers = _removed_rows(res)
     names = names or {}
-    out = {"read": answered, "annual": a, "profile": max(0, answered - a),
+    out = {"read": n, "annual": a, "profile": None if a is None else max(0, n - a), "this_deck": answered,
+           "run_id": res.get("run_id"), "by_answers": by_answers,
            "removed": [{"security_id": r.get("security_id"), "name": r.get("name"),
                         "name_zh": r.get("name_zh") or names.get(r.get("security_id") or ""),
                         "chip_words_zh": _removed_why(r, "zh", sieve), "chip_words_en": _removed_why(r, "en", sieve)}
                        for r in removed[:5]],
            "removed_total": len(removed)}
+    # the sections: the rows your AI moved into the confirmed list (a yes, level explicit, citing the text) and out
+    # of it (a no waiting for the human), in the version the page shows
+    from . import quickstart
+    for key, via in (("moved_in", "agent"), ("moved_out", "agent_no")):
+        rows = sorted((r for r in res.get("rows") or [] if r.get("main_via") == via and r.get("rank") is not None),
+                      key=lambda r: r["rank"])
+        if rows:
+            out[key] = [{"security_id": r.get("security_id"),
+                         "name_zh": r.get("name_zh") or names.get(r.get("security_id") or "")
+                         or quickstart.plain_name(r.get("name")) or r.get("security_id"),
+                         "name_en": quickstart.plain_name(r.get("name")) or r.get("security_id")} for r in rows]
     for lang in ("zh", "en"):
-        T = TEXT[lang]
-        out[f"text_{lang}"] = (T["applied"].format(n=answered, a=a, b=max(0, answered - a), x=len(removed),
-                                                   names=_removed_names(removed, lang, sieve, names=names))
-                               if removed else T["applied0"].format(n=answered, a=a, b=max(0, answered - a)))
+        out[f"names_{lang}"] = _removed_names(removed, lang, sieve, names=names)
+        out[f"text_{lang}"] = summary_text(out, lang)
     return out
 
 
@@ -536,14 +688,17 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
         else:
             rv = {**rv, "defaults": defaults_of(res, sieve, names)}
             rv["escalations"] = escalations_of(cfg, res, sieve, rv)
-        summ = agent_summary(res, deck, answered, sieve, names=names) if not skip else {
-            "text_zh": TEXT["zh"]["skipped"], "text_en": TEXT["en"]["skipped"], "removed": [], "removed_total": 0}
+        summ = agent_summary(res, deck, answered, sieve, names=names, agent=agent) if not skip else {
+            "text_zh": TEXT["zh"]["skipped"], "text_en": TEXT["en"]["skipped"], "removed": [], "removed_total": 0,
+            "skipped": True}
         rv["agent_summary"] = summ
         part_b = None
         if part == "A":
             pool, inputs, names = pool_inputs(cfg, res)
             deck_b = review.build_deck(res, inputs, sieve, agent, part="B", pool=pool, names_zh=names,
-                                       human_lang=lang, removed_so_far=summ.get("removed_total") or 0)
+                                       human_lang=lang, removed_so_far=_removed_by_agent(res),
+                                       exclude_keys={it["company_key"] for it in deck.get("items") or []})
+            deck_b = with_more(cfg, res, deck_b) if not skip else deck_b
             if deck_b["items"] and not skip:
                 pb = review.write_deck(deck_b, res["output_dir"])
                 rv = presented(rv, deck_b, blocking=False)
@@ -571,7 +726,8 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
     out.update(applied=True, run_id=res["run_id"], notes=notes, page=str(page_path) if page_path else None,
                version_of_job=adopted, removed=summ.get("removed") or [], escalated=rv.get("escalations") or [],
                questions=[_q_brief(q) for q in rv.get("questions") or []], defaults=rv.get("defaults") or [],
-               part_b=part_b, text_zh=" ".join(x for x in (summ["text_zh"], paid_text(res, "zh")) if x),
+               part_b=part_b, main_changed=_main_keys(base_res) != _main_keys(res),
+               text_zh=" ".join(x for x in (summ["text_zh"], paid_text(res, "zh")) if x),
                text_en=" ".join(x for x in (summ["text_en"], paid_text(res, "en")) if x),
                next_command_en="jevscreen quickstart --status --key "
                                f"{screen_key(idea)} --json (relay text_<lang>, top and ask_now in one message)")
@@ -584,6 +740,14 @@ def judge(cfg, deck_id: str, *, file: str | None = None, skip: bool = False) -> 
                                   f"deck_path {ar.get('deck_path')}) the same way and run its record_command; then "
                                   f"jevscreen quickstart --status --key {screen_key(idea)} --json")
     return EXIT_OK, out
+
+
+def _main_keys(res: dict[str, Any]) -> list[str]:
+    """The companies of the list the chat relays, in order: the confirmed list (with the sections) or the first
+    RELAYED_TOP rows; judge's main_changed compares them before and after (part B: tell the human only when true)."""
+    rows = sorted((r for r in res.get("rows") or [] if r.get("rank") is not None), key=lambda r: r["rank"])
+    sections = any(r.get("shortlist_tier") for r in rows)
+    return [str(r.get("company_key")) for r in rows if relayed(r, sections)]
 
 
 def screen_key(idea: str) -> str:
@@ -874,6 +1038,7 @@ def unchecked_of(res: dict[str, Any], sieve: dict[str, Any] | None, agent: dict[
     shown = shown or {}
     base = None if base_rows is None else {r.get("company_key") for r in base_rows if r.get("rank") is not None}
     out = []
+    sections = any(r.get("shortlist_tier") for r in res.get("rows") or [])
     for r in sorted((r for r in res.get("rows") or [] if r.get("rank") is not None), key=lambda r: r["rank"]):
         ck = r.get("company_key")
         if not ck or ck in decided or r.get("security_id") in decided \
@@ -883,9 +1048,18 @@ def unchecked_of(res: dict[str, Any], sieve: dict[str, Any] | None, agent: dict[
         v = agent.get(ck) or {}
         if (v.get("evidence_sha") and v["evidence_sha"] == sha) or (ck in shown and shown[ck] == sha):
             continue
-        if r["rank"] <= RELAYED_TOP or (base is not None and ck not in base):
+        if relayed(r, sections) or (base is not None and ck not in base):
             out.append(ck)
     return out
+
+
+def relayed(row: dict[str, Any], sections: bool) -> bool:
+    """A row of the list the chat relays: rank <= RELAYED_TOP; with the sections, a row of the confirmed list only
+    (its rank is its place there: the main list is numbered first). A to-confirm row is on the page, not in chat."""
+    from . import shortlist
+    if row.get("rank") is None or int(row["rank"]) > RELAYED_TOP:
+        return False
+    return not sections or shortlist.in_main(row)
 
 
 def check_new(cfg, res: dict[str, Any], rv: dict[str, Any], *, sieve: dict[str, Any], agent: dict[str, Any],
@@ -902,8 +1076,9 @@ def check_new(cfg, res: dict[str, Any], rv: dict[str, Any], *, sieve: dict[str, 
     rv = {**rv, "unchecked": keys}
     if not keys or not active:
         return rv
-    rank = {r.get("company_key"): r.get("rank") for r in res.get("rows") or []}
-    top = [k for k in keys if (rank.get(k) or 10 ** 6) <= RELAYED_TOP]
+    by_key = {r.get("company_key"): r for r in res.get("rows") or []}
+    sections = any(r.get("shortlist_tier") for r in res.get("rows") or [])
+    top = [k for k in keys if relayed(by_key.get(k) or {}, sections)]
     offered = rv.get("offered") or {}
     send = top + [k for k in keys if k not in top and k not in (exclude or set()) and k not in offered]
     if not send:
@@ -911,6 +1086,7 @@ def check_new(cfg, res: dict[str, Any], rv: dict[str, Any], *, sieve: dict[str, 
     n = 1 + len(rv.get("followups") or [])
     deck = review.build_deck(res, inputs, sieve, agent, part=f"{FOLLOWUP_PREFIX}{n}", pool=pool, names_zh=names,
                              human_lang=lang, followup_keys=send)
+    deck = with_more(cfg, res, deck)
     if not deck["items"]:
         return rv
     blocking = any(it["company_key"] in top for it in deck["items"])
@@ -969,6 +1145,7 @@ def _followup(cfg, res: dict[str, Any], sieve: dict[str, Any], agent: dict[str, 
     pool, inputs, _n = pool_inputs(cfg, res)
     deck = review.build_deck(res, inputs, sieve, agent, part=f"{FOLLOWUP_PREFIX}{n}", pool=pool, names_zh=names,
                              human_lang=lang, followup_keys=new)
+    deck = with_more(cfg, res, deck)
     if not deck["items"]:
         return None
     p = review.write_deck(deck, res["output_dir"])

@@ -297,6 +297,131 @@ class ExportIgnore(unittest.TestCase):
             self.assertIn("src.py", rc.list_files(root))
 
 
+class HeroAssets(unittest.TestCase):
+    """docs/assets/MANIFEST.json lets the README hero images through the size rule, only when they match it."""
+
+    def setUp(self) -> None:
+        self.t = Tree()
+        self.addCleanup(self.t.close)
+        import random
+        self.gif = b"GIF89a" + bytes(random.Random(1).randrange(256) for _ in range(400 * 1024))
+
+    def declare(self, **over) -> None:
+        import hashlib
+        entry = {"origin": "own-output", "bytes": len(self.gif), "sha256": hashlib.sha256(self.gif).hexdigest(),
+                 "made_by": "tools/make_hero.py"}
+        entry.update(over)
+        self.t.write("docs/assets/MANIFEST.json", json.dumps({"files": {"hero-en.gif": entry}}))
+
+    def cats(self, **kw) -> dict[str, list]:
+        out: dict[str, list] = {}
+        for f in self.t.scan(**kw):
+            out.setdefault(f.category, []).append(f)
+        return out
+
+    def test_a_declared_matching_hero_passes(self):
+        self.t.write("docs/assets/hero-en.gif", self.gif)
+        self.declare()
+        self.assertEqual(self.t.scan(), [])
+
+    def test_undeclared_is_still_large(self):
+        self.t.write("docs/assets/hero-en.gif", self.gif)
+        self.assertEqual([f.path for f in self.cats()["large-file"]], ["docs/assets/hero-en.gif"])
+
+    def test_changed_bytes_are_an_asset_finding_and_large(self):
+        self.t.write("docs/assets/hero-en.gif", self.gif[:-1] + b"x")
+        self.declare()
+        c = self.cats()
+        self.assertEqual(sorted(c), ["asset", "large-file"])
+        self.assertIn("differs from docs/assets/MANIFEST.json", c["asset"][0].evidence)
+
+    def test_other_origin_type_or_cap_do_not_pass(self):
+        self.t.write("docs/assets/hero-en.gif", self.gif)
+        for over, kw in (({"origin": "captured"}, {}), ({}, {"max_hero_kb": 300})):
+            self.declare(**over)
+            self.assertEqual([f.path for f in self.cats(**kw).get("large-file", [])], ["docs/assets/hero-en.gif"],
+                             over or kw)
+        self.t.write("docs/assets/MANIFEST.json", json.dumps({"files": {"hero.bin": {"origin": "own-output"}}}))
+        self.t.write("docs/assets/hero.bin", self.gif)
+        self.assertIn("docs/assets/hero.bin", [f.path for f in self.cats()["large-file"]])
+
+    def test_declared_but_missing(self):
+        self.declare()
+        self.assertEqual([(f.category, f.path) for f in self.t.scan()], [("asset", "docs/assets/hero-en.gif")])
+
+    def test_too_many_or_too_large_declared_images(self):
+        import hashlib
+        entry = {"origin": "own-output", "bytes": len(self.gif), "sha256": hashlib.sha256(self.gif).hexdigest()}
+        files = {}
+        for i in range(9):
+            files[f"hero-{i}.gif"] = entry
+            self.t.write(f"docs/assets/hero-{i}.gif", self.gif)
+        self.t.write("docs/assets/MANIFEST.json", json.dumps({"files": files}))
+        self.assertEqual([f.path for f in self.cats().get("asset", [])], ["docs/assets/MANIFEST.json"])
+        big = dict(entry, bytes=4 * 1024 * 1024)
+        self.t.write("docs/assets/MANIFEST.json", json.dumps({"files": {"a.gif": big, "b.gif": big}}))
+        self.assertIn("docs/assets/MANIFEST.json", [f.path for f in self.cats().get("asset", [])])
+
+    def history(self, previous: bool) -> list:
+        import hashlib
+        import os
+        import subprocess
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+               "GIT_AUTHOR_NAME": "jev-screen contributors", "GIT_AUTHOR_EMAIL": "1+jev@users.noreply.github.com",
+               "GIT_COMMITTER_NAME": "jev-screen contributors",
+               "GIT_COMMITTER_EMAIL": "1+jev@users.noreply.github.com"}
+
+        def git(*a):
+            subprocess.run(["git", "-C", str(self.t.root), "-c", "commit.gpgsign=false", *a], check=True,
+                           capture_output=True, env=env)
+        git("init", "-q", "-b", "main")
+        old = self.gif
+        self.gif = old[::-1]
+        self.t.write("docs/assets/hero-en.gif", old)
+        git("add", "-A")
+        git("commit", "-q", "-m", "one")
+        self.t.write("docs/assets/hero-en.gif", self.gif)
+        self.declare(**({"previous_sha256": [hashlib.sha256(old).hexdigest()]} if previous else {}))
+        git("add", "-A")
+        git("commit", "-q", "-m", "two")
+        with mock.patch.object(rc, "personal_names", return_value=[]):
+            return [(f.category, f.path.split("@")[0]) for f in self.t.scan(git_history=True)]
+
+    def test_an_older_hero_passes_in_history_only_when_its_sha256_is_listed(self):
+        self.assertEqual(self.history(previous=True), [])
+
+    def test_an_unlisted_older_hero_is_a_large_file_in_history(self):
+        self.assertEqual(self.history(previous=False), [("history", "docs/assets/hero-en.gif")])
+
+    def test_a_listed_heros_older_version_passes_in_history(self):
+        import os
+        import subprocess
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+               "GIT_AUTHOR_NAME": "jev-screen contributors", "GIT_AUTHOR_EMAIL": "1+jev@users.noreply.github.com",
+               "GIT_COMMITTER_NAME": "jev-screen contributors",
+               "GIT_COMMITTER_EMAIL": "1+jev@users.noreply.github.com"}
+
+        def git(*a):
+            subprocess.run(["git", "-C", str(self.t.root), "-c", "commit.gpgsign=false", *a], check=True,
+                           capture_output=True, env=env)
+        git("init", "-q", "-b", "main")
+        old = self.gif
+        self.gif = old[::-1]
+        self.t.write("docs/assets/hero-en.gif", old)
+        self.t.write("docs/assets/other.gif", old + b"1")
+        git("add", "-A")
+        git("commit", "-q", "-m", "one")
+        self.t.write("docs/assets/hero-en.gif", self.gif)
+        (self.t.root / "docs/assets/other.gif").unlink()
+        import hashlib
+        self.declare(previous_sha256=[hashlib.sha256(old).hexdigest()])
+        git("add", "-A")
+        git("commit", "-q", "-m", "two")
+        with mock.patch.object(rc, "personal_names", return_value=[]):
+            got = [f for f in self.t.scan(git_history=True)]
+        self.assertEqual([(f.category, f.path.split("@")[0]) for f in got], [("history", "docs/assets/other.gif")])
+
+
 class ThisRepository(unittest.TestCase):
     def test_repository_is_clean(self):
         findings = rc.scan(ROOT)

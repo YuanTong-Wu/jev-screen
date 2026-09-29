@@ -442,8 +442,11 @@ _SECTION_RULES: dict[str, dict] = {
     },
     "20-F": {
         "section": "item4",
+        # 'Information on the Company', or on the filer by name ('ITEM 4. INFORMATION ON CHECK POINT', 'ITEM 4:
+        # Information on Allot'): the heading's own line, never a cross-reference inside a sentence
         "start": [_rx(r"item" + _SEP + r"4" + _SEP + r"information" + _SEP + r"on" + _SEP + r"the" + _SEP +
-                      r"company\b")],
+                      r"company\b"),
+                  _rx(r"item" + _SEP + r"4" + _SEP + r"information[ \t]+on[ \t]+[A-Za-z][^\n\u201d\"]{0,60}(?=\n|$)")],
         # 'Item 4A' ends Item 4 only as 'Unresolved Staff Comments' (or marked not applicable / none): some
         # filers label the Item 4 sub-headings 'Item 4A. History...' / 'Item 4B. Business Overview'.
         "end": [("item4a", _rx(r"item" + _SEP + r"4" + _SEP + r"a" + _SEP + r"unresolved")),

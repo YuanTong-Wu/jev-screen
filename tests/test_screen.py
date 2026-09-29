@@ -125,6 +125,7 @@ class FakeJev:
         self.run_id, self.layer, self.budget_usd, self.dry_run, self.pack_size = run_id, layer, budget_usd, dry_run, \
             pack_size
         self._spent, self._sent = 0.0, 0
+        self.on_item = None             # as JevClient.on_item: each answer as it is known (the page's reading log)
         self.classified: list = []
         self.estimated: list = []
         if log is not None:
@@ -169,6 +170,8 @@ class FakeJev:
                 label, probs = fn(it.text)
                 out.append({"item_id": it.item_id, "label": label, "probs": probs, "request_id": rid,
                             "status": "ok", "error": None, "cached": False})
+                if self.on_item is not None and label is not None:
+                    self.on_item(it.item_id, label, False)
         return out
 
 
@@ -356,7 +359,7 @@ class TestScreenFlow(StoreCase):
         self.assertEqual([r["security_id"] for r in csv_rows], ["NYSE:ROBO", "NASDAQ:ROB2"])
         self.assertEqual(json.loads((out / "results.json").read_text())["run_id"], res["run_id"])
         md = (out / "report.md").read_text()
-        for needle in ("## Funnel", "## Ranked results", "## Gaps", "NYSE:NODS", "Personal use only", "cache hits",
+        for needle in ("## Funnel", "## Main list (confirmed): 1", "## To confirm (not in the confirmed list): 1", "## Gaps", "NYSE:NODS", "Personal use only", "cache hits",
                        "## Unverified L1 passes", "NULL market cap", "L1 labels:", "L2 inputs: 2 annual-report",
                        "profile only"):
             self.assertIn(needle, md)
@@ -1104,6 +1107,30 @@ class TestLanguageAndExcerpts(unittest.TestCase):
         ex = screen.build_excerpts(text, terms=["AI 代理权限控制"], lang="zh")
         self.assertIn("keywords", [e["kind"] for e in ex])
 
+    def test_long_chinese_idea_finds_the_target_application_when_filing_uses_shorter_words(self):
+        noise = [f"公司第{i}项数据中心液冷产品用于服务器机柜和算力设备，持续供应冷板、液冷管路及散热模块。"
+                 for i in range(6)]
+        target = "公司为储能电站交付储能用液冷温控机组，产品服务于电化学储能项目，已完成多个站点的安装、调试与持续运行。"
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "business.txt"
+            p.write_text("\n\n".join(noise + [target]), encoding="utf-8")
+            c = {"desc": {"plain": "专业温控设备公司", "text": "专业温控设备公司", "tier": None}}
+            doc = {"text_path": str(p), "source_id": "cninfo_annual_report", "form": "年度报告摘要"}
+            inp = screen._l2_input(c, doc, {"zh": ["储能电站液冷温控系统", "核心供应商"]})
+        self.assertTrue(inp["keyword_hit"])
+        self.assertIn("储能用液冷温控机组", " ".join(e["text"] for e in inp["excerpts"]))
+        self.assertIn("储能", inp["matched_terms"])
+
+    def test_shifted_chinese_compound_still_finds_storage_liquid_cooling(self):
+        terms = screen.excerpt_terms(["电化学储能液冷温控系统"], "zh")
+        for word in ("储能", "液冷", "温控"):
+            self.assertIn(word, terms)
+        noise = ["电化学储能行业政策不断完善，各地开展项目规划、资金安排和土地审批，市场前景受到广泛关注。"
+                 for _ in range(5)]
+        target = "公司销售用于储能项目的液冷温控机组，已经完成多座电化学储能电站的实际交付，并持续提供维护服务。"
+        ex = screen.build_excerpts("\n\n".join(noise + [target]), terms=terms, lang="zh")
+        self.assertIn("液冷温控机组", " ".join(e["text"] for e in ex))
+
     def test_cjk_overview_skips_figures_and_fills_free_slots(self):
         figures = "报告期内公司实现营业收入69,429.08万元，较去年同期减少2.57%；归属于上市公司股东的净利润为586.57万元，较去年同期增长107.59%。"
         biz = [f"公司第{i}项业务是面向银行和政府客户的身份认证与数字安全产品，包括智能密码钥匙、动态令牌和安全芯片，并提供配套的系统解决方案与服务。"
@@ -1696,7 +1723,7 @@ class TestL1Rescue(StoreCase):
         from jevscreen import page
         seed_shenling(self.cfg, self.home)
         res = self.run_rescue()
-        for lang, needle in (("zh", "有 1 家初读没通过"), ("en", "1 of the listed companies did not pass the first read")):
+        for lang, needle in (("zh", "有 1 家初读没通过"), ("en", "1 of the companies shown did not pass the first read")):
             data = page.build_page_data(res, None, lang=lang)
             self.assertEqual(data["funnel"]["rescued"], 1)
             self.assertIn(needle, page.render_text(data, lang))
@@ -1851,7 +1878,11 @@ class TestL1Rescue(StoreCase):
         self.assertIn("isin:US0000000009", res["params"]["l1_rescued"])
         pl = ondemand.plan(self.cfg, res["run_id"])
         self.assertEqual(pl.skip_counts().get("no_key_sec"), 1)                    # only CoolAir needs the SEC
-        self.assertEqual(ondemand.questions_for(pl, pl.skip_counts()), [])          # it missed step 1: not asked
+        # novice #4 P0-1: a thin-profile miss cannot be listed without its report, so the SEC question is asked
+        # and names it (before: it missed step 1, not asked)
+        [q] = ondemand.questions_for(pl, pl.skip_counts())
+        self.assertEqual((q["id"], q["thin"]), ("sec_email", ["NYSE:COOL"]))
+        self.assertIn("CoolAir", q["human_question_zh"])
         zh, en = ondemand.start_line(pl, "zh", 120), ondemand.start_line(pl, "en", 120)
         self.assertIn("4 家公司本地没有年报原文（通过第一轮的 1 家", zh)
         self.assertIn("3 家", zh)
@@ -2030,7 +2061,9 @@ class TestSieveInScreen(StoreCase):
         l2_ids = {it.item_id for it in self.log[1].classified[0][0]}
         self.assertTrue({"isin:GB0000000003", "isin:US0000000004"} <= l2_ids)      # failed L1, read anyway
         rows = {r["security_id"]: r for r in res["rows"]}
-        self.assertEqual(list(rows), ["NASDAQ:ROB2", "LSE:GEAR", "TSE:6000"])
+        # the human's yes pins are in the main list; Robo Two (L2 related) is to confirm
+        self.assertEqual(list(rows), ["LSE:GEAR", "TSE:6000", "NASDAQ:ROB2"])
+        self.assertEqual([r["shortlist_tier"] for r in rows.values()], ["high", "high", "confirm"])
         gear, servo, rob2 = rows["LSE:GEAR"], rows["TSE:6000"], rows["NASDAQ:ROB2"]
         self.assertEqual((gear["user_verdict"], gear["verdict_source"], gear["l2_label"], gear["l2_forced"]),
                          ("explicit", "user", "insufficient", True))

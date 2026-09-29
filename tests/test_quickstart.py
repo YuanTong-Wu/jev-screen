@@ -356,9 +356,14 @@ class TestWorker(QuickCase):
         self.assertEqual((out["status"], out["exit_code"]), ("done", 0), out.get("text_en"))
         self.assertTrue(Path(out["page"]).exists())
         self.assertTrue(out["page_opened"])
-        self.assertEqual([r["name"] for r in out["top"]], ["RoboCorp", "Robo Two"])
-        self.assertEqual(out["summary"]["listed"], 2)
-        self.assertEqual(len(out["next_steps"]), 2)        # cards are not a human step (scope design §11)
+        # top is the main list only; Robo Two (L2 related) is in the to-confirm section, never padding the list
+        self.assertEqual([r["name"] for r in out["top"]], ["RoboCorp"])
+        self.assertEqual([r["name"] for r in out["to_confirm"]["rows"]], ["Robo Two"])
+        self.assertEqual((out["summary"]["listed"], out["summary"]["main"], out["summary"]["to_confirm"]), (2, 1, 1))
+        # cards are not a human step (scope design §11); a list under 10 starts with the free `why` step for the
+        # companies to confirm (novice #3)
+        self.assertEqual(len(out["next_steps"]), 3)
+        self.assertTrue(out["next_steps"][0]["command"].startswith("jevscreen why "), out["next_steps"][0])
         self.assertNotIn("borderline companies", " ".join(n["text_en"] for n in out["next_steps"]))
         self.assertIn("RoboCorp", out["text_en"])
         self.assertEqual(self.calls.canary, 1)
@@ -510,7 +515,7 @@ class TestMoney(QuickCase):
         self.assertEqual(b["kind"], "over")
         self.assertTrue(b["alternatives"])
         self.assertIn("--approve-budget 2.", b["rerun_with"])
-        self.assertIn("$2.00", b["question_en"])
+        self.assertIn("$1.60", b["question_en"])          # the estimate itself (reserved $2.00)
         self.assertFalse((self.home / "screens").exists() and any((self.home / "screens").iterdir()))
         with self.scoped_dry():
             self.assertEqual(self.front(approve_budget=2.2)["status"], "running")

@@ -939,6 +939,10 @@ class JevClient:
         # request of classify(); an exception in the callback is swallowed (it must never stop a paid run)
         self.on_packet = on_packet
         self._progress = [0, 0]
+        # per-item events: on_item(item_id, label, cached) for each answer of classify() as it is known (a cache
+        # hit at the lookup, a new answer when its request completes); the page's reading log. An exception in the
+        # callback is swallowed (it must never stop a paid run)
+        self.on_item = None
 
     def _tick(self, add: int = 0) -> None:
         cb = self.on_packet
@@ -1052,6 +1056,12 @@ class JevClient:
                     "status": "failed", "error": None, "cached": False, "note": notes.get(pos), "confidence": None}
             base.update(kw)
             results[pos] = base
+            cb = self.on_item
+            if cb is not None and base["status"] == "ok" and base["label"] is not None:
+                try:
+                    cb(base["item_id"], base["label"], bool(base["cached"]))
+                except Exception:  # noqa: BLE001
+                    pass
 
         for pos, item in enumerate(items):
             issuer, text, note, skip = _clean_item(item, self.max_text_chars)

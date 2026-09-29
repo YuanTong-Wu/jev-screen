@@ -2,6 +2,9 @@
 
 **English** · [中文说明](README.zh-CN.md)
 
+<p align="center"><img src="docs/assets/hero-en.gif" width="800" alt="The loop opens on the three sieves lying flat as one grid, which expands into a 3D stack while sand standing for about 20,000 listed companies pours onto the first of three sieves stacked one above the other in 3D (market-cap floor, AI reads the profiles, annual-report check); each sieve's progress runs around its rim, and as a stage completes its sieve shakes once and its numbers appear under it for a moment; a few amber grains stay on the last sieve, joined by one thin line, while a one-line caption fades in and out; a faint log in the lower left types a few per-company reads, and the stack settles back into the flat grid (illustrative numbers and codes, not a real run)"></p>
+<p align="center"><sub>20,000 companies, sifted layer by layer into a short list — each pick with its evidence (illustrative numbers and names)</sub></p>
+
 **jev-screen turns an investment idea, written in any language, into a ranked list of listed companies worldwide
 whose annual report, or a public company profile, says they do it, with the quote that says so.**
 
@@ -9,12 +12,13 @@ It runs on your computer. An AI model (Jev) reads the text for you, and you pay 
 through TypeSafe's official API, OpenRouter or Vercel AI Gateway: whichever account you have, at the same price.
 The list is where your research starts; it is not investment advice.
 
-**What to expect, measured:** before any calibration, about 1 in 4 of the top 40 was clearly right and about 1 in 3
-clearly wrong. Supply-chain and Southeast Asia ideas did worse ([details](#accuracy-and-limits)). Treat the list as a
-first-pass shortlist, and read the rows marked **annual report** first. They are far more reliable than the rows
-marked **profile only**.
+**How accurate is it?** On 24 test ideas, about 9 in 10 companies in the confirmed list were right (91.7% after your
+AI's review, 90.2% before it). Those right/wrong labels come from AI readers of official filings, not yet checked by
+a person; with a looser AI doing the review the list fell to about 80%; and 90% is not a guarantee
+([details and limits](#accuracy-and-limits)). Read the rows marked **annual report** first: rows marked **profile
+only** rest on weaker evidence.
 
-## 30-second example
+## An example
 
 You tell your AI agent:
 
@@ -25,29 +29,47 @@ browser. The companies below are placeholders, because real rows quote filings a
 only. The count, cost and time are typical first-run values.
 
 ```text
-Done: 34 companies listed (21 confirmed by annual report, 13 by profile only). Cost $0.31, took 12 min.
-Results page: opened in your browser. For your personal research only; please do not share.
+Done: 3 confirmed; 21 more to confirm (not in the confirmed list). Cost $0.31, took 12 min. Results page:
+opened in your browser. For your personal research only; please do not share.
+The confirmed list only takes companies judged central on the first read whose text the AI found states this business
+plainly; it is not padded to 10. The 21 to confirm (e.g. Company D, Company E, Company F) look related to the AI, but
+the first read did not judge it their central business, their texts do not state it plainly, there is only a profile,
+or they were moved down; they are in the page's "To confirm" section.
 
-1. Company A (NASDAQ:AAAA, US) - identity security for human and machine accounts; Clearly fits, annual report
-2. Company B (TSE:0000, JP) - privileged-access management software; Clearly fits, annual report
-3. Company C (SZSE:000000, CN) - zero-trust access gateway for enterprises; Related, profile only
-...
+1. Company A (NASDAQ:AAAA, US) - identity security for human and machine accounts; Stated, annual report
+2. Company B (TSE:0000, JP) - privileged-access management software; Stated, annual report
+3. Company C (SZSE:000000, CN) - zero-trust access gateway for enterprises; Clearly fits, annual report, checked by
+   your AI
 ```
+
+The numbered list holds only the companies the first read judged central and whose text the AI found states the
+business plainly (an inference, with the passage under each); how many that is depends on the idea, and a list of
+three, or none, is a normal result. Everything else the AI found related (a related business on the first read, a
+profile only, a text that does not say it plainly) is kept apart under **To confirm**, never used to fill the list.
+Your own AI reads those first, and one whose text it finds plainly states the business, citing the sentences, moves
+into the list, marked "checked by your AI".
 
 On the page, every row carries its evidence, and four kinds of statement are kept apart:
 
 | Label | What it is |
 |---|---|
 | **Fact** | The passage from the company's latest annual report (with the filing date and a link to the filing), or its profile when no report is available |
-| **Inference** | The AI's verdict: **Clearly fits** (`explicit`: the text says it plainly) or **Related** (`partial`: related, or only part of the business) |
+| **Inference** | The AI's verdict: **Clearly fits** (`explicit`: the text says it plainly), **Related** (`partial`: related, or only part of the business) or **Borderline** (listed, but shaky; see below) |
 | **Gap** | What is missing: no annual report, a stale filing, or no description at all |
 | **Your call** | A judgement you, or your AI on your behalf, gave on a calibration question (below) |
 
+**Borderline** (边缘 on a Chinese page) is the third verdict. The company is listed, but its read is shaky: the AI's
+repeated reads disagree (their average lands between 0.40 and 0.60, so another read could flip it), the quoted
+excerpt does not mention your idea at all, or your answer to a scope question moved it down. Check a Borderline row
+before you count it. It is not the same as the **edge** label of the evaluation below, which judges the business
+itself.
+
 It is one page per idea, and it opens in your browser at the first step: on top a checklist of what is ready (green
 checks, or a red cross with one plain sentence and the fix; it folds into one green line once everything passes),
-then the live progress (downloads, the AI's reads, the money spent) while the work runs, then the ranked list. It
-refreshes itself while the work runs. Below the list you find the companies that passed the first read but could
-not be confirmed (**unverified**) and the gaps. The page is a local HTML file, all in your language (Chinese or
+then the live progress (downloads, the AI's reads, the money spent) while the work runs, then the whole confirmed
+list (every confirmed company, not only 10; the chat names the first 10 and says how many more the page has) and,
+apart from it, the companies to confirm. It refreshes itself while the work runs. Below them you find the companies
+that passed the first read but could not be confirmed (**unverified**) and the gaps. The page is a local HTML file, all in your language (Chinese or
 English), and opening it makes no network requests. Profiles and excerpts in other languages are translated by your own AI agent, marked
 "AI translation", with the original one tap away.
 
@@ -59,7 +81,8 @@ English), and opening it makes no network requests. Profiles and excerpts in oth
 3. For the companies that pass, jev-screen fetches the newest official annual report it can get (free, from official
    sites; [which markets](#which-markets-get-an-annual-report-check)), and the AI checks short excerpts from it.
 4. It ranks the companies. A label confirmed by an annual report counts twice as much as the same label read from a
-   profile, and the model's confidence adds to that.
+   profile, and the model's confidence adds to that. Only the confirmed ones make the numbered list; the rest go to
+   the separate "To confirm" section.
 5. You get the page, plus `jevscreen why` to answer "why is X (not) in the list?".
 
 ### About Jev, the model
@@ -153,7 +176,7 @@ when they help your idea (just say no if you like; the result stays):
   sent for 24 hours) are you asked afterwards; then the AI reads only the new ones and re-ranks (a few cents, within your cap), and your AI
   checks the companies that come in before the list is shown again.
 
-- **An SEC contact for US annual reports** (only when a US company is in the top 10). The SEC asks everyone who downloads filings to include a name and email
+- **An SEC contact for US annual reports** (only when a US company is in the top 10, or a large US company's profile is too thin to judge without its report; the question names them). The SEC asks everyone who downloads filings to include a name and email
   with each request. There is no account; they go only to sec.gov, and a separate address is fine. If you decline,
   US companies are judged from their profiles only, which is less accurate.
 - **Taiwan annual reports from MOPS** (only when a Taiwan company is in the top 10). This is off by default, because that site's robots.txt says it does not want
@@ -190,7 +213,7 @@ uses the program's own defaults: a $3 cap and companies from $200M (about $0.71)
 |---|---|
 | **Annual report, automatic** | China A shares (CNINFO); India (BSE, up to 40 companies per run) |
 | **Annual report, if you allow it** | US and companies filing 10-K / 20-F with the SEC (needs your SEC contact); Korea (your own free OpenDART key: `keys set opendart`; up to 20 per run); Taiwan (a separate yes for MOPS; up to 8 per run, slowly) |
-| **Japan** | The open data pack, once its first release is published (about 1,600 companies so far, growing daily), or `sync-edinet` with your own free EDINET key |
+| **Japan** | The open data pack (about 1,600 companies in the packs published so far), or `sync-edinet` with your own free EDINET key |
 | **Profile only** | Hong Kong, Europe, UK, Canada, Australia, Southeast Asia and everywhere else, unless the company also files with the SEC |
 
 China, India and Taiwan reports are PDFs. The standard install includes a PDF reader for them (`pypdf`).
@@ -231,58 +254,58 @@ own machine.
 
 ## Accuracy and limits
 
-The test used 4 ideas. For each one, the top 40 rows (160 in all) were labelled with one of three verdicts:
+**What the numbered list is.** The page has two lists. The numbered one, the **confirmed list**, holds only the
+companies whose text, as the AI read it, plainly states the business: the first read judged the business central
+and the annual report or profile says it outright, or your own AI read the quoted sentences and confirmed it. It is
+never padded to 10. Everything else the AI found related goes under **To confirm**, below it, and is never counted
+as a result. A confirmed list of 3, or none, is a normal result.
 
-- **Right:** the evidence directly shows the company belongs.
-- **Edge:** related, but the evidence is thin, the business too broad or the geography off.
-- **Wrong:** the wrong role, an unrelated business, or only a shareholding.
+**Measured numbers** (24 ideas, 5 of them held out: not looked at while the product was tuned; 2026-09-29):
 
-"After cards" means after one round of 6–7 card answers.
-
-| Idea | Right / edge / wrong | After cards |
+| | Before your AI's review | After your AI's review |
 |---|---|---|
-| Enterprise AI-agent identity and access control | 18 / 13 / 9 | 21 / 14 / 5 |
-| GLP-1 peptide contract manufacturing (CDMO) and delivery devices | 11 / 23 / 6 | 14 / 22 / 4 |
-| Humanoid-robot joint reducers | 10 / 11 / 19 | 12 / 13 / 15 |
-| Southeast Asian digital payments and e-wallets | 5 / 16 / 19 | 5 / 23 / 12 |
-| **Total (160 rows)** | **44 / 63 / 53** | **52 / 72 / 36** |
+| Confirmed rows labelled right (strict) | **90.2%** of 123 rows (95% range 83.7–94.3%) | **91.7%** of 181 rows (95% range 86.8–94.9%) |
+| Right or borderline (lenient) | 97.6% | 99.5% |
+| Held-out ideas only (strict) | 95.5% of 22 rows | 97.2% of 36 rows |
+| Confirmed rows per idea (median) | 3 (one idea had none) | 5.5 (every idea had at least 3) |
+| Companies an idea must include that made the confirmed list | 39 of 61 (64%) | 50 of 61 (82%) |
 
-**How this was measured, and what differs for you:**
+- **Strict** counts only companies labelled right; **lenient** also counts borderline ones (related, but the filing
+  shows only a component, a plan, or does not name the idea's target). The 95% range is a Wilson interval, which
+  treats each row as independent, so it is optimistic when one idea contributes many rows.
+- **The review was done by a strong AI** (Claude Opus). The same review done by looser AIs made the list worse
+  than no review at all: **80.8%** strict with Claude Sonnet and **77.3%** with Claude Haiku. They found as many
+  of the must-include companies (49–50 of 61), but also confirmed component suppliers and planned businesses, and
+  Haiku removed 12 companies that were right. If your AI is a small or fast model, trust the rows it did not add:
+  every row it added is marked "checked by your AI".
+- **The full ranked list is much weaker.** Its top 10 is only about **65%** right (strict). That is why the numbered
+  list is not padded to 10, and why the to-confirm companies are there to check, not to count.
 
-- **When and what was run:** the runs took place on 2026-09-26 with calibration cards v1. This release ships v1.1,
-  whose fixes have not been measured again.
-- **The screen setup:** each base screen was the wider one (about 20,000 companies from $200M). It ran on a store
-  with bulk-synced annual-report text (about 55% of companies from $1B, from SEC, CNINFO, EDINET and DART) and
-  crawled profiles.
-- **Your first install has less evidence.** It starts from $1B, with FinanceDatabase profiles (about 69% of companies
-  from $1B) and annual reports fetched on demand. US reports need your SEC contact, Japan uses the open data pack, and
-  Korea needs an OpenDART key. Expect more rows marked profile only than in this test.
-- **Who judged the rows:** the AI agents that ran the trials labelled each row from its evidence. For the reducer and
-  GLP-1 ideas they used the full evidence during the run. For the AI-agent and Southeast Asia ideas the rows were
-  labelled afterwards from excerpts cut to about 260 characters, so strictness may differ between ideas. The project
-  owner checked one company by hand. The labelling was not independent and not blind, and the test covers only 4
-  ideas. Read it as a direction, not a benchmark.
+**How it was measured.** For each of the 24 ideas, every company in the confirmed list was labelled right,
+borderline or wrong from its official filings (annual reports, exchange filings or the company's investor-relations
+material), never from the Yahoo or TradingView profiles. The labels were written by AI readers of those filings:
+most by one careful AI reader, the later ones by two AI labellers working independently, with a third AI deciding
+where they disagreed. **No person has reviewed them yet**, and the labelled ideas are not published in this repository yet, so these numbers cannot be
+reproduced from it today. The method and the scoring tool are in [docs/EVAL.md](docs/EVAL.md) (`jevscreen eval`).
 
-What the test shows:
+**Known weaknesses:**
 
-- **Annual-report rows are far more reliable than profile-only rows.** US rows backed by a 10-K were almost all right.
-  The wrong Clearly fits rows the test noted, such as a petrol retailer in the payments test, were read from
-  profiles only.
-- **Strong** when the idea is a product category with its own standard words, and the companies file annual reports
-  the system can read. The AI-agent security idea ended with 21 right and 5 wrong.
-- **Weak on supply-chain ideas**, where it confuses roles. It took buyers, makers of generic parts, servo or motor
-  makers, and mere shareholders for suppliers. The reducer idea still had 15 wrong out of 40 after the cards.
-- **Weak on ideas defined by geography.** Companies in Indonesia, Vietnam, Thailand, Malaysia and the Philippines
-  have profiles only here. The Southeast Asia idea never got past 5 right, and it took smart-card and POS hardware
-  makers for payment operators.
-- **Coverage:** a new install has profiles for about 69% of companies from $1B. Companies with no description are
-  listed as a gap, not screened. Annual-report text comes from the on-demand fetch for shortlisted companies and, for
-  Japan, from the open data pack.
-- **Noise:** the model's reads vary. The same input moves by about 0.04 in probability on average, and a rerun can
-  swap about 2 of the top 40 near the boundary. Companies near the boundary are read 3 times, and the reads are
-  averaged.
-- **Cards fix what you answer, not everything.** Wrong rows fell from 53 to 36, but right rows only rose from 44 to
-  52, because a removed row is often replaced by an equally weak one.
+- **Thin lists.** Before the review the median idea confirmed 3 companies, and some confirmed 0–2. A short list
+  means the text did not say it plainly, not that nothing else fits: read the to-confirm section.
+- **Borderline promotions.** Most mistakes are borderline companies, not wrong ones: a maker of a part for the
+  product, or a company that only plans the business. With a strong reviewer 6 of 63 promotions were borderline;
+  with looser ones 27 of 86–92.
+- **Gaps by market.** Where no annual report can be read, a company is judged on its profile only, and a thin
+  profile can keep a real company out (the page names these, for example a large US company when you did not give
+  the SEC contact). US reports need your SEC contact, Korea an OpenDART key, Taiwan your yes to MOPS; Hong Kong,
+  Europe, Southeast Asia and most other markets have profiles only ([which markets](#which-markets-get-an-annual-report-check)).
+  Companies with no profile at all are listed as a gap, not screened.
+- **Supply-chain ideas are harder.** The AI can confuse roles: it may take buyers, makers of generic parts, or mere
+  shareholders for suppliers.
+- **Reads vary.** The same text can get a slightly different answer on another read, so companies near the boundary
+  are read 3 times and averaged, and a rerun can still swap a few rows near the cut.
+- **Cards fix what you answer, not everything.** They cannot add right rows that the data does not show.
+- **Small sample.** 24 ideas and one review run per model; the numbers can move as more ideas are labelled.
 - It does not value companies, look at prices or tell you what to buy. The rank reflects how strong the evidence is,
   not investment merit.
 
@@ -332,8 +355,8 @@ border, with a short quote from its evidence (the passage that best matches your
 Cards are not a chore for you: they are a tool for your AI agent. When you ask it to sharpen the list, it reads the
 cards, answers **keep** or **drop** with a reason (for example "a buyer, not a supplier") and applies them with one
 line such as `jevscreen answer "1a 2h 3c" --deck deck-...`. It costs about $0.01–0.03. Your answers are remembered for this idea, and the list is re-ranked without reading the
-profiles again. The next run of the same idea uses them too. In the test above, cards cut the wrong rows from 53 to
-36; they cannot invent right rows that the data does not show.
+profiles again. The next run of the same idea uses them too. Cards cannot invent right rows that the data does not
+show.
 
 The mechanics are in [docs/DATA_RULES.md](docs/DATA_RULES.md) under "Calibration": the reason letters a–k, how
 answers become rules, and keyword learning. The accepted answer forms are in the `answer` row of
@@ -342,16 +365,16 @@ answers become rules, and keyword learning. The accepted answer forms are in the
 
 ## Open data pack
 
-The open data pack is a free daily pack, published as GitHub Releases of this repository (`pack-YYYY-MM-DD`). It holds
-only data whose licence allows redistribution:
+The open data pack is free. It is published as GitHub Releases of this repository (`pack-YYYY-MM-DD`) when available;
+there is no fixed schedule yet. It holds only data whose licence allows redistribution:
 
 - the SEC ticker list;
 - for Japan, the EDINET code list plus the 事業の内容 (business description) section of each company's latest
-  有価証券報告書 (annual securities report), under the Public Data License 1.0 with attribution. So far that is about
-  1,600 companies, and the number grows daily.
+  有価証券報告書 (annual securities report), under the Public Data License 1.0 with attribution. The packs published so far
+  cover about 1,600 companies.
 
-Once the first pack is published, `quickstart` pulls it automatically, so Japanese companies can be checked against
-their own filings without an EDINET key. Until then, Japan uses profiles.
+`quickstart` pulls the newest published pack automatically, so the Japanese companies in it can be checked against
+their own filings without an EDINET key. When no pack can be fetched, Japan uses profiles.
 
 `jevscreen pack pull` imports the pack by hand, and every file is checked against its sha256. The pack contains
 nothing from TradingView or Yahoo and no other annual-report text.

@@ -348,6 +348,22 @@ class TestExtractSection(unittest.TestCase):
                 "\n\nITEM 5. OPERATING AND FINANCIAL REVIEW AND PROSPECTS\n")
         self.assertEqual(sec.extract_section(text, "20-F")[1], "ok:end=item5")
 
+    def test_20f_item4_named_after_the_filer(self):
+        # Israeli filers (CHKP, ALLT) head Item 4 with their own name: 'ITEM 4. INFORMATION ON CHECK POINT',
+        # 'ITEM 4: Information on Allot'; the table of contents and in-text cross-references are not the start
+        toc = "Item 4.\n\nInformation on Acme Cyber\n\n26\n\nItem 4A.\n\nUnresolved Staff Comments\n\n36\n\n"
+        ref = "Details are in \u201cItem 4 \u2013 Information on Acme Cyber\u201d.\n\n"
+        for head in ("ITEM 4.\nINFORMATION ON ACME CYBER", "ITEM 4: Information on Acme"):
+            text = (toc + ref + head + "\n\nAcme History and Development\n\n" + self.body("f20")
+                    + "\n\nITEM 4A.\nUNRESOLVED STAFF COMMENTS\n\nNot applicable.\n\nITEM 5. OPERATING\n")
+            s, note = sec.extract_section(text, "20-F")
+            self.assertEqual(note, "ok:end=item4a", head)
+            self.assertTrue(s.startswith(head.split("\n")[0]), s[:40])
+            self.assertIn("History and Development", s)
+        # a heading that is not Item 4's own ('Information on' something else, mid-line) is still no start
+        self.assertEqual(sec.extract_section("See Item 4 - Information on Acme.\n" + self.body("f20"), "20-F")[1],
+                         "start_heading_not_found")
+
     def test_bounds(self):
         self.assertEqual(sec.extract_section("no headings here", "10-K"), (None, "start_heading_not_found"))
         self.assertEqual(sec.extract_section("Item 1. Business\n" + self.body("x"), "10-K"),

@@ -137,6 +137,19 @@ REASONS: dict[str, dict[str, Any]] = {
     "no_key_dart": {"zh": "韩国年报需要 OpenDART 免费密钥（默认关闭）", "en": "Korean reports need a free OpenDART key (off by "
                     "default)", "short_zh": "没有 OpenDART 密钥", "short_en": "no OpenDART key",
                     "next_command": "jevscreen keys set opendart", "ask_human": True},
+    "no_key_edinet": {"zh": "日本年报需要 EDINET 免费密钥（默认关闭）", "en": "Japanese reports need a free EDINET API key "
+                      "(off by default)", "short_zh": "没有 EDINET 密钥", "short_en": "no EDINET key",
+                      "next_command": "jevscreen keys set edinet", "ask_human": True},
+    "stopped_after_block": {"zh": "排在前面的另一个官方网站这次拒绝了访问，补抓按规则整体停止，这个网站没有被联系；它没有被暂停，"
+                            "现在就可以再补抓（只有拒绝访问的那个网站暂停 24 小时）",
+                            "en": "Another official site earlier in the order refused access, so the fetch stopped "
+                            "before contacting this one; this site is not paused and can be fetched now (only the "
+                            "site that refused access pauses for 24 h)", "short_zh": "补抓已停止",
+                            "short_en": "fetch stopped", "next_command": "jevscreen fetch-docs latest",
+                            "ask_human": False},
+    "outside_topn": {"zh": "不在前几名里，这次没有补抓", "en": "Not in the top rows; not fetched this time",
+                     "short_zh": "不在前几名", "short_en": "outside the top rows", "next_command": None,
+                     "ask_human": False},
     "mops_off": {"zh": "台湾年报下载未开启", "en": "Taiwan annual-report downloads are off", "short_zh": "台湾下载未开启",
                  "short_en": "Taiwan downloads off", "next_command": None, "ask_human": True},
     "disabled": {"zh": "这次没有选这个来源（--sources）", "en": "Source not selected this time (--sources)",
@@ -224,6 +237,33 @@ QUESTIONS: dict[str, dict[str, Any]] = {
                              "downloads, so this is off by default. Turn it on?",
         "record_answer_commands": [f"jevscreen consent set {MOPS_TOPIC} yes", f"jevscreen consent set {MOPS_TOPIC} no"]},
 }
+SEC_NAMES_ZH = "这次用得上的有：{names}。"
+SEC_NAMES_EN = " This run would use it for {names}."
+SEC_THIN_ZH = "其中 {names} 的简介太薄，没有年报就进不了名单。"
+SEC_THIN_EN = " {names}: the profile is too thin, so without the annual report they cannot be listed."
+THIN_CODES_DONE = frozenset({"fetched", "stored_since", "already_stored"})
+
+
+def plain(name: str | None) -> str | None:
+    from . import quickstart
+    return quickstart.plain_name(name) if name else None
+
+
+def thin_waiting(pl: Plan, oc: Mapping[str, Mapping[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+    """Novice #4 P0-1: the L1 misses read only for their thin profile (screen.l1_rescued) whose annual report did
+    not come in (no SEC contact, no DART key, Taiwan consent off, a failed fetch ...): they cannot enter the list on
+    the profile L1 rejected, so the page names them instead of letting them disappear. Largest first."""
+    out = []
+    for ck, e in pl.entries.items():
+        code = (oc.get(ck) or {}).get("code") or e.get("reason")
+        if not e.get("rescued") or not code or code in THIN_CODES_DONE:
+            continue
+        out.append({"security_id": e["security_id"], "name": plain(e.get("name")) or e["security_id"],
+                    "country": e.get("country"), "market_cap_usd": e.get("market_cap_usd"), "reason": code})
+    out.sort(key=lambda r: (-(r["market_cap_usd"] or 0.0), r["security_id"]))
+    return out[:limit]
+
+
 COUNTRY_ZH: dict[str, str] = {
     "United States": "美国", "China": "中国", "Hong Kong": "香港", "Taiwan": "台湾", "Japan": "日本", "Korea": "韩国",
     "South Korea": "韩国", "India": "印度", "Indonesia": "印尼", "Vietnam": "越南", "Thailand": "泰国",
@@ -1201,9 +1241,23 @@ def questions_for(pl: Plan, by_reason: Mapping[str, int]) -> list[dict[str, Any]
     # then_command: after a yes (the key / the consent recorded) it fetches this run's missing reports and updates
     # the report (free fetch, update at most $0.05); after a no nothing more is needed
     then = shlex.join(["jevscreen", "fetch-docs", pl.run_id]) if pl.run_id else "jevscreen fetch-docs latest"
-    if by_reason.get("no_key_sec") and pl.readiness.get("sec_email_ask") != "no":
-        q = QUESTIONS["sec_email"]
-        out.append({"id": "sec_email", **q, "then_command": then, "ask_human": True})
+    # novice #4 P0-1: the question names the companies it helps, the thin-profile ones first (an L1 miss read for
+    # its annual report only: without the report it cannot be listed, e.g. GE Vernova); those count as a reason too
+    sec = sorted((e for e in pl.entries.values() if e.get("reason") == "no_key_sec"),
+                 key=lambda e: (not e.get("rescued"), -(e.get("market_cap_usd") or 0.0), e["security_id"]))
+    thin = [e for e in sec if e.get("rescued")]
+    if (by_reason.get("no_key_sec") or thin) and pl.readiness.get("sec_email_ask") != "no":
+        q = dict(QUESTIONS["sec_email"])
+        names = [plain(e.get("name")) or e["security_id"] for e in sec[:3]]
+        if names:
+            tz = "、".join(plain(e.get("name")) or e["security_id"] for e in thin[:3])
+            te = ", ".join(plain(e.get("name")) or e["security_id"] for e in thin[:3])
+            q["human_question_zh"] = q["human_question_zh"].replace("要设置吗？", SEC_NAMES_ZH.format(
+                names="、".join(names)) + (SEC_THIN_ZH.format(names=tz) if thin else "") + "要设置吗？")
+            q["human_question_en"] = q["human_question_en"].replace(" Set it up?", SEC_NAMES_EN.format(
+                names=", ".join(names)) + (SEC_THIN_EN.format(names=te) if thin else "") + " Set it up?")
+        out.append({"id": "sec_email", **q, "then_command": then, "ask_human": True,
+                    "names": [e["security_id"] for e in sec[:3]], "thin": [e["security_id"] for e in thin[:3]]})
     n_tw = by_reason.get("mops_off", 0)
     if n_tw and pl.readiness.get("mops_consent") is None:
         q = QUESTIONS["mops_annual"]
@@ -1245,7 +1299,7 @@ def fetch_summary(pl: Plan, oc: Mapping[str, Mapping[str, Any]], summaries: Mapp
             "sources": sources, "abandoned": abandoned,
             "readiness": {k: pl.readiness.get(k) for k in ("pdf_reader", "sec_email", "opendart", "mops_consent")},
             "questions": questions_for(pl, by_reason), **summary_texts(pl, oc), "next_command": None,
-            "update": None}
+            "update": None, "thin_waiting": thin_waiting(pl, oc)}
 
 
 def summary_texts(pl: Plan, oc: Mapping[str, Mapping[str, Any]], pending_next: str | None = None
@@ -1485,6 +1539,40 @@ def child_main(argv: Sequence[str]) -> int:
         with contextlib.suppress(OSError):
             write_summary()
     return code
+
+
+def open_fetch_questions(cfg, fetch: dict[str, Any] | None) -> dict[str, Any] | None:
+    """quickstart: fetch.questions without the ones the human already settled since the fetch ran: the SEC contact
+    (set, or 'no' recorded with `consent set sec-email-ask no`), the Taiwan annual-report consent (recorded either
+    way) and the OpenDART key (set). A settled question is never asked again, in chat or on the page."""
+    if not fetch or not fetch.get("questions"):
+        return fetch
+    from . import consent, keys
+    settled: set[str] = set()
+    with contextlib.suppress(Exception):
+        if keys.presence(cfg, "sec-email").get("configured") \
+                or consent.get(cfg, SEC_ASK_TOPIC)["state"] == "no":
+            settled.add("sec_email")
+    with contextlib.suppress(Exception):
+        if consent.get(cfg, MOPS_TOPIC)["state"] in ("yes", "no"):
+            settled.add("mops_annual")
+    with contextlib.suppress(Exception):
+        if keys.presence(cfg, "opendart").get("configured"):
+            settled.add("opendart")
+    return {**fetch, "questions": [q for q in fetch["questions"] if q.get("id") not in settled]}
+
+
+def fetch_brief(fetch: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The quickstart job result's view of layers.fetch: status, companies fetched per source, seconds, the update's
+    outcome, the next command and the human questions (sec_email / opendart / mops consent)."""
+    if not fetch:
+        return None
+    upd = fetch.get("update") or {}
+    return {"status": fetch.get("status"), "fetched": fetch.get("fetched") or {}, "seconds": fetch.get("seconds"),
+            "update": {k: upd.get(k) for k in ("run_id", "status", "cost_usd", "skipped") if upd.get(k) is not None},
+            "next_command": fetch.get("next_command"), "questions": fetch.get("questions") or [],
+            "thin_waiting": fetch.get("thin_waiting") or [],
+            "summary_zh": fetch.get("summary_zh"), "summary_en": fetch.get("summary_en")}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

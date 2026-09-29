@@ -220,6 +220,45 @@ def name_similarity(a: str | None, b: str | None) -> float:
     return round(min(score, 1.0), 4)
 
 
+_SUBJECT = re.compile(
+    r"^([A-Z0-9][^,.;()]{0,60}?),?\s+(?:Inc|Incorporated|Corp|Corporation|Ltd|Limited|plc|PLC|Co|Company|Holdings|"
+    r"Group|S\.A|SA|AG|N\.V|NV|SE|LLC|L\.P|Bhd|Berhad|Tbk|ASA|AB|Oyj)\b")
+
+
+def summary_subject(summary: str | None) -> str | None:
+    """The company a Yahoo summary is about, from its first words ('IES Holdings, Inc., through its subsidiaries'
+    -> 'IES Holdings'); None when the text does not open with a name and a legal form ('The Company ...', 'We ...')."""
+    m = _SUBJECT.match((summary or "").strip())
+    if not m:
+        return None
+    return m.group(0).rstrip(" ,") if _name_tokens(m.group(0)) else None
+
+
+def subject_mismatch(summary: str | None, *names: str | None) -> bool:
+    """Novice #4 P1-6: FinanceDatabase sometimes carries another company's summary on a listing (CF Industries with
+    IES Holdings' text). True when the summary opens with a company name that shares no name token with, and is
+    not similar to, any of `names`. match() drops such a text only when that name is another listed company's
+    (text_owner): a renamed company's old text stays."""
+    subj = summary_subject(summary)
+    if not subj:
+        return False
+    st = set(_name_tokens(subj))
+    for n in names:
+        nt = set(_name_tokens(n))
+        if not nt or st & nt or name_similarity(subj, n) >= 0.35:
+            return False
+    return True
+
+
+def text_owner(summary: str | None, fd_name: str | None, owners: Mapping[tuple, set]) -> set:
+    """The company_keys of the listed companies a summary is about: it opens with a name that does not fit the FD
+    row's own name (subject_mismatch) and that name is a TradingView company's name (the same tokens). Empty for a
+    renamed company's old text ('Laboratory Corporation' on Labcorp): no listed company has that name, it is kept."""
+    if not subject_mismatch(summary, fd_name):
+        return set()
+    return set(owners.get(tuple(sorted(set(_name_tokens(summary_subject(summary)))))) or ())
+
+
 @dataclass(frozen=True)
 class Match:
     """One FD summary attached to one TradingView line."""
@@ -264,6 +303,11 @@ def match(fd_rows: Iterable[Mapping[str, Any]], securities: Iterable[Mapping[str
     """
     secs = list(securities)
     by_id = {s["security_id"]: s for s in secs}
+    owners: dict[tuple, set] = {}          # a TradingView name's tokens -> its company_keys (text_owner)
+    for s in secs:
+        t = tuple(sorted(set(_name_tokens(s.get("name")))))
+        if t:
+            owners.setdefault(t, set()).add(s["company_key"])
     by_isin: dict[str, list[Mapping[str, Any]]] = {}
     for s in secs:
         isin = _clean_isin(s.get("isin"))
@@ -291,8 +335,12 @@ def match(fd_rows: Iterable[Mapping[str, Any]], securities: Iterable[Mapping[str
                                "security_id": sec["security_id"], "tv_name": sec.get("name"), "similarity": sim,
                                "reason": reason})
 
+        owner = text_owner(row.get("summary"), row.get("name"), owners)
         for sec in by_isin.get(fd_isin, []) if fd_isin else []:
             sim = name_similarity(row.get("name"), sec.get("name"))
+            if owner and sec["company_key"] not in owner and subject_mismatch(row.get("summary"), sec.get("name")):
+                reject(sec, sim, "summary_subject")
+                continue
             same_venue = sec["security_id"] in cand_rank
             if same_venue:
                 add(sec, "isin", 1.0, sim, cand_rank[sec["security_id"]])
@@ -305,6 +353,9 @@ def match(fd_rows: Iterable[Mapping[str, Any]], securities: Iterable[Mapping[str
             if sec is None or cand in found:
                 continue
             sim = name_similarity(row.get("name"), sec.get("name"))
+            if owner and sec["company_key"] not in owner and subject_mismatch(row.get("summary"), sec.get("name")):
+                reject(sec, sim, "summary_subject")
+                continue
             sec_isin = _clean_isin(sec.get("isin"))
             conflict = bool(fd_isin and sec_isin and fd_isin != sec_isin)
             if conflict and sim < 1.0:

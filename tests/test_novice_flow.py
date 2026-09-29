@@ -329,7 +329,7 @@ class TestFill(FlowCase):
         self.assertEqual(sorted(new_l1), sorted([store.company_key(None, "SZSE:300901"),
                                                  store.company_key(None, "SZSE:300902")]))
         self.assertEqual(out["change_zh"], "补了 2 家公司简介后重排")
-        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"]])
+        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"] + out["to_confirm"]["rows"]])
         self.assertFalse(any(i["id"] == "fill_descriptions" for i in out["pending"]))
         self.assertEqual(qs.read_page_data(page.stable_path(self.cfg, idea))["run_id"], out["run_id"])
 

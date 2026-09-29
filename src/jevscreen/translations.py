@@ -57,6 +57,8 @@ def _slots(data: dict[str, Any]) -> Iterator[tuple[int, str, dict[str, Any], str
         if not r.get("name_zh"):
             yield prio, "name", r, "name", ctx
         yield prio, "description", r, "one_line", ctx
+        if r.get("one_line_profile"):           # the profile's line beside the annual report's (also the cards')
+            yield prio + 1, "description", r, "one_line_profile", ctx
         if isinstance(r.get("quote"), dict):
             yield prio, "excerpt", r["quote"], "text", ctx
     for r in rows[:TOP]:

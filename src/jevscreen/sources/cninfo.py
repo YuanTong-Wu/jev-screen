@@ -103,6 +103,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from .. import guard, store
 from ..config import Config
 from ..http import Blocked, Client, Halted, Response
+from .deep_sections import DEEP_SECTION
 from .edinet import sigterm_ignored
 
 SOURCE_ID = "cninfo_annual_report"
@@ -137,6 +138,11 @@ DRAIN_MAX_S = 60.0                  # after a stop, wait at most this long for i
                                     # the workers are daemon threads, so process exit does not wait for them)
 ID_TYPE = "cninfo_orgid"
 EXTRACTOR_VERSION = "cninfo-v3"   # v3: bank / insurer / A+H heading families, running headers, MD&A
+# v4 = v3 + the deep appendix (sources/deep_sections.py: revenue tables, core competence, MD&A opening). Written
+# only by an on-demand deep fetch (sync(deep=True) with codes), into its own row and text file (section
+# deep_sections.DEEP_SECTION): the shallow row of the same report is never touched, and a bulk sync never reads or
+# settles on a deep row.
+DEEP_EXTRACTOR_VERSION = "cninfo-v4"
                                  # fallback (v2: 'N.M' STAR summary headings); failed rows of older versions
                                  # are retried
 SECTION = "business"
@@ -1072,7 +1078,8 @@ def extract_section(lines: Sequence[str], kind: str, layout: Layout | None = Non
     return None, "start_heading_not_found"
 
 
-def extract_from_pdf(data: bytes, kind: str, *, backend: str = "auto") -> tuple[str | None, str, str]:
+def extract_from_pdf(data: bytes, kind: str, *, backend: str = "auto", deep: bool = False
+                     ) -> tuple[str | None, str, str]:
     """PDF bytes -> (section text | None, note, backend) through extract_from_pages / extract_section (template
     rules of `kind`, the other kind's rules (note ';rules=<other>'), heading families, clipped family section,
     management discussion opening)."""
@@ -1080,17 +1087,24 @@ def extract_from_pdf(data: bytes, kind: str, *, backend: str = "auto") -> tuple[
         pages, used = pdf_pages(data, backend=backend)
     except PdfError as e:
         return None, f"pdf_parse_failed:{str(e)[:120]}", "none"
-    return extract_from_pages(pages, kind) + (used,)
+    return extract_from_pages(pages, kind, deep=deep) + (used,)
 
 
-def extract_from_pages(pages: Sequence[str], kind: str) -> tuple[str | None, str]:
+def extract_from_pages(pages: Sequence[str], kind: str, *, deep: bool = False) -> tuple[str | None, str]:
     """Page texts -> (section text | None, note): clean_pages + Layout + extract_section (the text fixtures use
-    this directly)."""
+    this directly). deep=True (on-demand only): the business section is followed by the bounded deep appendix of
+    the same report (deep_sections.cninfo_appendix; note ';deep:<blocks>')."""
     offsets: list[int] = []
     lines = clean_pages(pages, offsets=offsets)
     if sum(len(ln) for ln in lines) < 50:
         return None, "no_text_layer"
-    return extract_section(lines, kind, Layout.from_pages(pages, offsets))
+    layout = Layout.from_pages(pages, offsets)
+    text, note = extract_section(lines, kind, layout)
+    if deep and text is not None:
+        from .deep_sections import cninfo_appendix
+        app, dnote = cninfo_appendix(lines, layout, text)
+        text, note = text + app, f"{note};{dnote}"
+    return text, note
 
 
 def short_description(section_text: str | None, max_chars: int = SHORT_DESC_CHARS) -> str:
@@ -1692,12 +1706,12 @@ _DESC_COLS = ["security_id", "source_id", "company_key", "text", "text_sha256", 
 _STATE_COLS = ["source_id", "security_id", "status", "http_status", "attempts", "last_attempt_at", "note"]
 
 
-def text_path_for(cfg: Config, code: str, announcement_id: str) -> Path:
-    return Path(cfg.home) / "docs" / "cninfo" / str(code) / f"{announcement_id}-{SECTION}.txt"
+def text_path_for(cfg: Config, code: str, announcement_id: str, section: str = SECTION) -> Path:
+    return Path(cfg.home) / "docs" / "cninfo" / str(code) / f"{announcement_id}-{section}.txt"
 
 
-def doc_id_for(org_id: str, announcement_id: str) -> str:
-    return f"{SOURCE_ID}:{org_id}:{announcement_id}:{SECTION}"
+def doc_id_for(org_id: str, announcement_id: str, section: str = SECTION) -> str:
+    return f"{SOURCE_ID}:{org_id}:{announcement_id}:{section}"
 
 
 SKIP_CURRENT = object()    # fast-mode plan marker: the stored report is already the newest possible year
@@ -1848,8 +1862,12 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
          on_blocked: Callable[[BaseException], Any] | None = None, per_company: bool = False,
          workers: int | None = DEFAULT_WORKERS, since: Any = None, max_fallback: int | None = MAX_FALLBACK_QUERIES,
          pdf_client: Any = None, list_min_queue: int | None = None,
-         on_company: Callable[[list[str], str, str | None], None] | None = None) -> dict:
+         on_company: Callable[[list[str], str, str | None], None] | None = None, deep: bool = False) -> dict:
     """Map mainland universe lines to CNINFO orgIds and pull the latest annual report's business section.
+
+    deep=True (on-demand only, requires `codes`; jevscreen.topn_fetch): the full report (kind='full') with the deep
+    appendix (deep_sections.cninfo_appendix), extractor DEEP_EXTRACTOR_VERSION; a stored report counts as done only
+    when it was extracted deep, so the named companies' reports are re-read once. Never a bulk re-crawl.
 
     Steps: (1) GET the stock list, save raw, snapshot, upsert identifiers ('cninfo_orgid') and drop stale ones of
     considered lines; (2) queue distinct orgIds by market cap desc (min_mcap_usd, codes and limit filter the queue);
@@ -1872,6 +1890,10 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
     download (the on-demand fetch's per-company events); its errors are ignored."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
+    if deep:
+        if not codes:
+            raise ValueError("deep=True needs codes (an on-demand fetch of named companies, never a bulk re-crawl)")
+        kind = "full"
     since_d = parse_since(since)
     if client is None:
         client = Client(user_agent=cfg.user_agent, min_interval_s=max(DEFAULT_MIN_INTERVAL_S, cfg.min_interval_s),
@@ -1889,7 +1911,7 @@ def sync(cfg: Config, client: Any = None, *, limit: int | None = None, codes: It
                      workers=1 if per_company else clamp_workers(workers), since=since_d,
                      max_fallback=None if max_fallback is None else max(0, int(max_fallback)),
                      pdf_client=client if per_company else pdf_client, list_min_queue=list_min_queue,
-                     on_company=on_company)
+                     on_company=on_company, deep=bool(deep))
 
 
 def non_pdf_body(resp: Any) -> str | None:
@@ -1947,13 +1969,13 @@ def needs_download(org: str, docs: Sequence[Mapping[str, Any]], stored: Mapping[
 
 def fetch_reports(cfg: Config, client: Any, org: str, code: str, group: Sequence[Mapping[str, Any]],
                   docs: Sequence[dict], kind: str, *, refresh: bool, stored: Mapping[tuple[str, str], str],
-                  at: dt.datetime, rate_key: str = RATE_KEY) -> _Outcome:
+                  at: dt.datetime, rate_key: str = RATE_KEY, deep: bool = False) -> _Outcome:
     """Download + extract the selected documents of one company in order (summary, then the full report when the
     summary fails or only gave the management-discussion fallback), writing the section text files. Network +
     parsing only: the returned _Outcome is applied to the batch by the main thread."""
     out = _Outcome()
     try:
-        return _fetch_reports(out, cfg, client, org, code, group, docs, kind, refresh, stored, at, rate_key)
+        return _fetch_reports(out, cfg, client, org, code, group, docs, kind, refresh, stored, at, rate_key, deep)
     except (Blocked, Halted) as e:
         # as before: a blocked / halted company records nothing (it is redone by a later run)
         clean = _Outcome()
@@ -1964,10 +1986,12 @@ def fetch_reports(cfg: Config, client: Any, org: str, code: str, group: Sequence
 
 def _fetch_reports(out: _Outcome, cfg: Config, client: Any, org: str, code: str, group: Sequence[Mapping[str, Any]],
                    docs: Sequence[dict], kind: str, refresh: bool, stored: Mapping[tuple[str, str], str],
-                   at: dt.datetime, rate_key: str) -> _Outcome:
+                   at: dt.datetime, rate_key: str, deep: bool = False) -> _Outcome:
     notes: list[str] = []
     pending_rows: list[dict] = []
     primary = group[0]
+    version = DEEP_EXTRACTOR_VERSION if deep else EXTRACTOR_VERSION
+    section = DEEP_SECTION if deep else SECTION       # a deep text is its own row and file (never over the shallow)
     # a summary whose text came only from the management-discussion fallback is kept (text file + row) but the
     # full report is still tried for a real business section; soft = (row, section, doc, note, index)
     soft: tuple | None = None
@@ -1988,7 +2012,7 @@ def _fetch_reports(out: _Outcome, cfg: Config, client: Any, org: str, code: str,
     def finish_ok(row: dict, sect: str, doc: dict, xnote: str, i: int) -> _Outcome:
         out.docs.extend(r for r in pending_rows if r is not row)
         out.docs.append(row)
-        desc = short_description(sect)
+        desc = None if deep else short_description(sect)   # a deep fetch never changes a profile (descriptions)
         if desc:
             for ln in group:
                 out.descs.append({"security_id": ln["security_id"], "source_id": SOURCE_ID,
@@ -2016,12 +2040,12 @@ def _fetch_reports(out: _Outcome, cfg: Config, client: Any, org: str, code: str,
                 return out
             notes.append(f"{doc['kind']}_previously_failed")
             continue
-        row = {"doc_id": doc_id_for(org, doc["announcement_id"]), "security_id": primary["security_id"],
+        row = {"doc_id": doc_id_for(org, doc["announcement_id"], section), "security_id": primary["security_id"],
                "company_key": primary["company_key"], "source_id": SOURCE_ID, "cik": org,
-               "form": FORM_FOR_KIND[doc["kind"]], "section": SECTION, "accession": doc["announcement_id"],
+               "form": FORM_FOR_KIND[doc["kind"]], "section": section, "accession": doc["announcement_id"],
                "filing_date": doc["filing_date"], "report_date": dt.date(doc["year"], 12, 31), "url": doc["url"],
                "raw_sha256": None, "raw_bytes": None, "text_path": None, "text_sha256": None,
-               "text_chars": None, "extractor": f"{EXTRACTOR_VERSION}/none", "extract_note": None,
+               "text_chars": None, "extractor": f"{version}/none", "extract_note": None,
                "fetched_at": at}
         if doc["size_kb"] is not None and doc["size_kb"] * 1024 > MAX_PDF_BYTES:
             xnote, sect = f"too_large:{doc['size_kb']}KB", None
@@ -2060,11 +2084,12 @@ def _fetch_reports(out: _Outcome, cfg: Config, client: Any, org: str, code: str,
                 out.status, out.http_status, out.note = "error", dresp.status, "pdf_not_pdf"
                 return out
             raw = dresp.body or b""
-            sect, xnote, backend = extract_from_pdf(raw, doc["kind"])
+            # deep only when asked: extract_from_pdf keeps its plain two-argument call otherwise
+            sect, xnote, backend = extract_from_pdf(raw, doc["kind"], **({"deep": True} if deep else {}))
             if getattr(dresp, "truncated", False):
                 xnote += ";truncated"
             row.update(raw_sha256=store.sha256(raw), raw_bytes=len(raw),
-                       extractor=f"{EXTRACTOR_VERSION}/{backend}")
+                       extractor=f"{version}/{backend}")
         if doc["revision"]:
             xnote += ";revision"
         for flag in doc.get("flags") or ():
@@ -2076,7 +2101,7 @@ def _fetch_reports(out: _Outcome, cfg: Config, client: Any, org: str, code: str,
             pending_rows.append(row)
             notes.append(f"{doc['kind']}_failed:{xnote.split(';', 1)[0]}")
             continue
-        tp = text_path_for(cfg, code, doc["announcement_id"])
+        tp = text_path_for(cfg, code, doc["announcement_id"], section)
         tp.parent.mkdir(parents=True, exist_ok=True)
         payload = sect.encode("utf-8")
         tp.write_bytes(payload)
@@ -2166,7 +2191,7 @@ def _halt_event(*clients: Any) -> threading.Event:
 
 def _sync(cfg: Config, client: Any, *, limit, codes, kind, refresh, min_mcap_usd, batch_size, only_universe,
           progress_every, on_blocked, per_company, workers, since, max_fallback, pdf_client, list_min_queue,
-          on_company=None) -> dict:
+          on_company=None, deep: bool = False) -> dict:
     run_id = f"sync-cninfo-{uuid.uuid4().hex[:12]}"
     req_clients = [client] if pdf_client is None or pdf_client is client else [client, pdf_client]
     requests_before = sum(int(getattr(c, "requests_made", 0) or 0) for c in req_clients)
@@ -2176,7 +2201,8 @@ def _sync(cfg: Config, client: Any, *, limit, codes, kind, refresh, min_mcap_usd
         workers = 1
     counts = {s: 0 for s in CRAWL_STATUSES}
     summary: dict[str, Any] = {
-        "run_id": run_id, "kind": kind, "mode": "per_company" if per_company else "fast", "workers": workers,
+        "run_id": run_id, "kind": kind, "deep": bool(deep), "mode": "per_company" if per_company else "fast",
+        "workers": workers,
         "stock_list_rows": 0, "cn_lines": 0, "securities_mapped": 0,
         "ambiguous": [], "unmatched": 0, "identifiers_removed": 0, "queued": 0, "attempted": 0,
         "skipped_unchanged": 0, "ok_by_form": {}, "fallback_full": 0, "summary_only": 0, "failures_by_note": {},
@@ -2287,16 +2313,21 @@ def _sync(cfg: Config, client: Any, *, limit, codes, kind, refresh, min_mcap_usd
             # pre-query skip: a company already holding the newest year that can exist is not queried). For
             # --kind full only full reports count (a stored summary does not make the full report current).
             current_year: dict[str, int] = {}
-            for org, url, tp, ext, rdate, form in con.execute(
-                    "SELECT cik, url, text_path, extractor, report_date, form FROM documents WHERE source_id = ?",
-                    [SOURCE_ID]).fetchall():
+            # a deep fetch sees only the deep rows (section DEEP_SECTION), a plain sync only the others: each
+            # settles on, retries and writes its own rows (a deep text never replaces or hides a shallow one)
+            version = DEEP_EXTRACTOR_VERSION if deep else EXTRACTOR_VERSION
+            for org, url, tp, ext, rdate, form, sec in con.execute(
+                    "SELECT cik, url, text_path, extractor, report_date, form, section FROM documents "
+                    "WHERE source_id = ?", [SOURCE_ID]).fetchall():
+                if (sec == DEEP_SECTION) != bool(deep):
+                    continue
                 key = (str(org), str(url))
                 if tp is not None:
                     stored[key] = "ok"
-                    if str(ext or "").startswith(EXTRACTOR_VERSION + "/") and isinstance(rdate, dt.date) and \
+                    if str(ext or "").startswith(version + "/") and isinstance(rdate, dt.date) and \
                             (kind == "summary" or form == FORM_FOR_KIND["full"]):
                         current_year[str(org)] = max(current_year.get(str(org), 0), rdate.year)
-                elif str(ext or "").startswith(EXTRACTOR_VERSION + "/"):
+                elif str(ext or "").startswith(version + "/"):
                     stored.setdefault(key, "failed")
             prior = con.execute("SELECT security_id, attempts, status FROM crawl_state WHERE source_id = ?",
                                 [SOURCE_ID]).fetchall()
@@ -2482,7 +2513,7 @@ def _sync(cfg: Config, client: Any, *, limit, codes, kind, refresh, min_mcap_usd
         if docs is None:
             return "no_annual_report"
         out = fetch_reports(cfg, client, org, code_of[org], groups[org], docs, kind, refresh=refresh,
-                            stored=stored, at=at, rate_key=RATE_KEY)
+                            stored=stored, at=at, rate_key=RATE_KEY, deep=deep)
         status = apply(org, out, at)
         if isinstance(out.exc, (Blocked, Halted)):
             raise out.exc
@@ -2696,7 +2727,8 @@ def _sync(cfg: Config, client: Any, *, limit, codes, kind, refresh, min_mcap_usd
                 return None
             if not needs_download(org, docs, stored, refresh):
                 out = fetch_reports(cfg, pdf_client, org, code_of[org], groups[org], docs, kind, refresh=refresh,
-                                    stored=stored, at=at, rate_key=STATIC_RATE_KEY)   # settled locally: no request
+                                    stored=stored, at=at, rate_key=STATIC_RATE_KEY,
+                                    deep=deep)   # settled locally: no request
                 complete(apply(org, out, at))
                 return None
             return docs, at
@@ -2711,7 +2743,8 @@ def _sync(cfg: Config, client: Any, *, limit, codes, kind, refresh, min_mcap_usd
                     out.exc = Halted(docs[0]["url"] if docs else None)
                 else:
                     out = fetch_reports(cfg, pdf_client, org, code_of[org], groups[org], docs, kind,
-                                        refresh=refresh, stored=stored, at=at, rate_key=STATIC_RATE_KEY)
+                                        refresh=refresh, stored=stored, at=at, rate_key=STATIC_RATE_KEY,
+                                        deep=deep)
                 if isinstance(out.exc, Blocked):
                     halt.set()                           # http.Client already set it; fakes rely on this
                     block.record(out.exc, getattr(out.exc, "url", None), code_of[org])

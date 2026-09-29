@@ -5,9 +5,9 @@
     jevscreen eval run --budget-each USD --budget-total USD [--ideas a,b] [--set DIR] [--json]
                                                              PAID: screen every idea (Jev), then score them
 
-`eval run` screens with each idea's own English sentence (never the local translation model), floor and countries,
-no sieve (the eval measures the system, not a calibration). It never spends more than --budget-each per idea, and
-it stops before an idea whose budget could take the total past --budget-total (no defaults: the human says both
+`eval run` screens with each idea's own English sentence (never the local translation model), floor and countries
+(its markets when countries is null), no sieve (the eval measures the system, not a calibration). It never spends
+more than --budget-each per idea, and it stops before an idea whose budget could take the total past --budget-total (no defaults: the human says both
 numbers, and the total is the amount they approve). Its report and scores go to a new folder
 <home>/evals/<timestamp>/ (report.md, scores.json), also when a screen fails or the run stops early; only runs that
 finished (ok / partial) enter the means. Exit codes: 0 ok, 1 an eval file is broken, a run is unknown or one idea's
@@ -50,6 +50,9 @@ def add_parsers(sub: Any) -> None:
         if name == "score":
             p.add_argument("run", metavar="RUN_ID|OUT_DIR", help="the screen run")
             p.add_argument("--idea", required=True, metavar="ID", help="the eval idea's id")
+            p.add_argument("--shortlist", action="store_true",
+                           help="score the saved rows in the product's order (main list first, then the "
+                                "to-confirm section; free). The main list's own precision is reported either way")
         if name == "run":
             p.add_argument("--budget-each", type=float, required=True, metavar="USD",
                            help="the Jev budget of each idea's screen (no default: say the number)")
@@ -60,6 +63,35 @@ def add_parsers(sub: Any) -> None:
             p.add_argument("--reads", type=int, default=None, metavar="K", help="L2 reads near the boundary")
             p.add_argument("--read-offset", type=int, default=0, metavar="N",
                            help="fresh reads N..N+K-1 for the boundary items (a run-to-run noise check)")
+            p.add_argument("--l2-constraints", dest="l2_constraints", action="store_const", const=True,
+                           default=None,
+                           help="lever: explicit needs the idea's end market / place / role stated (screen "
+                                "--l2-constraints; default off, also under --from-run)")
+            p.add_argument("--no-l2-constraints", dest="l2_constraints", action="store_const", const=False,
+                           help="turn --l2-constraints off (the default)")
+            p.add_argument("--shortlist", dest="shortlist", action="store_const", const=True, default=None,
+                           help="screen with the main list first, then the to-confirm section (the product's "
+                                "default; the eval's default is the bare single list, also under --from-run)")
+            p.add_argument("--no-shortlist", dest="shortlist", action="store_const", const=False,
+                           help="the bare single list (the eval's default)")
+            p.add_argument("--judge", choices=("none", "atomic3", "single10"), default=None,
+                           help="lever: the item-by-item check, tiers A / B / C (screen --judge; default off, also "
+                                "under --from-run; none turns it off)")
+            from . import eval_levers, topn_fetch
+            eval_levers.add_run_args(p)          # --lang-terms, --second-search (and --no-)
+            topn_fetch.add_flags(p)              # --fetch-profile-only-topn / --deepen-official-topn / --topn-fetch-time
+            p.add_argument("--product-flow", dest="product_flow", action="store_true",
+                           help="screen as the product lists it (jevscreen.productflow): facets derived from the "
+                                "idea text, the facet layer, idea-wording defaults that only demote, the shortlist "
+                                "tiers, your AI's review layer off; the report adds the high tier's P@min(10, n). "
+                                "Default off (the bare system, no sieve)")
+            p.add_argument("--from-run", "--from-runs", dest="from_run", default=None,
+                           metavar="DIR|FILE.json|id=RUN,...",
+                           help="screen each idea from a finished base run: a comma list of earlier eval run folders "
+                                "(or their scores.json), JSON files mapping idea ids to run ids, and idea=RUN_ID "
+                                "pairs. Its L1 answers are reused and L1 is never read again: every selected idea "
+                                "needs a base run that holds L1 answers for that idea, checked before anything is "
+                                "sent; levers not named are off (never inherited from the base run)")
 
 
 def _emit(obj: Any) -> None:
@@ -126,14 +158,29 @@ def _score(args: argparse.Namespace, cfg: Any) -> int:
         with store.session(cfg, read_only=True, wait_s=60.0) as con:
             _rid, _out, result = cli._resolve_run(con, args.run, lang="en")
             keys = _label_keys(con, [data])
+            lines = _label_lines(con, [data])
     except (ValueError, store.StoreLocked) as e:
         raise evalset.EvalError(str(e)) from None
-    s = evalset.score(data, result, keys=keys)
+    if getattr(args, "shortlist", False):
+        from . import shortlist
+        result = shortlist.view(result)          # free: the saved rows as --shortlist would list them
+    s = evalset.score(data, result, keys=keys, lines=lines)
     if args.json:
         _emit({"command": "eval score", "status": "ok", "score": s})
     else:
         print(evalset.report_md([s], evalset.aggregate([s]), title=f"eval: {data['id']}"), end="")
     return EXIT_OK
+
+
+def _label_lines(con: Any, sets: list[dict[str, Any]]) -> dict[str, tuple[str | None, str | None]]:
+    """{label id: (country, exchange)} of every label the store knows (for the outside-scope check)."""
+    from . import evalset
+    sids = sorted({evalset._norm_sid(x["security_id"]) for d in sets for x in d["labels"]})
+    if not sids:
+        return {}
+    return {sid: (country, exchange) for sid, country, exchange in con.execute(
+        "SELECT security_id, country, exchange FROM securities WHERE security_id IN (SELECT unnest(?::VARCHAR[]))",
+        [sids]).fetchall()}
 
 
 def _label_keys(con: Any, sets: list[dict[str, Any]]) -> dict[str, str]:
@@ -147,17 +194,18 @@ def _label_keys(con: Any, sets: list[dict[str, Any]]) -> dict[str, str]:
         [sids]).fetchall()}
 
 
-def _store_keys(cfg: Any, sets: list[dict[str, Any]]) -> dict[str, str] | None:
-    """_label_keys from a short read of the store; None (labels match by security_id only) when there is no store or
-    it is locked."""
+def _store_keys(cfg: Any, sets: list[dict[str, Any]]
+                ) -> tuple[dict[str, str] | None, dict[str, tuple[str | None, str | None]] | None]:
+    """(_label_keys, _label_lines) from a short read of the store; (None, None) (labels match by security_id only,
+    no outside-scope check) when there is no store or it is locked."""
     from . import store
     if not Path(cfg.db_path).exists():
-        return None
+        return None, None
     try:
         with store.session(cfg, read_only=True, wait_s=60.0) as con:
-            return _label_keys(con, sets)
+            return _label_keys(con, sets), _label_lines(con, sets)
     except (store.StoreLocked, store.duckdb.Error):
-        return None
+        return None, None
 
 
 def _new_out_dir(cfg: Any) -> Path:
@@ -186,7 +234,7 @@ def _positive(name: str, v: Any) -> float:
 def _run(args: argparse.Namespace, cfg: Any, screen_fn: Callable | None = None) -> int:
     """Screen each idea, score it, write <home>/evals/<ts>/report.md and scores.json (also when a screen fails or the
     run stops: every idea already paid for is kept)."""
-    from . import cli, evalset, screen, store
+    from . import cli, evalset, screen, store, topn_fetch
     each = _positive("--budget-each", args.budget_each)
     total = _positive("--budget-total", args.budget_total)
     if each > total:
@@ -196,8 +244,9 @@ def _run(args: argparse.Namespace, cfg: Any, screen_fn: Callable | None = None) 
     if int(args.read_offset or 0) < 0:
         raise evalset.EvalError("--read-offset must be 0 or more")
     ids = [x.strip() for x in (args.ideas or "").split(",") if x.strip()] or None
+    from . import eval_levers, evalfrom
     sets = evalset.load_dir(_set_dir(args), ids)
-    keys = _store_keys(cfg, sets)
+    keys, lines = _store_keys(cfg, sets)
     out_dir = _new_out_dir(cfg)
     run = screen_fn or screen.screen
     # a Jev status (returned, or its error escaped screen(); cli._jev_exit gives the same exit codes as here)
@@ -217,17 +266,30 @@ def _run(args: argparse.Namespace, cfg: Any, screen_fn: Callable | None = None) 
     if not args.json:
         print(f"{len(sets)} ideas, at most ${each:.2f} each; the run stops before the total could pass ${total:.2f}")
     try:
+        # before anything is sent: --from-run base runs (evalfrom.check_bases), the keyword model for the retrieval
+        # levers; either stops the whole run (the report of the empty run is still written)
+        bases = eval_levers.before_sending(args, cfg, sets)
         for data in sets:
             if spent + each > total + 1e-9:        # this idea's own budget could take the total past the cap
                 left_out(evalset.unscored(data, "not_run", error=f"--budget-total ${total:g} reached"), EXIT_BUDGET)
                 break
-            kw: dict[str, Any] = {"budget_usd": each, "countries": data.get("countries") or None, "sieve": "none",
+            # the idea's countries, else its markets (runs before 2026-09-28 passed countries only: docs/EVAL.md)
+            kw: dict[str, Any] = {"budget_usd": each, "countries": evalset.screen_scope(data), "sieve": "none",
                                   "min_mcap_usd": 1e9 if data.get("min_mcap_usd") is None
                                   else float(data["min_mcap_usd"]),
                                   "out_dir": out_dir / data["id"], "idea_en": data.get("idea_en") or None,
                                   "translate": False, "read_offset": int(args.read_offset or 0)}
             if args.reads:
                 kw["reads"] = int(args.reads)
+            kw.update(eval_levers.screen_kwargs(args, data, bases))   # every lever explicit under --from-run
+            if bases is not None:            # --from-run: the base run's L1 answers, never a fresh L1
+                kw["jev_factory"] = evalfrom.no_l1_factory(cfg)
+            pflow = None
+            if getattr(args, "product_flow", False):      # the product path; it wins over the lever flags
+                from . import productflow
+                pkw = productflow.screen_kwargs(data)
+                kw.update(pkw)
+                pflow = productflow.summary(pkw["sieve"])
             current = data
             try:
                 res = run(cfg, data["idea"], **kw)
@@ -252,15 +314,38 @@ def _run(args: argparse.Namespace, cfg: Any, screen_fn: Callable | None = None) 
             if status in (screen.STATUS_BUSY, screen.STATUS_UNAVAILABLE):     # nothing (or only part) was read
                 left_out(evalset.unscored(data, status, run_id=res.get("run_id"), cost_usd=cost), jev_exit[status])
                 break
-            s = evalset.score(data, res, keys=keys)
+            eval_levers.check_l1(res, kw, data, scores)     # a --from-run screen that read L1 again stops the run
+            # the store-drift check of a --from-run screen, then the top-N fetch + update pass when a flag asks for
+            # it (never raises; its update cost is added to the idea's cost)
+            before = float(cost or 0.0)
+            res = topn_fetch.after_eval_screen(cfg, args, res, budget_left=each - before)
+            if float(res.get("cost_usd") or 0.0) > before:
+                spent += float(res["cost_usd"]) - before
+                cost = res["cost_usd"]
+            status = res.get("status")
+            s = evalset.score(data, {**res, "params": {**(res.get("params") or {}), "countries": kw["countries"]}},
+                              keys=keys, lines=lines)
+            s.update(topn_fetch.score_extras(res))    # top-N fetch record / store drift (only when present)
+            if pflow is not None:
+                s["product_flow"] = pflow
+                s["levers"] = [*(s.get("levers") or []), "product-flow"]
             if status == screen.STATUS_BUDGET:       # scored for the record, left out of the means
                 left_out(s, EXIT_BUDGET)
                 continue
             scores.append(s)
             if not args.json:
                 a = s["at"]["10"]
-                print(f"{data['id']}: P@10 {a['precision'] if a['precision'] is not None else '-'} "
-                      f"({a['right']}/{a['edge']}/{a['wrong']}/{a['unlabelled']} unlabelled), "
+                provisional = bool(a["unlabelled"] or s.get("unreviewed_labels") or s.get("search_summary_labels"))
+                labelled = a["shown"] - a["unlabelled"]
+                m = s.get("main") or {}
+                print(f"{data['id']}: {'provisional ' if provisional else ''}main list strict P@min(10, n_main) "
+                      f"{m.get('precision') if m.get('precision') is not None else '-'} (n_main {m.get('n', 0)}, "
+                      f"must-include in it {m.get('must_found', 0)}/{m.get('must_n', 0)}); full list strict P@10 "
+                      f"{a['precision'] if a['precision'] is not None else '-'}, lenient "
+                      f"{a['precision_lenient'] if a['precision_lenient'] is not None else '-'} "
+                      f"(n {a['shown']}, coverage {labelled}/{a['shown']}; {a['right']}/{a['edge']}/{a['wrong']} "
+                      f"right/edge/wrong, {a['unlabelled']} unlabelled; "
+                      f"{s.get('unreviewed_labels', 0)} unreviewed), "
                       f"${float(s.get('cost_usd') or 0):.4f}")
     except KeyboardInterrupt:
         code = EXIT_INTERRUPTED

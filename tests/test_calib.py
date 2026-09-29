@@ -477,7 +477,7 @@ class TestPinsAndRerank(StoreCase):
         wide = {**base, "params": {**base["params"], "max_out": 2}}          # room for the user's yes too
         self.assertEqual(calib.render_diff_zh(base, calib.rerank_result(wide, sv_yes, pool=pool)),
                          "立即生效（免费）\n  移出 1：RoboCorp #1（你：不要）\n"
-                         "  新进 2：Robo Two · ServoJP 6000（你：要（年报没写，按你的判断））")
+                         "  新进 2：ServoJP 6000（你：要（年报没写，按你的判断）） · Robo Two")   # your yes: main list
 
     def test_auto_sieve_hint_for_a_reworded_idea(self):
         idea = "humanoid robots for warehouses"

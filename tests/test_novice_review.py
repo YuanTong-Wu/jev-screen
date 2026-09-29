@@ -27,6 +27,11 @@ from test_novice_flow import CN_ROWS, FlowCase, TestFill, add_cn  # noqa: E402
 from test_quickstart import FAKE_KEY  # noqa: E402
 from test_screen import SEC_COLS, FakeKeywords  # noqa: E402
 
+
+def listed_names(out):
+    """Every listed company of a quickstart status: the main list (top) and the to-confirm section."""
+    return [r["name"] for r in out["top"] + ((out.get("to_confirm") or {}).get("rows") or [])]
+
 # single-word names that are ordinary English words (invented issuers of a real shape), and a few that are not
 WORD_NAMES = ["Immersion Corporation", "Lithium Ltd", "Harmonic Inc", "Titanium Group Holdings", "Stem Inc",
               "Coherent Corp", "Warehouse Co., Ltd.", "Phosphate Inc", "Voltara Inc", "ZENTRIX Ltd",
@@ -301,7 +306,7 @@ class TestFillReview(TestFill):
         self.front(idea, fill_descriptions="yes")
         self.work(qs.idea_key(idea))
         v2 = qs.status(self.cfg, qs.idea_key(idea))
-        self.assertIn("Frostline Thermal", [r["name"] for r in v2["top"]])
+        self.assertIn("Frostline Thermal", listed_names(v2))
         with store.session(self.cfg, read_only=True) as con:
             od = con.execute("SELECT output_dir FROM screen_runs WHERE run_id = ?", [v1["run_id"]]).fetchone()[0]
         deck = calib.load_deck(Path(od))
@@ -315,7 +320,7 @@ class TestFillReview(TestFill):
         self.assertIn("最新", buf.getvalue())
         v3 = qs.status(self.cfg, qs.idea_key(idea))
         self.assertNotIn(v3["run_id"], (v1["run_id"], v2["run_id"]))
-        self.assertIn("Frostline Thermal", [r["name"] for r in v3["top"]])
+        self.assertIn("Frostline Thermal", listed_names(v3))
         with store.session(self.cfg, read_only=True) as con:
             params = json.loads(con.execute("SELECT params_json FROM screen_runs WHERE run_id = ?",
                                             [v3["run_id"]]).fetchone()[0])

@@ -12,7 +12,13 @@ Checks (each finding is one line: category, path[:line], short redacted evidence
   api-key        strings that look like real API keys or private keys (fake test keys are recognised)
   secret-file    tracked files that hold local secrets or data (data/, .secrets/, *_api_key, sec_user_agent,
                  .env, *.duckdb)
-  large-file     any file over --max-kb (default 256 KB); binary fixtures over --max-binary-kb (default 128 KB)
+  large-file     any file over --max-kb (default 256 KB); binary files over --max-binary-kb (default 128 KB),
+                 except a declared hero asset (below)
+  asset          docs/assets/MANIFEST.json: each listed image (README hero, social preview) made by this repo's own
+                 tools (origin own-output) may exceed the size rule up to --max-hero-kb (default 2560 KB) when its
+                 bytes and sha256 match the manifest; a listed file that differs or is missing is a finding, and so
+                 are more than 8 listed images or more than 6 MB of them. In the git history an earlier version
+                 passes only when its sha256 is the entry's sha256 or in its previous_sha256 list
   fixture        a file in tests/fixtures not declared in tests/fixtures/MANIFEST.json, or a declared one
                  whose origin is not synthetic / hand-made / transformed / own-output
   gray-domain    a fixture that mentions a gray-tier or third-party dump domain (TradingView, Yahoo, CNINFO,
@@ -54,6 +60,10 @@ TEXT_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".cfg", ".ini", ".yml",
 FIXTURE_DIR = "tests/fixtures"
 MANIFEST = FIXTURE_DIR + "/MANIFEST.json"
 OK_ORIGINS = {"synthetic", "hand-made", "transformed", "own-output"}
+ASSET_DIR = "docs/assets"
+ASSET_MANIFEST = ASSET_DIR + "/MANIFEST.json"
+HERO_SUFFIXES = {".gif", ".png", ".webp", ".jpg", ".jpeg"}
+MAX_HERO_FILES, MAX_HERO_TOTAL_KB = 8, 6 * 1024     # the manifest is no way to carry a gallery
 GRAY_OK_ORIGINS = {"synthetic", "hand-made", "transformed"}
 
 # --- patterns (split literals so this file does not match itself) -------------------------------------------------
@@ -250,12 +260,43 @@ def load_manifest(root: Path) -> dict | None:
         return {}
 
 
+def load_assets(root: Path) -> dict[str, dict]:
+    """docs/assets/MANIFEST.json: {name: {origin, bytes, sha256, ...}} (empty when absent or unreadable)."""
+    try:
+        files = json.loads((root / ASSET_MANIFEST).read_text(encoding="utf-8")).get("files")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {k: v for k, v in files.items() if isinstance(v, dict)} if isinstance(files, dict) else {}
+
+
+def declared_asset(rel: str, assets: dict[str, dict], size_kb: float, max_hero_kb: int,
+                   data: bytes | None = None, history: bool = False) -> bool:
+    """A hero image the size rule lets through: under docs/assets, listed as own-output, an image type, under the
+    hero cap, and exactly the bytes the manifest records (in the history: an earlier version whose sha256 the
+    entry lists in previous_sha256 passes too)."""
+    if not rel.startswith(ASSET_DIR + "/") or rel == ASSET_MANIFEST:
+        return False
+    entry = assets.get(rel[len(ASSET_DIR) + 1:])
+    if not entry or entry.get("origin") != "own-output" or Path(rel).suffix.lower() not in HERO_SUFFIXES:
+        return False
+    if size_kb > max_hero_kb:
+        return False
+    if data is None:
+        return False
+    digest = hashlib.sha256(data).hexdigest()
+    if history:
+        prev = entry.get("previous_sha256")
+        return digest == entry.get("sha256") or (isinstance(prev, list) and digest in prev)
+    return entry.get("bytes") == len(data) and entry.get("sha256") == digest
+
+
 def scan(root: Path, max_kb: int = 256, max_binary_kb: int = 128, max_gray_kb: int = 128,
-         git_history: bool = False) -> list[Finding]:
+         git_history: bool = False, max_hero_kb: int = 2560) -> list[Finding]:
     root = root.resolve()
     files = list_files(root)
     markers = personal_markers()
     manifest = load_manifest(root)
+    assets = load_assets(root)
     self_rel = None
     try:
         self_rel = str(Path(__file__).resolve().relative_to(root)).replace(os.sep, "/")
@@ -273,7 +314,12 @@ def scan(root: Path, max_kb: int = 256, max_binary_kb: int = 128, max_gray_kb: i
             continue
         size_kb = len(data) / 1024
         binary = is_binary(path, data)
-        if size_kb > max_kb or (binary and size_kb > max_binary_kb):
+        if rel.startswith(ASSET_DIR + "/") and rel != ASSET_MANIFEST and rel[len(ASSET_DIR) + 1:] in assets:
+            entry = assets[rel[len(ASSET_DIR) + 1:]]
+            if entry.get("bytes") != len(data) or entry.get("sha256") != hashlib.sha256(data).hexdigest():
+                findings.append(Finding("asset", rel, 0, f"differs from {ASSET_MANIFEST} (regenerate it with its tool)"))
+        if (size_kb > max_kb or (binary and size_kb > max_binary_kb)) and not declared_asset(
+                rel, assets, size_kb, max_hero_kb, data):
             findings.append(Finding("large-file", rel, 0, f"{size_kb:.0f} KB ({'binary' if binary else 'text'})"))
         in_fixtures = rel.startswith(FIXTURE_DIR + "/")
         views = text_views(path, data)
@@ -297,8 +343,17 @@ def scan(root: Path, max_kb: int = 256, max_binary_kb: int = 128, max_gray_kb: i
         present = {f[len(FIXTURE_DIR) + 1:] for f in files if f.startswith(FIXTURE_DIR + "/")}
         for name in sorted(set(manifest) - present):
             findings.append(Finding("fixture", f"{FIXTURE_DIR}/{name}", 0, "declared in MANIFEST.json but missing"))
+    if assets:
+        total_kb = sum(e.get("bytes") for e in assets.values() if isinstance(e.get("bytes"), int)) / 1024
+        if len(assets) > MAX_HERO_FILES or total_kb > MAX_HERO_TOTAL_KB:
+            findings.append(Finding("asset", ASSET_MANIFEST, 0, f"{len(assets)} images, {total_kb:.0f} KB listed "
+                                    f"(at most {MAX_HERO_FILES} and {MAX_HERO_TOTAL_KB} KB)"))
+        present = set(files)
+        for name in sorted(assets):
+            if f"{ASSET_DIR}/{name}" not in present:
+                findings.append(Finding("asset", f"{ASSET_DIR}/{name}", 0, f"declared in {ASSET_MANIFEST} but missing"))
     if git_history:
-        findings.extend(scan_history(root, files, markers, max_kb, max_binary_kb, self_rel))
+        findings.extend(scan_history(root, files, markers, max_kb, max_binary_kb, self_rel, max_hero_kb))
     return findings
 
 
@@ -349,13 +404,14 @@ def _history_blobs(root: Path) -> list[tuple[str, str, bytes]]:
 
 
 def scan_history(root: Path, files: list[str], markers: list[re.Pattern] | None = None, max_kb: int = 256,
-                 max_binary_kb: int = 128, self_rel: str | None = None) -> list[Finding]:
+                 max_binary_kb: int = 128, self_rel: str | None = None, max_hero_kb: int = 2560) -> list[Finding]:
     """Everything a published history would carry that the tree scan does not see.
 
     Commit metadata (author/committer e-mails and names) and every blob reachable from any ref whose content is not
     in the current tree: old versions of every file get the text checks, old or removed fixtures are reported
     (MANIFEST.json only vouches for the current content), secret-file names and sizes are checked too."""
     markers = personal_markers() if markers is None else markers
+    assets = load_assets(root)
     found: list[Finding] = []
     try:
         log = subprocess.run(["git", "-C", str(root), "log", "--all", "--format=%ae%x00%ce%x00%an%x00%cn"],
@@ -405,7 +461,9 @@ def scan_history(root: Path, files: list[str], markers: list[re.Pattern] | None 
             gray = sorted({d for _, text in views for d in GRAY_DOMAINS if d in text.lower()})
             extra = (f"; mentions {', '.join(gray)}" if gray else "") + f"; {size_kb:.0f} KB"
             found.append(Finding("history", at, 0, what + extra))
-        elif size_kb > max_kb or (binary and size_kb > max_binary_kb):
+        elif (size_kb > max_kb or (binary and size_kb > max_binary_kb)) and not declared_asset(
+                rel, assets, size_kb, max_hero_kb, data, history=True):
+            # an earlier version of a hero image passes only when the manifest lists its sha256
             found.append(Finding("history", at, 0, f"large file in history: {size_kb:.0f} KB"))
     return found
 
@@ -417,6 +475,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-kb", type=int, default=256)
     ap.add_argument("--max-binary-kb", type=int, default=128)
     ap.add_argument("--max-gray-kb", type=int, default=128)
+    ap.add_argument("--max-hero-kb", type=int, default=2560,
+                    help="size cap of an image declared in docs/assets/MANIFEST.json")
     ap.add_argument("--git-history", action="store_true",
                     help="also check commit metadata and every blob reachable from any ref")
     a = ap.parse_args(argv)
@@ -424,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         print(f"release_check: not a directory: {root}", file=sys.stderr)
         return 2
-    findings = scan(root, a.max_kb, a.max_binary_kb, a.max_gray_kb, a.git_history)
+    findings = scan(root, a.max_kb, a.max_binary_kb, a.max_gray_kb, a.git_history, a.max_hero_kb)
     if a.json:
         print(json.dumps({"ok": not findings, "findings": [asdict(f) for f in findings]}, ensure_ascii=False, indent=1))
     else:

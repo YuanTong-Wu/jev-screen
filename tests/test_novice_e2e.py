@@ -143,7 +143,7 @@ class TestNoviceEndToEnd(FlowCase):
             self.assertEqual(PLACEHOLDER.findall(txt), [], txt)
             self.assertEqual(RAW.findall(txt), [], txt)
         html = page.stable_path(self.cfg, idea).read_text(encoding="utf-8")
-        nos = re.search(r"<noscript>(.*?)</noscript>", html, re.S)
+        nos = re.search(r"<div id=\"app\"><noscript>(.*?)</noscript>", html, re.S)
         self.assertTrue(nos)
         self.assertEqual(PLACEHOLDER.findall(nos.group(1)), [])
         say("5b stable page:", page.stable_path(self.cfg, idea).name, "bytes=", len(html), "noscript ok")

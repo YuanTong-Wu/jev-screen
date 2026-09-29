@@ -1,0 +1,65 @@
+{
+ "about": "Images under docs/assets made by this repository's own tools. tools/release_check.py accepts a listed file over its size limit when its bytes and sha256 match (and it stays under the hero cap); in the git history, a blob whose sha256 is listed or in previous_sha256.",
+ "files": {
+  "hero-en.gif": {
+   "origin": "own-output",
+   "bytes": 1369514,
+   "sha256": "351db21f8439c9e543f9e0ed81dd5c53b17de00a5188cc3ba213a36663ffe65f",
+   "made_by": "tools/make_hero.py",
+   "what": "README hero: sand panned through three sieves (illustrative numbers)",
+   "previous_sha256": [
+    "02ba6f6c78a93556d4911fbdaac48751f774e83afed3f3cc167c44af6710acfa",
+    "00fb5d269acf040b6670b9cb25ab8e20356e848213b8a9611ff8094bf87ea589",
+    "547e7b78aff6d7d6905f00a56dfcea5308e2b68ce52dea3a858bc1d2cff3c82f",
+    "7d2e4dbb36ac6dd3547a449f07e5b57a430faa8723a0d30627c2b294805d44a1",
+    "3c3cc1226d29a6dc6baf0d138bf857c12b23980778c93243e906a5bb32659bb7",
+    "6d3f97eaa79187f7b5e5e0c313ef9b24933fce27480eb789d2ecb4b4b3e42d03"
+   ]
+  },
+  "hero-en.png": {
+   "origin": "own-output",
+   "bytes": 67051,
+   "sha256": "f018967af411ca30f5356475adc7f05be6d85d2cd42e15db38fb9376799084c8",
+   "made_by": "tools/make_hero.py",
+   "what": "README hero: sand panned through three sieves (illustrative numbers)",
+   "previous_sha256": [
+    "f2cc5e905c6b1fdd5fcb4fe7aae292f806150ea256dbabaeea5f1f6759b6db23",
+    "565f669f5388277119cd430b3e5b87a8f2060d013fd49df09719ef753e730c6d",
+    "4a3f45b1f11d85c5d2c79a8e3e1d4ee6668722baea4c18120d8dde14ea14cdd0",
+    "a20abf5ff3ff6cb8f60fe926e010270a7d0ddcf675e4e560b810a5f54a63b54e",
+    "ff49a99dcfd768ea934fa32b16ba6cce88623e30c6c3ba959d5533523eb9a324",
+    "f14479c599755e44f66e44db90ab9941fc3eb5daeef76019ad69896daba6d039"
+   ]
+  },
+  "hero-zh.gif": {
+   "origin": "own-output",
+   "bytes": 1359451,
+   "sha256": "ad39189fe1f98b5a38f448eca9f0c28285b71455dfe34fb61d535354bdbe664a",
+   "made_by": "tools/make_hero.py",
+   "what": "README hero: sand panned through three sieves (illustrative numbers)",
+   "previous_sha256": [
+    "524bdab1a1821f361a958f4770b6e328ae73a559d2b8fe2801f19021c422ad8b",
+    "e7ac36e290159496bf1ad2f1d032967712c7e45f63661685e14c38778fe5a254",
+    "cd3a7ef1ac936f63d18be3be4221127cad9183a84c3f9af203a98979aacc6b71",
+    "263651d006ccf15ca13729eb7a37f5cc14d93292df1fabf352b3ca3802848aa0",
+    "733acf9c2443a9c689e71ef44e9843919c9837ac373128871c90a2ee28678bf0",
+    "de58f2cd1920d815f8f06cb0a9ef897217c396406d22eb100413698c3868b96e"
+   ]
+  },
+  "hero-zh.png": {
+   "origin": "own-output",
+   "bytes": 65514,
+   "sha256": "04f2840b91823cd4d9a1ec7d5a7988094f8dc8a2ffe6b0fdeec260f7a1dae4a2",
+   "made_by": "tools/make_hero.py",
+   "what": "README hero: sand panned through three sieves (illustrative numbers)",
+   "previous_sha256": [
+    "794452d7f9bac80cc7d78790147f5d10c5e383c661d87be51908395190986c63",
+    "7c5a9c587e9a3df942e43eaff90c2bf58012e3fc19960eadbb7a4d9376f6f06d",
+    "73c8f47dd9a75429f435eee2029e2edebcc141e3ac14577b017df02f9c473b68",
+    "792328c486246d3c6f3d4958e1e7226921bfd3a8e72b786863da373830844033",
+    "30178a4283e9802c94537d93bddf7cb6dc4377f3e3e0b189df3861e3bfad6068",
+    "dc117ad3c437936db2676fb8534228aaa53c42900d3d36313bcd4a7fcc595439"
+   ]
+  }
+ }
+}

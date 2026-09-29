@@ -215,6 +215,21 @@ COOL_ORDER = tuple(COOL_SOURCES)
 
 # ------------------------------------------------------------------------------------------------ small helpers
 
+def push_event(p: dict[str, Any], ev: Any, keep: int) -> None:
+    """One company's answer as it is known (screen's events callback, through the quickstart worker) into the job's
+    progress `p`: p['events'] holds the most recent `keep`, each with a sequence number that only grows within the
+    job (p['event_n']; the page types the new ones). Only the layer, the security id, the label and what L2 read;
+    anything else (another layer, no security id) is ignored. The caller holds the job's lock."""
+    if not isinstance(ev, dict) or ev.get("layer") not in ("l1", "l2") or not ev.get("security_id"):
+        return
+    n = int(p.get("event_n") or 0) + 1
+    evs = [e for e in (p.get("events") or []) if isinstance(e, dict)]
+    evs.append({"n": n, "layer": ev["layer"], "sid": str(ev["security_id"])[:32],
+                "label": str(ev.get("label") or "")[:20], "doc": ev.get("evidence")})
+    p["events"] = evs[-keep:]
+    p["event_n"] = n
+
+
 def _lang(lang: str | None) -> str:
     return "en" if lang == "en" else "zh"
 
@@ -809,12 +824,26 @@ def build(cfg, *, lang: str, job: dict[str, Any] | None = None, result: dict[str
         alerts = [{"kind": "note", "text": S["review_banner"]}] + alerts
     elif review_overdue(job, now):
         alerts = [{"kind": "note", "text": S["review_over"]}] + alerts
+    from . import page_sand        # the sand panning drawn above the progress bars (real numbers only)
     show_progress = job is not None and (st != "done" or phase == "fill")
     return {"lang": lang, "phase": phase, "phase_words": words, "refresh": bool(refresh),
             "checks": checks, "optional": _optional(cfg, lang), "all_ok": all_ok,
             "ok_line": (S["all_ok"].format(p=shown) if shown else S["all_ok_nokey"]) if all_ok else None,
             "progress": _progress(_with_fill_file(cfg, job), lang, now) if show_progress else None,
-            "alerts": alerts, "stale": stale}
+            "alerts": alerts, "stale": stale, "sand": page_sand.facts(job, result), "hud": _hud(job),
+            # the reading log: the run's most recent per-company answers (security id, stage and label words only)
+            "log": page_sand.log_lines(job, lang), "log_src": page_sand.log_src(job)}
+
+
+def _hud(job: dict[str, Any] | None) -> dict[str, Any]:
+    """The page HUD's instrument readings (jevscreen.page_hud): what the approval has spent and its cap, and the
+    running worker's start (the page ticks the time from it); no clock is read here."""
+    if not job:
+        return {"usd": None, "cap": None, "since": None}
+    cap = (job.get("approval") or {}).get("usd")
+    since = (job.get("worker") or {}).get("started_at") if job.get("state") == "running" else None
+    return {"usd": _spent(job), "cap": float(cap) if isinstance(cap, (int, float)) and cap > 0 else None,
+            "since": since}
 
 
 def text_lines(status: dict[str, Any] | None, lang: str) -> list[str]:

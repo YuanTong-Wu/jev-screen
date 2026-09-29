@@ -28,3 +28,7 @@ venv/
 
 # maintainer-only patterns for tools/release_check.py (never published)
 .release_private_patterns
+.shards/
+
+# local Claude Code tool config (never published)
+.claude/

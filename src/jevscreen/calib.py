@@ -880,8 +880,9 @@ def _l1_pass(c: dict[str, Any]) -> bool:
 
 def _evidence_score(c: dict[str, Any], rank: str) -> float:
     if rank == "ev":
-        return screen.score_ev(c.get("l2_p_explicit"), c.get("l2_p_partial"), c.get("l1_p_core"),
-                               c.get("market_cap_usd"), c.get("l2_evidence"))
+        from . import constraints
+        pe, pp = constraints.ev_probs(c.get("l2_p_explicit"), c.get("l2_p_partial"), c.get("l2_constraint"))
+        return screen.score_ev(pe, pp, c.get("l1_p_core"), c.get("market_cap_usd"), c.get("l2_evidence"))
     return screen.score_of(c.get("l2_label"), c.get("l1_p_core"), c.get("market_cap_usd"), c.get("l2_evidence"))
 
 
@@ -899,7 +900,7 @@ def ranking_entries(cands: list[dict[str, Any]], sieve: dict[str, Any] | None, r
         if label == "contradicted" and not pinned:
             continue
         e = {k: v for k, v in c.items() if k not in _USER_KEYS and k not in screen.SCOPE_ROW_KEYS
-             and k != "rank"}
+             and k not in ("rank", "shortlist_tier", "rank_before_shortlist", "main_via", "shown_gap")}
         e["score"] = _evidence_score(c, rank)
         (verified if label in screen.L2_VERIFIED else unverified).append(e)
     return verified, unverified
@@ -913,6 +914,8 @@ def rerank_result(result: dict[str, Any], sieve: dict[str, Any] | None, *,
     (load_pool) adds the verified companies ranked below max_out, which results.json does not list, so backfill works
     as in screen; `inputs` (l2_inputs) gives those rows their evidence_sha. The facet labels are the run's own
     (results.json 'facets', read under params.facets_sha).
+    Unless the run was made with --no-shortlist (shortlist.on) the rows are split into the main list and the
+    to-confirm section as screen lists them ('shortlist': the counts); your AI's calls move rows between the two.
     Returns {'rows' (ranked: the top max_out plus user yes pins below it, below_cut), 'unverified',
     'excluded_by_user', 'excluded_by_scope', 'excluded_by_agent', 'notes', 'max_out', 'rank'}."""
     params = result.get("params") or {}
@@ -924,6 +927,10 @@ def rerank_result(result: dict[str, Any], sieve: dict[str, Any] | None, *,
         if not c.get("evidence_sha"):
             c["evidence_sha"] = (ins.get(c["company_key"]) or {}).get("evidence_sha")
     verified, unverified = ranking_entries(cands, sieve, rank)
+    if (result.get("judge") or {}).get("applied"):      # screen --judge: a pinned-in row ranks by the pin's label
+        from . import atomic
+        for e in verified + unverified:
+            e[atomic.LAYER_KEY] = True
     extra: dict[str, Any] = {}
     v2, u2, excluded, notes = screen.pin_and_rank(verified, unverified, sieve, max_out, facets=result.get("facets"),
                                                   agent=agent, fsha=params.get("facets_sha"), out=extra)
@@ -933,7 +940,16 @@ def rerank_result(result: dict[str, Any], sieve: dict[str, Any] | None, *,
         row.update(rank=i, score=round(e["score"], 4))
         return row
 
-    return {"rows": [out(e, i) for i, e in screen.output_entries(v2, max_out)],
+    rows = [out(e, i) for i, e in screen.output_entries(v2, max_out)]
+    sl_info = None
+    from . import shortlist
+    if shortlist.on(params):             # the main list and the to-confirm section, as screen lists them
+        # a row its page would mark borderline stays to confirm (the texts layer 2 read: `inputs`, else the run's
+        # l2_inputs.jsonl)
+        from . import page
+        pieces = page.l2_pieces_of_lines(ins.values()) if ins else None
+        rows, sl_info = shortlist.apply(rows, page.gap_check(result, pieces))
+    return {"rows": rows, "shortlist": sl_info,
             "unverified": [out(e, None) for e in u2[:max_out]],
             "excluded_by_user": [out(e, None) for e in excluded],
             "excluded_by_scope": [out(e, None) for e in extra.get("excluded_by_scope") or []],
@@ -1039,6 +1055,48 @@ def _scope_agent_cause(after: dict[str, Any], k: str, lang: str, sieve: dict[str
     return None
 
 
+SECTION_WORDS = {
+    "zh": {"in": "  进入确认名单 {n}：", "out": "  移到待核对 {n}：", "agent": "你的 AI 核对", "user": "你：要",
+           "agent_no": "你的 AI 认为不符，等你定", "scope": "按你的范围回答排后",
+           "gap_no_mention": "摘录没提到你的想法", "gap_edge": "多读几次结果不一"},
+    "en": {"in": "  into the confirmed list {n}: ", "out": "  moved to confirm {n}: ", "agent": "checked by your AI",
+           "user": "you: yes", "agent_no": "your AI says it does not fit; your call",
+           "scope": "moved down by your scope answer", "gap_no_mention": "the excerpt does not mention the idea",
+           "gap_edge": "the repeated reads were split"},
+}
+
+
+def _section_moves(b_rows: dict[str, Any], a_rows: dict[str, Any], lang: str) -> tuple[list[str], list[str]]:
+    """(lines, keys) of the rows listed before and after that changed section (the confirmed list <-> the to-confirm
+    section), each with its cause (your AI, the human, a scope answer, a borderline excerpt); empty when either version has no sections."""
+    W = SECTION_WORDS[lang]
+    if not (any(r.get("shortlist_tier") for r in b_rows.values())
+            and any(r.get("shortlist_tier") for r in a_rows.values())):
+        return [], []
+    into, out, keys = [], [], []
+    for k, a in sorted(a_rows.items(), key=lambda kv: kv[1].get("rank") or 10 ** 6):
+        b = b_rows.get(k)
+        if not b or a.get("rank") is None or b.get("rank") is None:
+            continue
+        bt, at = b.get("shortlist_tier"), a.get("shortlist_tier")
+        if bt == at or not bt or not at:
+            continue
+        if at == "high":
+            via = a.get("main_via") or ("user" if a.get("user_verdict") else None)
+            into.append(_display(a) + (f"（{W[via]}）" if lang == "zh" else f" ({W[via]})") if via in W
+                        else _display(a))
+        else:
+            via = a.get("main_via") or ("scope" if a.get("scope_demoted") else None) or (
+                f"gap_{a['shown_gap']}" if a.get("shown_gap") else None)
+            out.append(_display(a) + (f"（{W[via]}）" if lang == "zh" else f" ({W[via]})") if via in W
+                       else _display(a))
+        keys.append(k)
+    sep = " · "
+    lines = ([W["in"].format(n=len(into)) + sep.join(into)] if into else []) + \
+        ([W["out"].format(n=len(out)) + sep.join(out)] if out else [])
+    return lines, keys
+
+
 def _demoted(after: dict[str, Any], k: str) -> bool:
     return any(r.get("company_key") == k and r.get("scope_demoted") for r in after.get("rows") or [])
 
@@ -1083,16 +1141,19 @@ def _diff_en(before: dict[str, Any], after: dict[str, Any], title: str, sieve: d
         else:
             c = cause_of(k)
             added.append(f"{_display(r)} ({CAUSE_WORDS_EN.get(c, c)})" if c else _display(r))
+    sec_lines, sec_keys = _section_moves(b_rows, a_rows, "en")
     moves = [f"{_display(r)} #{b_rows[k].get('rank')}→#{r.get('rank')}" for k, r in a_rows.items()
-             if k in b_rows and r.get("user_verdict") and b_rows[k].get("rank") != r.get("rank")]
+             if k in b_rows and k not in sec_keys and r.get("user_verdict")
+             and b_rows[k].get("rank") != r.get("rank")]
     lines = [title]
-    if not (removed or added or backfill or moves):
+    if not (removed or added or backfill or moves or sec_lines):
         return "\n".join(lines + [DIFF_EN["same"]])
     if removed:
         lines.append(DIFF_EN["out"].format(n=len(removed)) + " · ".join(removed))
     if added or backfill:
         parts = added + ([", ".join(backfill) + DIFF_EN["backfill"]] if backfill else [])
         lines.append(DIFF_EN["in"].format(n=len(added) + len(backfill)) + " · ".join(parts))
+    lines += sec_lines
     if moves:
         lines.append(DIFF_EN["moves"] + " · ".join(moves))
     return "\n".join(lines)
@@ -1144,19 +1205,21 @@ def render_diff_zh(before: dict[str, Any], after: dict[str, Any], *, title: str 
         else:
             cause = evidence_cause(k)
             added.append(f"{_display(r)}（{CAUSE_WORDS_ZH.get(cause, cause)}）" if cause else _display(r))
+    sec_lines, sec_keys = _section_moves(b_rows, a_rows, "zh")
     moves = []
     for k, r in a_rows.items():
         b = b_rows.get(k)
-        if b and r.get("user_verdict") and b.get("rank") != r.get("rank"):
+        if b and k not in sec_keys and r.get("user_verdict") and b.get("rank") != r.get("rank"):
             moves.append(f"{_display(r)} #{b.get('rank')}→#{r.get('rank')}")
     lines = [title]
-    if not (removed or added or backfill or moves):
+    if not (removed or added or backfill or moves or sec_lines):
         return "\n".join(lines + ["  名单没有变化"])
     if removed:
         lines.append(f"  移出 {len(removed)}：" + " · ".join(removed))
     if added or backfill:
         parts = added + (["、".join(backfill) + "（递补，未经你确认）"] if backfill else [])
         lines.append(f"  新进 {len(added) + len(backfill)}：" + " · ".join(parts))
+    lines += sec_lines
     if moves:
         lines.append("  名次：" + " · ".join(moves))
     return "\n".join(lines)
@@ -1185,6 +1248,9 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
                       "ORDER BY company_key, layer", [run_id]).fetchall()
     l1: dict[str, dict] = {}
     l2: dict[str, dict] = {}
+    cons: dict[str, dict] = {}
+    judge_rows: list[tuple] = []
+    second: dict[str, dict] = {}
     for ck, sid, layer, label, pj, status, src, tier, url, rj, pp, psd in res:
         d = {"security_id": sid, "label": label, "probs": json.loads(pj) if pj else {}, "status": status,
              "input_source": src, "input_tier": tier, "evidence_url": url,
@@ -1193,6 +1259,12 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
             l1[ck] = d
         elif layer == "l2":           # facet layers (facet_role / facet_scope / facet_geo) are not L2 answers
             l2[ck] = d
+        elif layer == "constraint":   # screen --l2-constraints: re-applied below as screen applied it
+            cons[ck] = d
+        elif str(layer).startswith("judge_"):   # screen --judge: tiers re-applied below as screen applied them
+            judge_rows.append((ck, layer, label, d["probs"], status))
+        elif layer == "l2_second":    # screen --second-search: re-applied below as screen applied it
+            second[ck] = d
     keys = sorted(l2)
     if not keys:
         return []
@@ -1213,6 +1285,13 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
     adj_min = params.get("l1_adjacent_min", screen.L1_ADJACENT_MIN)
     core_min = params.get("l1_core_min", screen.L1_CORE_MIN)
     rescued = set(params.get("l1_rescued") or ())
+    # the constraint lever: an explicit answer whose text does not state the idea's constraints is partial (the
+    # same constraints.decide as screen; nothing to check when the idea named none)
+    check_constraints = bool(params.get("l2_constraints") and params.get("constraint_question_sha"))
+    from . import atomic, constraints
+    judge_on = bool(params.get("judge") and params.get("judge_question_sha"))
+    judged = atomic.stored_answers(judge_rows) if judge_on else {}
+    judge_target = bool(params.get("judge_has_target"))
     out = []
     for ck in keys:
         r2, r1 = l2[ck], l1.get(ck)
@@ -1239,6 +1318,29 @@ def load_pool(con, run_id: str, params: dict[str, Any] | None = None) -> list[di
             "l1_description": (desc or {}).get("plain"), "l1_input_tier": (desc or {}).get("tier")})
         if ck in rescued and ok and r2["label"] in screen.L2_VERIFIED and r2["input_source"] != "profile":
             out[-1]["l1_rescued"] = True     # listable as screen lists it (annual-report evidence only)
+        if check_constraints and ok and r2["label"] == "explicit":
+            c = cons.get(ck)
+            label, state = constraints.decide("explicit", {"label": c["label"]} if c and c["status"] == "ok"
+                                              else None)
+            out[-1].update(l2_label=label, l2_status=label, l2_constraint=state)
+            if constraints.demoted(state):
+                out[-1]["l2_label_before_constraint"] = "explicit"
+        if params.get("second_search") and ok and r2["label"] == "insufficient" and ck in second:
+            from . import retrieval
+            s2 = second[ck]
+            label, state = retrieval.decide("insufficient", {"label": s2["label"], "status": s2["status"]})
+            out[-1]["l2_second_search"] = state
+            if state == "raised":        # read from the second passages (screen shows them), never above partial
+                p2 = s2["probs"] or {}
+                out[-1].update(l2_label=label, l2_status=label, l2_label_before_second="insufficient",
+                               l2_evidence="annual_report", evidence_url=s2["evidence_url"] or r2["evidence_url"],
+                               l2_p_pos=screen.p_pos_of(p2), l2_p_explicit=0.0,
+                               l2_p_partial=(p2.get("explicit") or 0.0) + (p2.get("partial") or 0.0),
+                               l2_p_pos_sd=None, l2_reads=1, l2_edge=None, l2_read_detail=None)
+        if judge_on and judged and ok and out[-1]["l2_label"] in screen.L2_VERIFIED:
+            out[-1].update(atomic.row_fields(out[-1]["l2_label"], judged.get(ck), judge_target))
+            if out[-1]["judge_state"] == "unchecked" and len(judged) >= atomic.READ_MAX:
+                out[-1]["judge_state"] = atomic.NOT_READ     # the layer read its cap: this row was beyond it
     return out
 
 
@@ -1291,7 +1393,11 @@ def rebuild_inputs(con, result: dict[str, Any], keys: Iterable[str], *,
     terms = result.get("terms_by_lang") or {"en": result.get("terms") or []}
     weak = (result.get("calibration") or {}).get("keywords_weak") or {}
     today = _run_date(result)
-    return {k: screen._l2_input_line(c, screen._l2_input(c, docs.get(k), terms, today, weak))
+    from . import retrieval
+    pw = bool((result.get("params") or {}).get("lang_terms")) and retrieval.model_ok(
+        (result.get("keywords") or {}).get("lang_terms"))
+    weak = {**((result.get("keywords") or {}).get("weak") or {}), **weak} if pw else weak
+    return {k: screen._l2_input_line(c, screen._l2_input(c, docs.get(k), terms, today, weak, pieces_weak=pw))
             for k, c in sorted(cs.items()) if k in set(keys)}
 
 
@@ -1803,7 +1909,7 @@ def card_quote(inp: dict[str, Any], row: dict[str, Any] | None = None) -> dict[s
     lang = inp.get("lang")
     tlang = lang if lang in screen.CJK_LANGS else None
     excerpts = inp.get("excerpts") or []
-    kw = next((e for e in excerpts if e.get("kind") == "keywords"), None)
+    kw = next((e for e in excerpts if e.get("kind") in ("keywords", "second_search")), None)
     mt = list(inp.get("matched_terms") or [])
     if kw and mt:
         text = screen._keyword_window(kw["text"], [screen._term_pattern(t) for t in mt], QUOTE_MAX_CHARS, tlang)
@@ -3104,7 +3210,7 @@ def _source_doc_map(con, source_id: str) -> dict[str, tuple[str, str | None, str
                                                                         'dart_corp_code', 'mops_co_id',
                                                                         'bse_scrip_code')
         LEFT JOIN securities s2 ON s2.security_id = i.security_id
-        WHERE d.source_id = ? AND d.text_path IS NOT NULL
+        WHERE d.source_id = ? AND d.text_path IS NOT NULL AND d.section IS DISTINCT FROM 'business_deep'
         ORDER BY d.doc_id""", [source_id]).fetchall()
     out: dict[str, tuple[str, str | None, str]] = {}
     for doc_id, path, ck, sig in rows:          # the identifier join can repeat a document: one entry per doc_id

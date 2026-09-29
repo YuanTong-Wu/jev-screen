@@ -32,7 +32,7 @@ MISSING_TERMS_MAX = 5
 STAGE_IDS = ("not_found", "ambiguous", "not_in_universe", "null_mcap", "below_min_mcap", "below_min_volume",
              "other_country", "shell", "no_description", "dry_run", "l1_not_sent", "l1_rejected",
              "l1_rescued_unverified", "l2_not_sent", "l2_failed", "l2_contradicted", "l2_unverified",
-             "ranked_below_cut", "excluded_by_user", "scope_removed", "agent_removed", "in_output",
+             "ranked_below_cut", "excluded_by_user", "scope_removed", "agent_removed", "in_output", "to_confirm",
              "forced_extra", "pre_ledger")
 # exchange -> (sync command, key it needs or None, seconds, extra flags); per-company syncs only (never sync-sec: it
 # has no --codes). sync-mops needs --mode annual: its default 'basic' stores the 主要經營業務 profile, not the report
@@ -1120,7 +1120,7 @@ def _removed_by_review(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any], ma
     _set(out, "agent_removed", f"你的 AI 判断不要：{why_zh or words.get('zh') or ''}",
          f"Your AI's call, drop: {why_en or words.get('en') or ''}")
     inp = ctx.inputs.get(match.company_key) or {}
-    q = review.quote_of(inp.get("text"), row.get("agent_quote_ids") or [])
+    q = review.cited_text(inp.get("text"), row.get("agent_quote_ids") or [], row.get("agent_quotes"))
     if q:
         out["facts"].append({"zh": f"摘录：「{q}」", "en": f"excerpt: \"{q}\""})
     out["changes"].append(_change("keep_one", "留下它（改你的 AI 的判断，需要你本人同意）",
@@ -1233,16 +1233,86 @@ def _below_cut(ctx: RunCtx, out: dict[str, Any], match, *, rescued: bool = False
     return out
 
 
+def _confirm_reasons(row: dict[str, Any]) -> list[tuple[str, str]]:
+    """Why a listed row is in the to-confirm section and not in the confirmed list (zh, en), from its own fields:
+    the human's scope answer, your AI's no, the checks that did not pass (shortlist.tier_of)."""
+    from . import shortlist
+    out: list[tuple[str, str]] = []
+    if row.get("scope_demoted"):
+        out.append(("按你的范围回答排到了后面", "your scope answer moved it down"))
+    if row.get("main_via") == "agent_no":
+        out.append(("你的 AI 读原文后认为不符，先移到这里等你定", "your AI read the text and judged it does not fit; "
+                                                  "it waits here for your call"))
+    jt = row.get("judge_tier")
+    if jt is not None and jt != "A":
+        out.append(("逐项核对没有判为 A 级（自己的产品、它是供应方、想法的目标都写到）",
+                    "the item-by-item check did not rate it A (own product, supplier role and the idea's target "
+                    "all stated)"))
+    c = row.get("l2_constraint")
+    if c == "unchecked":
+        out.append(("想法限定的市场、地域或角色没来得及核对", "the idea's market, place or role was not checked"))
+    elif c in ("missing", "unclear"):
+        out.append(("原文没写明想法限定的市场、地域或角色", "the text does not state the idea's market, place or role"))
+    if jt is None:
+        l1 = row.get("l1_label")
+        if l1 and l1 != "core":
+            out.append((f"初读（简介）判为「{LABEL_ZH.get(l1, l1)}」，不是核心业务",
+                        f"the first read (profile) judged it {_lab_en(l1)}, not its central business"))
+        if shortlist.capped_explicit(row):
+            out.append(("只有简介：核对时读简介觉得写明了，但只有简介的最多算相关",
+                        "profile only: the check found it stated in the profile, but a profile alone counts as "
+                        "related at most"))
+        elif row.get("l2_label") == "partial":
+            out.append(("核对时 AI 认为原文只算相关，没有写明", "the check found the text related, not stating it plainly"))
+    if row.get("shown_gap") == "no_mention":
+        out.append(("页面给出的摘录没提到你的想法（缺口），所以不放进确认名单",
+                    "the excerpt the page shows does not mention your idea (a gap), so it is not in the confirmed "
+                    "list"))
+    elif row.get("shown_gap") == "edge":
+        out.append(("多读几次结果不一（边缘），所以不放进确认名单",
+                    "the repeated reads were split (borderline), so it is not in the confirmed list"))
+    if row.get("agent_verdict") == "yes" and row.get("main_via") != "agent" and not row.get("scope_demoted") \
+            and row.get("agent_level") != "explicit":
+        out.append(("你的 AI 判断要，但只算相关（没有写明），所以仍待核对",
+                    "your AI said keep, but only as related (not stated plainly), so it stays to confirm"))
+    return out or [("没有达到确认的标准", "it did not meet the bar of the confirmed list")]
+
+
 def _in_output(ctx: RunCtx, out: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     vs = row.get("verdict_source")
     lab = row.get("l2_label")
-    extra_zh = "（你钉选的）" if vs == "user" else "（证据和你的判断一致）" if vs == "evidence+user" else ""
-    _set(out, "in_output", f"它在名单里，排第 {row['rank']}{extra_zh}",
-         f"It is in the list at #{row['rank']}" + (" (your pin)" if vs == "user" else ""))
-    out["stages"].append({"id": "rank", "ok": True, "text_zh": f"名单：第 {row['rank']}，第二步「{LABEL_ZH.get(lab, lab)}」",
-                          "text_en": f"list: #{row['rank']}, step 2 \"{_lab_en(lab)}\"",
-                          "data": {"rank": row["rank"], "l2_label": lab, "verdict_source": vs,
-                                   "backfill": row.get("backfill"), "edge": row.get("l2_edge")}})
+    data = {"rank": row["rank"], "l2_label": lab, "verdict_source": vs, "backfill": row.get("backfill"),
+            "edge": row.get("l2_edge")}
+    if isinstance(ctx.result.get("shortlist"), dict):
+        # the confirmed list and the to-confirm section: say which one, and for a to-confirm row why it is there
+        from . import shortlist
+        main, _confirm = shortlist.split(ctx.result.get("rows") or [])
+        data["section"] = "main" if shortlist.in_main(row) else "to_confirm"
+        data["main_via"] = row.get("main_via")
+        if data["section"] == "to_confirm":
+            why = _confirm_reasons(row)
+            _set(out, "to_confirm", "它在「待核对」部分，不算入选：" + "；".join(z for z, _e in why) + "。",
+                 "It is in the To confirm section, not in the confirmed list: " + "; ".join(e for _z, e in why)
+                 + ".")
+            data["reasons"] = [{"zh": z, "en": e} for z, e in why]
+            out["stages"].append({"id": "rank", "ok": False, "text_zh": "名单：待核对（不算入选）",
+                                  "text_en": "list: to confirm (not in the confirmed list)", "data": data})
+        else:
+            pos = next((i for i, r in enumerate(main, 1) if r is row or (
+                r.get("company_key") and r.get("company_key") == row.get("company_key"))), row["rank"])
+            via_zh = {"agent": "（你的 AI 核对后放进来的）", "user": "（你钉选的）"}.get(row.get("main_via") or "", "")
+            via_en = {"agent": " (checked by your AI)", "user": " (your pin)"}.get(row.get("main_via") or "", "")
+            _set(out, "in_output", f"它在确认名单里，排第 {pos}{via_zh}",
+                 f"It is in the confirmed list at #{pos}{via_en}")
+            out["stages"].append({"id": "rank", "ok": True, "text_zh": f"确认名单：第 {pos}，第二步「{LABEL_ZH.get(lab, lab)}」",
+                                  "text_en": f"confirmed list: #{pos}, step 2 \"{_lab_en(lab)}\"", "data": data})
+    else:
+        extra_zh = "（你钉选的）" if vs == "user" else "（证据和你的判断一致）" if vs == "evidence+user" else ""
+        _set(out, "in_output", f"它在名单里，排第 {row['rank']}{extra_zh}",
+             f"It is in the list at #{row['rank']}" + (" (your pin)" if vs == "user" else ""))
+        out["stages"].append({"id": "rank", "ok": True,
+                              "text_zh": f"名单：第 {row['rank']}，第二步「{LABEL_ZH.get(lab, lab)}」",
+                              "text_en": f"list: #{row['rank']}, step 2 \"{_lab_en(lab)}\"", "data": data})
     if row.get("l1_rescued"):
         out["facts"].append({"zh": "第一步只读了简介，没通过；因为简介太薄或偏题，第二步照读了年报原文，在年报里找到了证据",
                              "en": "step 1 read only the profile and did not pass it; the profile was thin or "

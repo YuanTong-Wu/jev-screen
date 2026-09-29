@@ -703,8 +703,12 @@ EDINET is not fetched on demand. Every company still on a profile gets a reason 
     answers, key presence by stat, cooldown markers, doctor's local checks): no network request, no wait on the
     store, no key value (the page is scanned for every configured secret before each write, and a hit means no
     write). The worker rewrites it atomically (tmp + replace, under the page lock that write_page's stable copy also
-    takes, so a status tick never puts back older results); it reloads itself (meta refresh, 3 s) only while work
-    runs or waits for an answer. No card button and no answer bar: cards are a CLI tool for the user's AI.
+    takes, so a status tick never puts back older results); it reloads itself (a script every 3 s that waits ~4 s
+    after someone uses the page; a <noscript> meta refresh without JavaScript) only while work runs or waits for an
+    answer. No card button and no answer bar: cards are a CLI tool for the user's AI. With JavaScript the page is a
+    full-window sand scene under a small HUD (jevscreen.page_hud, jevscreen.page_sand); it draws only the numbers the
+    status and the result already hold, keeps its view and phase in sessionStorage (never localStorage), and its
+    text view is the same plain page (for screen readers, printing and the user's AI).
   - Evidence must match the claim. The idea's words (page.idea_terms: the run's excerpt terms in every language
     and the sieve's learned keywords minus the weak ones and generic words such as supplier / 系统 / 核心; CJK
     phrases also as their 2-character pieces) are looked for in all the text the AI read for the row (the run

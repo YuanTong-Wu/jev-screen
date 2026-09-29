@@ -184,8 +184,9 @@ def _diff_en(before: dict[str, Any], after: dict[str, Any]) -> str:
 def run_fetch(cfg: Any, result: dict[str, Any], *, time_s: float, sources: list[str] | None = None,
               retry_failed: bool = False, update_budget: float, update: bool = True, mode: str = "auto",
               out: Callable[[str], None] = print, fetch_dir: Path | None = None, jev_factory: Any = None,
-              on_progress: Callable[[int, int], None] | None = None, interrupt_stops: bool = False
-              ) -> dict[str, Any]:
+              on_progress: Callable[[int, int], None] | None = None, interrupt_stops: bool = False,
+              planner: Callable[..., Any] | None = None, launcher: Callable[..., dict[str, Any]] | None = None,
+              start_text: Callable[[Any, str, float], str] | None = None, read_offset: int = 0) -> dict[str, Any]:
     """Plan, fetch and (when anything arrived, now or by an earlier fetch whose update was skipped: stored_since) run
     the update pass for a finished run `result` (results.json). Returns {'fetch': layers.fetch | None, 'result': the
     final result (updated or annotated), 'update': {...} | None, 'update_error': exit-worthy status or None,
@@ -194,7 +195,12 @@ def run_fetch(cfg: Any, result: dict[str, Any], *, time_s: float, sources: list[
     finishes it. KeyboardInterrupt from a second Ctrl-C propagates (the phase-1 files stay).
     on_progress(done, total): companies settled during the fetch (ondemand.launch). interrupt_stops=True (the
     quickstart worker, whose SIGTERM means stop): after an interrupted fetch the update pass is skipped
-    ('interrupted'), the run's files are annotated and KeyboardInterrupt is raised again."""
+    ('interrupted'), the run's files are annotated and KeyboardInterrupt is raised again.
+    planner / launcher / start_text (jevscreen.topn_fetch; default ondemand.plan / ondemand.launch /
+    ondemand.start_line): another selection and fetch order over the same update pass. A launcher may return
+    'deepened' (companies whose stored report was re-read deeper): they also make the update pass run; a plan's
+    'deepen_ready' (deep texts stored by an earlier fetch) are handed to the launcher even when nothing is to be
+    downloaded. read_offset: the update pass's band reads (screen read_offset; a --read-offset run keeps its own)."""
     from . import calib, cli, ondemand, screen
     say = _say(out)
     lang = ondemand.lang_of(result.get("idea"))
@@ -202,22 +208,24 @@ def run_fetch(cfg: Any, result: dict[str, Any], *, time_s: float, sources: list[
     out_dir = Path(result["output_dir"])
     ret: dict[str, Any] = {"fetch": None, "result": result, "update": None, "update_error": None,
                            "store_busy": False, "blocked": False, "all_busy": False, "next_command": None}
-    pl = ondemand.plan(cfg, run_id, sources=sources, retry_failed=retry_failed, time_s=time_s)
+    pl = (planner or ondemand.plan)(cfg, run_id, sources=sources, retry_failed=retry_failed, time_s=time_s)
     if pl.store_busy:
         say(_skip_line("store_busy", lang))
         ret["store_busy"] = True
         ret["fetch"] = ondemand.skipped_summary(pl, "store_busy", mode=mode, time_s=time_s, base_run=run_id)
         return ret
-    if not pl.entries:
+    ready = list(getattr(pl, "deepen_ready", None) or [])
+    if not pl.entries and not pl.n_planned and not ready:
         say(_skip_line("no_profile", lang))
         return ret
-    say(ondemand.start_line(pl, lang, time_s))
+    say((start_text or ondemand.start_line)(pl, lang, time_s))
     fetch_dir = fetch_dir or (out_dir / ("fetch" if mode == "auto" else
                                          f"fetch-{screen.store.now_utc().strftime('%Y%m%d%H%M%S')}"))
-    if pl.n_planned:
+    if pl.n_planned or ready:
         with cli.sigterm_as_interrupt():
-            fr = ondemand.launch(cfg, pl, time_s=time_s, fetch_dir=fetch_dir, retry_failed=retry_failed, lang=lang,
-                                 out=say, mode=mode, on_progress=on_progress)
+            fr = (launcher or ondemand.launch)(cfg, pl, time_s=time_s, fetch_dir=fetch_dir,
+                                               retry_failed=retry_failed, lang=lang, out=say, mode=mode,
+                                               on_progress=on_progress)
     else:
         oc = ondemand.outcomes(pl, {}, {}, {}, {}, {})
         fr = {"summary": ondemand.fetch_summary(pl, oc, {}, {}, {}, seconds=0.0, time_s=time_s, mode=mode),
@@ -230,7 +238,7 @@ def run_fetch(cfg: Any, result: dict[str, Any], *, time_s: float, sources: list[
     upd: dict[str, Any] | None = None
     final = None
     skip_why = None
-    pending = ondemand.pending_update(fr)
+    pending = ondemand.pending_update(fr) + [ck for ck in fr.get("deepened") or () if ck not in fr["fetched"]]
     if not fr.get("store_ok", True):
         skip_why = "store_busy"
     elif interrupt_stops and fr.get("interrupted"):
@@ -252,6 +260,8 @@ def run_fetch(cfg: Any, result: dict[str, Any], *, time_s: float, sources: list[
         summ["update"] = None
         try:
             kw = {"jev_factory": jev_factory} if jev_factory is not None else {}
+            if read_offset:
+                kw["read_offset"] = int(read_offset)      # never inherited by a from_run: pass it on
             updated = screen.screen(cfg, result["idea"], from_run=run_id, supersedes=run_id, out_dir=out_dir,
                                     budget_usd=round(update_budget, 6), sieve=sieve_arg,
                                     fetch_info=ondemand.fetch_info(fr), **kw)

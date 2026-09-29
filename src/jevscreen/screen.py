@@ -146,6 +146,11 @@ CSV_COLUMNS: tuple[str, ...] = (
     "filing_date", "doc_lang", "l2_doc_stale", "l2_keyword_hit", "l1_input_tier", "l2_input_tier", "l2_input_source",
     "l1_request_id", "l2_request_id", "l2_reads", "l2_p_pos", "l2_p_pos_sd", "l2_edge", "user_verdict",
     "verdict_source", "backfill", "flags", "doc_fetch")   # flags: shells marks (st / star_st / spac_like), ';'-joined
+# appended only when the run wrote them (the confirmed list, on by default: section main / to_confirm; the levers
+# --l2-constraints, --judge, --second-search); a --no-shortlist run without levers keeps the old CSV
+CSV_LEVER_COLUMNS: tuple[str, ...] = ("section", "shortlist_tier", "main_via", "rank_before_shortlist", "l2_constraint",
+                                      "l2_label_before_constraint", "judge_tier", "l2_second_search",
+                                      "l2_label_before_second")
 
 # Official annual-report sources whose `documents` text layer 2 reads (source_id -> short label for the L2 tag and
 # the default language when the text is too short to detect).
@@ -1008,7 +1013,10 @@ ISO2_COUNTRY: dict[str, str] = {
     "FI": "Finland", "PL": "Poland", "AU": "Australia", "NZ": "New Zealand", "SG": "Singapore", "MY": "Malaysia",
     "ID": "Indonesia", "TH": "Thailand", "PH": "Philippines", "VN": "Vietnam", "BR": "Brazil", "MX": "Mexico",
     "AR": "Argentina", "CL": "Chile", "IL": "Israel", "SA": "Saudi Arabia", "AE": "United Arab Emirates",
-    "TR": "Turkey", "ZA": "South Africa", "BM": "Bermuda", "KY": "Cayman Islands",
+    "TR": "Turkey", "ZA": "South Africa", "BM": "Bermuda", "KY": "Cayman Islands", "KZ": "Kazakhstan",
+    "CZ": "Czech Republic", "HU": "Hungary", "RO": "Romania", "CO": "Colombia", "PE": "Peru", "EG": "Egypt",
+    "NG": "Nigeria", "KE": "Kenya", "QA": "Qatar", "KW": "Kuwait", "PK": "Pakistan", "BD": "Bangladesh",
+    "LK": "Sri Lanka", "MN": "Mongolia",
 }
 
 
@@ -1273,8 +1281,10 @@ def load_documents(con, *, min_mcap_usd: float = 0.0, company_keys: list[str] | 
     arg = list(company_keys) if company_keys is not None else min_mcap_usd
     for r in con.execute(sql, [arg]).fetchall():
         by_company.setdefault(r[0], []).append({"company_key": r[0], **dict(zip(_DOC_COLS, r[1:]))})
+    from .sources import deep_sections       # deep texts (a top-N fetch) only inside deep_sections.deep_view
     out = {}
     for ck, cands in by_company.items():
+        cands = deep_sections.view_candidates(ck, cands)
         d = choose_document(cands)
         if d is not None:
             d["candidates"] = len(cands)
@@ -1505,6 +1515,78 @@ def _facet_layer(make, items: list, questions: dict[str, Any], remaining: float,
     return out, info
 
 
+def _constraint_layer(make, items: list, question, remaining: float, clients: dict[str, Any], notes: list[str],
+                      tell=None, read_offset: int = 0) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """({company_key: {label, p, n, probs, request_id}}, layer info) of the constraint lever: read 0 of every item,
+    reads 1 and 2 of the items whose read-0 p(met) lies in constraints.BAND (cached draws), decided on the mean.
+    read_offset N (the run-to-run noise check, as the L2 band): the band items get the fresh reads N..N+2 instead,
+    which replace their read 0 in the mean (read 0 is kept only when none of them came back).
+    Worst case = the cache-aware read-0 estimate x (1 + 2 x BAND_SHARE); skipped with a note when that exceeds
+    `remaining`. Never raises for Jev errors: they end the layer early (partial)."""
+    from . import constraints as _cons
+    info: dict[str, Any] = {"items": len(items), "status": "ok", "skipped": None, "cost_usd": 0.0, "requests": 0,
+                            "band_items": 0, "estimate_usd": None, "read_offset": read_offset}
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        clients["constraint"] = client = make("constraint", max(0.0, remaining), False)
+    except Exception as e:  # noqa: BLE001
+        if not _is_error(e, "JevUnavailable"):
+            raise
+        info.update(status="skipped", skipped="jev_unavailable")
+        notes.append(f"限定条件检查跳过：AI 服务不可用 / constraint check skipped: Jev unavailable ({type(e).__name__})")
+        return out, info
+    est = _estimate_uncached(client, items, question) or {}
+    worst = float(est.get("est_cost_usd") or 0.0) * (1 + 2 * _cons.BAND_SHARE)
+    info["estimate_usd"] = round(worst, 6)
+    if worst > remaining + 1e-12:
+        info.update(status="skipped", skipped="budget")
+        notes.append("限定条件检查跳过：预算不够，明确的公司保留原结论（未检查） / constraint check skipped: not enough "
+                     "budget; explicit rows keep their label (unchecked)")
+        return out, info
+    spent0, sent0 = _client_stats(client)
+    if tell is not None:
+        tell("constraint", 0, len(items), getattr(client, "spent_usd", None))
+    got, stop, err = _call_classify(client, items, question)
+    reads: dict[str, list[dict]] = {it.item_id: [r] for it, r in zip(items, got)}
+    rid = {it.item_id: r.get("request_id") for it, r in zip(items, got)}
+    if stop:
+        notes.append(f"限定条件检查没读完（{stop}） / constraint check incomplete ({err})")
+    band = [it for it, r in zip(items, got) if r.get("status") == "ok" and _cons.in_band(r.get("probs"))]
+    info["band_items"] = len(band)
+    idx = band_read_indices(len(_cons.BAND_READS) + 1, read_offset) if read_offset > 0 else list(_cons.BAND_READS)
+    for r_i in idx:
+        if stop or not band:
+            break
+        order = sorted(band, key=lambda it: hashlib.sha256(f"{r_i}:{it.item_id}".encode("utf-8")).hexdigest())
+        got2, stop, e2 = _call_classify(client, order, _cons.replace_read(question, r_i))
+        for it, r in zip(order, got2):
+            reads[it.item_id].append(r)
+        if stop:
+            notes.append(f"限定条件检查的复读没读完（{stop}） / constraint re-reads incomplete ({e2})")
+    if read_offset > 0:
+        for it in band:
+            fresh = reads[it.item_id][1:]
+            if any(r.get("status") == "ok" for r in fresh):
+                reads[it.item_id] = fresh
+    for it in items:
+        agg = _cons.aggregate(reads.get(it.item_id) or [])
+        if agg is not None:
+            out[it.item_id] = {**agg, "request_id": rid.get(it.item_id)}
+    spent1, sent1 = _client_stats(client)
+    info.update(cost_usd=round(spent1 - spent0, 6), requests=sent1 - sent0, status="partial" if stop else "ok")
+    return out, info
+
+
+def constraint_question(idea: str, idea_en: str | None, sv: dict[str, Any] | None):
+    """(constraints, question or None) of the --l2-constraints lever: jevscreen.constraints.derive from the sieve's
+    constraints / facets / the English idea; screen and rank_only build it the same way (its sha guards rank_only)."""
+    from . import constraints as _cons, scope
+    c_en = idea_en or (idea if not needs_translation(idea) else None)
+    c_facets = {**sv["facets"], "type": scope.facet_kind(sv)} if scope.facets_of(sv) else None
+    cons = _cons.derive(c_en, facets=c_facets, given=(sv or {}).get("constraints"))
+    return cons, (_cons.build_question(idea, idea_en, cons) if cons else None)
+
+
 def _client_stats(client) -> tuple[float, int]:
     if client is None:
         return 0.0, 0
@@ -1550,6 +1632,36 @@ def terms_for(terms_by_lang: dict[str, list[str]] | list[str] | None, lang: str 
     return list(terms_by_lang.get(lang or "en") or [])
 
 
+_ZH_EXCERPT_GENERIC = frozenset({"系统", "核心", "供应", "厂商", "公司", "产品", "设备", "技术", "业务", "服务",
+                                 "行业", "市场", "领域", "方案", "研发", "生产", "销售", "制造", "企业"})
+_ZH_EXCERPT_FUNCTION = frozenset("的和与及或在为是等之了对于把被将向从其各该此并也都")
+
+
+def excerpt_terms(terms: list[str], lang: str | None) -> list[str]:
+    """Add short Chinese search words when an idea is one long compound absent verbatim from a filing.
+
+    Sliding two-character pieces keep target and product words such as 储能 / 液冷 / 温控 even when the long phrase
+    starts with an odd-length prefix. A paragraph about both then outranks one repeating only 液冷. Original terms
+    remain first for exact matches; generic/function pieces are discarded.
+    """
+    if lang != "zh":
+        return terms
+    out = list(dict.fromkeys(terms))
+    for raw in terms:
+        word = unicodedata.normalize("NFKC", raw).strip()
+        if not re.fullmatch(f"[{_HAN}]{{6,24}}", word):
+            continue
+        for i in range(0, min(len(word) - 1, 18)):
+            piece = word[i:i + 2]
+            if piece in _ZH_EXCERPT_GENERIC or set(piece) & _ZH_EXCERPT_FUNCTION \
+                    or (i > 0 and word[i - 1:i + 1] in _ZH_EXCERPT_GENERIC) \
+                    or word[i + 1:i + 3] in _ZH_EXCERPT_GENERIC:
+                continue
+            if piece not in out:
+                out.append(piece)
+    return out
+
+
 def _evidence_excerpt(kw: dict[str, str] | None, first: dict[str, str], terms: list[str] | None,
                       lang: str | None) -> str:
     """evidence_excerpt (the output table / report column, OUTPUT_EXCERPT_CHARS): the keyword excerpt, else the
@@ -1588,7 +1700,8 @@ def matched_terms(text: str | None, terms: Iterable[str]) -> list[str]:
 
 
 def _l2_input(c: dict[str, Any], doc: dict[str, Any] | None, terms: dict[str, list[str]] | list[str] | None,
-              today: dt.date | None = None, weak: dict[str, list[str]] | list[str] | None = None) -> dict[str, Any]:
+              today: dt.date | None = None, weak: dict[str, list[str]] | list[str] | None = None,
+              pieces_weak: bool = False) -> dict[str, Any]:
     """Evidence text for one company: annual-report excerpts when a readable official document exists (any source
     in OFFICIAL_DOC_SOURCES), else its description(s).
 
@@ -1597,7 +1710,10 @@ def _l2_input(c: dict[str, Any], doc: dict[str, Any] | None, terms: dict[str, li
     judged. Excerpt keywords are the ones for the document's language (detect_language, the source's own language
     when the text is too short to tell); `weak` (same shape) are the sieve's down-weighted terms (build_excerpts).
     Records evidence_sha (tag line ignored) and matched_terms (the terms, weak ones included, in the keyword
-    excerpt) for l2_inputs.jsonl and the calibration cards."""
+    excerpt) for l2_inputs.jsonl and the calibration cards. pieces_weak (the --lang-terms lever): the two-character
+    pieces excerpt_terms slides over a long Chinese compound are weak terms, not full ones, when the language has
+    another term and the document contains one of the full terms (a long compound alone, or a filing that names
+    none of them, keeps its pieces as full terms)."""
     today = today or store.now_utc().date()
     note = None
     if doc and doc.get("text_path"):
@@ -1617,7 +1733,15 @@ def _l2_input(c: dict[str, Any], doc: dict[str, Any] | None, terms: dict[str, li
             comp = None
         if text:
             lang = detect_language(text, default=OFFICIAL_DOC_SOURCES.get(src, ("", "en"))[1])
-            lterms, lweak = terms_for(terms, lang), terms_for(weak, lang)
+            lterms = excerpt_terms(terms_for(terms, lang), lang)
+            lweak = excerpt_terms(terms_for(weak, lang), lang)
+            base = terms_for(terms, lang)
+            if pieces_weak and any(not re.fullmatch(f"[{_HAN}]{{6,24}}", unicodedata.normalize("NFKC", t).strip())
+                                   for t in base) and any(_term_pattern(t).search(text) for t in base):
+                # the pieces are weak only beside a term of their own that this filing uses (a compound alone, or a
+                # filing that names none of the full terms, keeps its pieces full: as without the lever)
+                lweak = list(dict.fromkeys(lweak + [t for t in lterms if t not in base]))
+                lterms = base
             ex = build_excerpts(text, terms=lterms, description=c["desc"]["plain"], lang=lang, weak_terms=lweak)
             if ex:
                 kw = next((e for e in ex if e["kind"] == "keywords"), None)
@@ -1673,7 +1797,8 @@ def _clean_terms(v: Any) -> list[str]:
 def resolve_keywords(cfg, idea: str, *, keywords: list[str] | None, keywords_by_lang: dict[str, list[str]] | None,
                      translate: bool, keywords_fn: Callable | None,
                      sieve_kw: dict[str, dict[str, list[str]]] | None = None,
-                     author: dict[str, Any] | None = None, idea_en: str | None = None) -> dict[str, Any]:
+                     author: dict[str, Any] | None = None, idea_en: str | None = None,
+                     all_langs: bool = False) -> dict[str, Any]:
     """Decide the idea_en and the excerpt terms per document language.
 
     Automatic translation runs when translate is on and the idea is not English (needs_translation: Han / kana /
@@ -1693,7 +1818,10 @@ def resolve_keywords(cfg, idea: str, *, keywords: list[str] | None, keywords_by_
     of the last paid run, possibly None) likewise (status 'frozen'); seed_terms[lang] come after the user's flags
     and before the generated terms.
     idea_en (the English sentence the caller supplied: `quickstart` / `screen --idea-en`): used as is and
-    before the author's, status 'agent', the local model is not called and no 'translation unavailable' warning follows."""
+    before the author's, status 'agent', the local model is not called and no 'translation unavailable' warning follows.
+    all_langs (the --lang-terms lever, default False): terms for every document language even then
+    (retrieval.every_language: the local model is asked for terms only, its idea_en never replaces this one; generic
+    terms go to info['weak']); info['lang_terms'] summarises what it added."""
     user = {lang: _clean_terms((keywords_by_lang or {}).get(lang)) for lang in LANGS}
     user["en"] = _clean_terms(keywords) or user["en"]
     info: dict[str, Any] = {"idea_en": None, "status": "not_needed", "model": None, "cached": None, "seconds": None,
@@ -1730,6 +1858,11 @@ def resolve_keywords(cfg, idea: str, *, keywords: list[str] | None, keywords_by_
     for lang in ("zh", "ja", "ko"):
         terms[lang] = user[lang] or seeds.get(lang) or gen.get(lang) or cjk_idea_terms(idea, lang)
     info["seed_terms"] = bool(seeds)
+    lweak: dict[str, list[str]] = {}
+    if all_langs:
+        from . import retrieval
+        terms, lweak, info["lang_terms"] = retrieval.every_language(cfg, idea, info, terms, user=user, seeds=seeds,
+                                                                    keywords_fn=keywords_fn or _default_keywords)
     weak: dict[str, list[str]] = {}
     for lang, kw in (sieve_kw or {}).items():
         if lang not in terms or not isinstance(kw, dict):
@@ -1740,6 +1873,10 @@ def resolve_keywords(cfg, idea: str, *, keywords: list[str] | None, keywords_by_
                        if unicodedata.normalize("NFKC", t).lower() not in wl]
         if w:
             weak[lang] = w
+    for lang, w in lweak.items():       # --lang-terms: generic terms count as weak ones
+        wl = {unicodedata.normalize("NFKC", t).lower() for t in w}
+        terms[lang] = [t for t in terms.get(lang) or [] if unicodedata.normalize("NFKC", t).lower() not in wl]
+        weak[lang] = _clean_terms((weak.get(lang) or []) + w)
     info["terms"] = terms
     info["weak"] = weak
     return info
@@ -1770,10 +1907,13 @@ def _result_row(run_id: str, c: dict, layer: str, r: dict, inp: dict | None, agg
                   else (None, None, None))
 
 
+# --judge (jevscreen.atomic): copied onto result rows when the layer set them
+JUDGE_ROW_KEYS = ("judge_tier", "judge_state", "judge_labels", "judge_reason", "judge_inferred")
 # the scope / agent fields a ranked row carries into results.json (scope design §5)
 SCOPE_ROW_KEYS = ("scope_sid", "scope_value", "scope_p", "scope_source", "scope_by", "scope_demoted",
                   "scope_unchecked", "scope_exempt_agent", "agent_verdict", "agent_state", "agent_chip",
-                  "agent_why_zh", "agent_why_en", "agent_quote_ids", "agent_level", "agent_thin", "agent_note")
+                  "agent_why_zh", "agent_why_en", "agent_quote_ids", "agent_level", "agent_thin", "agent_note",
+                  "agent_quotes")
 RESULT_COLS = ("run_id", "company_key", "security_id", "layer", "label", "probs_json", "p_top", "request_id",
                "input_source", "input_tier", "evidence_url", "evidence_excerpt", "status", "error")
 RESULT_COLS_L2 = RESULT_COLS + ("reads_json", "p_pos", "p_pos_sd")    # L2 rows: the repeated reads (aggregate_reads)
@@ -1836,7 +1976,8 @@ SCREEN_DEFAULTS: dict[str, Any] = {
     "min_mcap_usd": 2e8, "min_avg_volume": None, "countries": None, "max_out": 40, "budget_usd": 3.0, "l2_max": 600,
     "keywords": None, "l1_adjacent_min": L1_ADJACENT_MIN, "l1_core_min": L1_CORE_MIN, "keywords_zh": None,
     "keywords_ja": None, "keywords_ko": None, "translate": True, "reads": L2_READS_DEFAULT, "rank": "label",
-    "shells": "drop", "l1_rescue": L1_RESCUE_MAX}
+    "shells": "drop", "l1_rescue": L1_RESCUE_MAX, "l2_constraints": False, "shortlist": True, "judge": None,
+    "lang_terms": False, "second_search": False}
 
 
 def resolve_from_run(from_run: str | os.PathLike | None) -> str | None:
@@ -1946,7 +2087,8 @@ def resolve_sieve(cfg, idea: str, sieve: Any) -> tuple[dict[str, Any] | None, Pa
 
 
 def _order(e: dict[str, Any]) -> tuple:
-    return -e["score"], -(e["market_cap_usd"] or 0), e["security_id"]
+    from . import atomic          # --judge tiers first (0 for every row when it is off: the old order)
+    return atomic.order_rank(e), -e["score"], -(e["market_cap_usd"] or 0), e["security_id"]
 
 
 def pin_and_rank(verified: list[dict[str, Any]], unverified: list[dict[str, Any]], sieve: dict[str, Any] | None,
@@ -2017,7 +2159,9 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
            fetch_info: dict[str, Any] | None = None, idea_en: str | None = UNSET,
            progress: Callable | None = None, l1_new: bool = False, facet_scan: Any = "auto",
            rank_only: bool = False, change_kind: str | None = None,
-           l1_rescue: int = UNSET) -> dict[str, Any]:
+           l1_rescue: int = UNSET, l2_constraints: bool = UNSET, shortlist: bool = UNSET,
+           judge: str | None = UNSET, lang_terms: bool = UNSET, second_search: bool = UNSET,
+           agent_layer: bool = True, events: Callable | None = None) -> dict[str, Any]:
     """Run one screen. Returns the result dict that is also written to results.json.
 
     result['status']: ok | partial (some L2 skipped/failed, band reads skipped, fundamentals unreadable) |
@@ -2043,6 +2187,24 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     answer ($0, never re-read or re-priced); L2 then reads the passes as usual (unchanged inputs are Jev cache hits).
     l1_rescue: at most this many L1 misses are read by L2 anyway (l1_rescued; default L1_RESCUE_MAX, 0 turns it off);
     a from_run inherits it like the other SCREEN_DEFAULTS.
+    l2_constraints (lever, default False; a from_run inherits it): the idea's explicit constraints (end market,
+    place, role: jevscreen.constraints.derive from the sieve's constraints / facets / idea_en) are checked by one
+    cheap Jev question over the SAME L2 text of the L2-explicit companies; an explicit row whose text does not state
+    them is ranked and listed as partial (row l2_constraint missing / unclear, l2_label_before_constraint). L1 and
+    the L2 question are unchanged (cache-safe); a budget skip keeps explicit (unchecked) and makes the run partial.
+    judge (lever, default None; 'atomic3' | 'single10'; a from_run inherits it): the typed atomic judgement layer
+    (jevscreen.atomic) over the SAME L2 text of every L2-verified row; tiers A / B / C order the list before the
+    score (C only on positive counter-evidence, never removed); cache-safe, budgeted, skipped with a note.
+    shortlist (default True; a from_run inherits it from a base run that recorded params['list']): rows tiered
+    high = the main list (L1 core + L2 explicit, or moved there by your AI's review / the human's pin) / confirm =
+    the to-confirm section, main list first and renumbered (jevscreen.shortlist); result['shortlist'] holds the
+    counts, params['list'] 'main'. False (--no-shortlist): the old single list, params['list'] 'padded'.
+    lang_terms (lever, default False; a from_run inherits it): excerpt terms for every document language, generic
+    ones weak (jevscreen.retrieval.every_language); only the L2 items whose excerpts change are new (paid) items.
+    second_search (lever, default False; a from_run inherits it): the L1-core rows whose annual-report excerpts L2
+    found insufficient get one more L2 read over other passages of the filing that match the widened terms
+    (jevscreen.retrieval); an explicit / partial answer raises the row to partial at most (l2_second_search
+    'raised'); the answers are their own layer (screen_results 'l2_second'), result['second_search'] the counts.
     sieve: None / 'none' | 'auto' | a path | a dict (resolve_sieve): its rules extend the L2 criteria
     (build_l2_question), its keywords extend / down-weight the excerpt terms, its pins apply in the ranking step
     (pin_and_rank) and its pinned / checked companies are always read by L2 (l2_forced), even when L1 missed them.
@@ -2062,6 +2224,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     run's caller-supplied idea_en, else the sieve's author idea_en (sieve_author.author_keywords: frozen after a paid
     run), else the automatic translation. With from_run, a base run that has an idea_en
     refuses a different one (ValueError: its L1 answers were given for that English question).
+    events(event): each company's answer as it is known, {layer: 'l1' | 'l2', security_id, label, evidence
+    ('annual_report' | 'profile' | None), cached} (the page's reading log; never blocks or fails the run).
     progress(phase, done, total): phase boundaries and per-request heartbeats ('l1', 'l2'). On-demand annual
     reports are fetched after the run (jevscreen.ondemand_cli.run_fetch: screen --fetch-docs, fetch-docs,
     quickstart), never inside it.
@@ -2070,6 +2234,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     with a note when the budget cannot cover it; L1 is never re-read or re-priced). 'auto' is on when the sieve has an
     enforced scope answer or the base run had facets. The labels feed the scope answers' enforcement and the split
     detection (jevscreen.scope); result['facets'] holds them.
+    agent_layer=False: your AI's calls (the idea's agent file, jevscreen.review) are not applied even with a sieve
+    (eval run --product-flow measures the system, never a review file that happens to exist).
     rank_only=True (requires from_run): no Jev call at all - the base run's stored answers re-ranked with the current
     sieve (pins, scope answers) and the agent layer into a new run (change_kind: scope | agent | decide | reapply);
     RankOnlyUnsafe when the sieve changed what Jev was asked (the caller then runs a full from_run).
@@ -2087,7 +2253,9 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
              "max_out": max_out, "budget_usd": budget_usd, "l2_max": l2_max, "keywords": keywords,
              "l1_adjacent_min": l1_adjacent_min, "l1_core_min": l1_core_min, "keywords_zh": keywords_zh,
              "keywords_ja": keywords_ja, "keywords_ko": keywords_ko, "translate": translate, "reads": reads,
-             "rank": rank, "shells": UNSET if shells is None else shells, "l1_rescue": l1_rescue}
+             "rank": rank, "shells": UNSET if shells is None else shells, "l1_rescue": l1_rescue,
+             "l2_constraints": l2_constraints, "shortlist": shortlist, "judge": judge, "lang_terms": lang_terms,
+             "second_search": second_search}
     base = None
     from_run = resolve_from_run(from_run)
     if supersedes is not None and supersedes != from_run:
@@ -2103,6 +2271,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     inherited = {k: v for k, v in (base["params"] if base else {}).items() if k in SCREEN_DEFAULTS}
     if base is not None and "shells" not in base["params"]:
         inherited["shells"] = "keep"      # a run made before the shells filter read every company
+    if base is not None and "list" not in base["params"]:
+        inherited.pop("shortlist", None)  # made before the confirmed list became the default: the default applies
     eff = {k: (v if v is not UNSET else inherited[k] if k in inherited else SCREEN_DEFAULTS[k])
            for k, v in given.items()}
     base_en = str(((base or {}).get("params") or {}).get("idea_en") or "").strip() or None
@@ -2119,6 +2289,13 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     keywords_zh, keywords_ja, keywords_ko = eff["keywords_zh"], eff["keywords_ja"], eff["keywords_ko"]
     translate, reads, rank, shells_mode = eff["translate"], eff["reads"], eff["rank"], eff["shells"]
     l1_rescue = eff["l1_rescue"]
+    l2_constraints, shortlist = bool(eff["l2_constraints"]), bool(eff["shortlist"])
+    judge = None if eff["judge"] in (None, "", "none", False) else str(eff["judge"])
+    if judge is not None:
+        from . import atomic as _atomic
+        if judge not in _atomic.MODES:
+            raise ValueError(f"judge must be one of none, {', '.join(_atomic.MODES)} (got {judge!r})")
+    lang_terms, second_search = bool(eff["lang_terms"]), bool(eff["second_search"])
     _check_params(min_mcap_usd, min_avg_volume, max_out, budget_usd, l2_max, reads, read_offset, rank)
     if shells_mode not in _shells.MODES:
         raise ValueError(f"shells must be one of {', '.join(_shells.MODES)} (got {shells_mode!r})")
@@ -2130,7 +2307,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     elif sieve == "auto":
         sieve_hint = calib.closest_sieve(cfg, idea)       # a reworded idea: the closest sieve, for --sieve PATH
     # the agent layer (your AI's calls) goes with the calibration: none for an explicit sieve='none'
-    agent = review.agent_verdicts(cfg, idea) if sieve not in (None, "none") else {}
+    # (agent_layer=False: never, e.g. eval run --product-flow, which measures the system, not a review file)
+    agent = review.agent_verdicts(cfg, idea) if (agent_layer and sieve not in (None, "none")) else {}
     fsha = scope.facets_sha(sv)
     base_facets = (base or {}).get("facets") or {}
     facet_on = bool(facet_scan) if facet_scan != "auto" else bool(scope.enforced(sv, fsha) or base_facets)
@@ -2148,7 +2326,15 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
               "sieve_path": (str(sv_path) if sv_path else "<inline>" if sv is not None else None),
               "sieve_version": (sv or {}).get("version"), "sieve_sha256": _sieve_sha(sv, sv_path),
               "shells": shells_mode, "shells_version": _shells.SHELLS_VERSION, "facet_scan": facet_on,
-              "facets_sha": fsha, "l1_rescue": l1_rescue}
+              "facets_sha": fsha, "l1_rescue": l1_rescue, "l2_constraints": l2_constraints,
+              "shortlist": shortlist, "list": "main" if shortlist else "padded", "judge": judge,
+              "lang_terms": lang_terms, "second_search": second_search}
+    from .sources import deep_sections
+    # a top-N update pass (current view) or a from_run of one (its params.deep_view): these companies read their
+    # deep text (the filing's own words); every other run reads no deep text at all
+    inherit_view = [str(k) for k in (((base or {}).get("params") or {}).get("deep_view") or [])]
+    if deep_sections.current_view() or inherit_view:
+        params["deep_view"] = sorted(set(deep_sections.current_view()) | set(inherit_view))
     if supersedes is not None:
         # the update pass runs on a small cap; a later from_run of this run inherits the user's own budget
         params.update(budget_usd=inherited.get("budget_usd", SCREEN_DEFAULTS["budget_usd"]),
@@ -2162,7 +2348,8 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
         known = known_country_names(con) if countries else set()
         rows = load_universe(con, min_mcap_usd=min_mcap_usd, min_avg_volume=None)
         descs = load_descriptions(con, min_mcap_usd=min_mcap_usd)
-        docs = load_documents(con, min_mcap_usd=min_mcap_usd)
+        with deep_sections.deep_view(inherit_view):
+            docs = load_documents(con, min_mcap_usd=min_mcap_usd)
         names = calib.load_names(con) if (sv or {}).get("rules") or idea_en or facet_on else None
         frozen = _frozen_idea_en(con, idea) if (sv or {}).get("idea_en") else (False, None)
         facts = _shells.load_facts(con, min_mcap_usd=min_mcap_usd)
@@ -2181,7 +2368,14 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     kinfo = resolve_keywords(cfg, idea, keywords=keywords,
                              keywords_by_lang={"zh": keywords_zh, "ja": keywords_ja, "ko": keywords_ko},
                              translate=translate, keywords_fn=keywords_fn,
-                             sieve_kw=_sieve_keywords(sv), author=author, idea_en=idea_en)
+                             sieve_kw=_sieve_keywords(sv), author=author, idea_en=idea_en, all_langs=lang_terms)
+    if second_search:       # the widened terms the second search reads with (the run's own when --lang-terms)
+        k2 = kinfo if lang_terms else resolve_keywords(
+            cfg, idea, keywords=keywords, keywords_by_lang={"zh": keywords_zh, "ja": keywords_ja, "ko": keywords_ko},
+            translate=translate, keywords_fn=keywords_fn, sieve_kw=_sieve_keywords(sv), author=author,
+            idea_en=idea_en, all_langs=True)
+        kinfo["second_terms"], kinfo["second_weak"] = k2["terms"], k2.get("weak") or {}
+        kinfo.setdefault("lang_terms", k2.get("lang_terms"))
     kinfo["author_warnings"] = list((author or {}).get("warnings") or [])
     if kinfo["status"] == "sieve" and frozen[0] and kinfo.get("idea_en") != frozen[1]:
         kinfo["author_warnings"].append("比上次贵，因为 idea_en 改了：第一步和第二步会按新的 idea_en 重问一遍 / idea_en "
@@ -2192,6 +2386,10 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
     params["l2_question_sha"] = question_sha(build_l2_question(idea, kinfo.get("idea_en"), rules=(sv or {}).get(
         "rules") or (), facets=(sv or {}).get("facets")))
     params["sieve_terms_sha"] = sieve_terms_sha(sv)
+    if lang_terms or second_search:
+        from . import retrieval as _ret
+        params["retrieval_terms_sha"] = _ret.terms_sha(kinfo.get("second_terms") or kinfo["terms"],
+                                                       kinfo.get("second_weak") or kinfo.get("weak"))
     fquestions: dict[str, Any] = {}
     if facet_on:
         fquestions, fnotes = scope.build_questions(idea, kinfo.get("idea_en"), sv, names=(names or ([], []))[0],
@@ -2199,6 +2397,19 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
                                                    terms=calib.keyword_terms(kinfo["terms"], sv))
         notes += fnotes
     params["facet_question_sha"] = scope.question_sha(fquestions) if facet_on else None
+    cquestion = None
+    if l2_constraints:
+        from . import constraints as _cons
+        cons, cquestion = constraint_question(idea, kinfo.get("idea_en"), sv)
+        params["constraints"] = cons
+        params["constraint_question_sha"] = _cons.question_sha(cquestion) if cquestion is not None else None
+    jquestions: dict[str, Any] = {}
+    jtarget = False
+    if judge is not None:
+        from . import atomic as _atomic
+        jquestions, jtarget = _atomic.questions_for(idea, kinfo.get("idea_en"), sv, judge)
+        params["judge_question_sha"] = _atomic.question_sha(jquestions)
+        params["judge_has_target"] = bool(jtarget)
     if names is not None and idea_en:
         # the same isolation for the English sentence every question carries (quickstart / screen --idea-en, a
         # --from-run base): no company name or ticker the idea itself does not name
@@ -2257,7 +2468,9 @@ def screen(cfg, idea: str, *, min_mcap_usd: float = UNSET, min_avg_volume: float
                               rank=rank, base=base, sieve=sv, sieve_path=sv_path, sieve_hint=sieve_hint, pre=pre,
                               supersedes=supersedes, fetch_info=fetch_info, l1_new=l1_new, l1_rescue=l1_rescue,
                               progress=progress, fquestions=fquestions, base_facets=base_facets, agent=agent,
-                              facet_on=facet_on, fsha=fsha)
+                              facet_on=facet_on, fsha=fsha, l2_constraints=l2_constraints, cquestion=cquestion,
+                              shortlist=shortlist, jquestions=jquestions, jtarget=jtarget, lang_terms=lang_terms,
+                              second_search=second_search, events=events)
     except BaseException as e:
         # Ctrl-C / SIGTERM / a crash: never leave screen_runs 'running' without the money already spent.
         if not dry_run:
@@ -2368,7 +2581,9 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                    rank="label", base=None, sieve=None, sieve_path=None, sieve_hint=None, pre=None,
                    supersedes=None, fetch_info=None, progress=None, l1_new=False, fquestions=None,
                    base_facets=None, agent=None, facet_on=False, fsha=None,
-                   l1_rescue=L1_RESCUE_MAX) -> dict[str, Any]:
+                   l1_rescue=L1_RESCUE_MAX, l2_constraints=False, cquestion=None,
+                   shortlist=False, jquestions=None, jtarget=False, lang_terms=False,
+                   second_search=False, events=None) -> dict[str, Any]:
     _, Item = _jev_types()
     from . import scope as _scope
     fquestions = fquestions or {}
@@ -2391,6 +2606,11 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     warnings += keyword_warnings(idea, keywords, terms, translated=kinfo["status"] in ("generated", "sieve")
                                  or (kinfo["status"] == "frozen" and bool(kinfo.get("idea_en"))))
     warnings += kinfo.get("author_warnings") or []
+    from . import retrieval as _ret
+    lt_gone = (lang_terms or second_search) and not _ret.model_ok(kinfo.get("lang_terms"))
+    pieces_weak = lang_terms and not lt_gone        # the pieces are weak only beside the model's own terms
+    if lt_gone:
+        warnings.append(_ret.unavailable_warning(kinfo.get("lang_terms")))
     l1_items = [Item(item_id=c["company_key"], issuer=c["name"] or c["security_id"], text=c["desc"]["text"],
                      meta={"security_id": c["security_id"], "input_tier": c["desc"]["tier"],
                            "sources": c["desc"]["sources"]}) for c in described]
@@ -2430,6 +2650,17 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                         pass
                 progress(phase, done, total)
 
+    def item(layer: str, item_id: Any, label: Any, cached: Any) -> None:
+        # one company's answer, as it is known (the page's reading log): its security id, the layer, the label and
+        # what L2 read (the annual report or only the profile); never the text or anything else
+        c = by_key.get(item_id)
+        if events is None or c is None:
+            return
+        with contextlib.suppress(Exception):     # an event callback must never stop a paid run
+            ev = (l2_inputs.get(item_id) or {}).get("evidence") if layer == "l2" else None
+            events({"layer": layer, "security_id": c.get("security_id"), "label": label, "evidence": ev,
+                    "cached": bool(cached)})
+
     def make(layer: str, budget: float, dry: bool):
         kw: dict[str, Any] = {"run_id": run_id, "layer": layer, "budget_usd": budget, "dry_run": dry}
         if retry_uncertain and not dry:
@@ -2439,6 +2670,9 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
             with contextlib.suppress(Exception):     # JevClient heartbeat (a fake client may not take attributes)
                 client.on_packet = lambda d, t, _layer=layer, _c=client: tell(_layer, d, t,
                                                                               getattr(_c, "spent_usd", None))
+        if events is not None and not dry and client is not None and layer in ("l1", "l2"):
+            with contextlib.suppress(Exception):
+                client.on_item = lambda i, lab, ca, _layer=layer: item(_layer, i, lab, ca)
         return client
 
     status = STATUS_OK
@@ -2523,7 +2757,7 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                            key=lambda c: -(c["market_cap_usd"] or 0))[:max(0, l1_rescue)]
         hypo_items = []
         for c in hypo:
-            inp = _l2_input(c, docs.get(c["company_key"]), terms_by_lang, today, weak_by_lang)
+            inp = _l2_input(c, docs.get(c["company_key"]), terms_by_lang, today, weak_by_lang, pieces_weak=pieces_weak)
             l2_inputs[c["company_key"]] = inp
             hypo_items.append(Item(item_id=c["company_key"], issuer=c["name"] or c["security_id"], text=inp["text"],
                                    meta={"security_id": c["security_id"], "input_tier": inp["input_tier"]}))
@@ -2561,6 +2795,30 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
             layers["facet"] = {"estimate": {"est_cost_usd": fest, "families": sorted(fquestions),
                                             "basis": "facet layer upper bound: min(150, 35% of the L2 items) x "
                                                      "families x $0.00005 x 1.6"}}
+        if l2_constraints and cquestion is not None:
+            from . import constraints as _cons
+            cest = _cons.estimate_items(math.ceil(len(hypo_items) * _scope.VERIFIED_SHARE_EST))
+            layers["constraint"] = {"estimate": {"est_cost_usd": cest, "basis": "constraint check upper bound: "
+                                                 "35% of the L2 items x $0.00005 x 1.6"}}
+            fest += cest
+        if jquestions:
+            from . import atomic as _atomic
+            jest = _atomic.estimate_items(math.ceil(len(hypo_items) * _scope.VERIFIED_SHARE_EST), len(jquestions),
+                                          read_offset)
+            jfac = _atomic.band_factor(read_offset)
+            layers["judge"] = {"estimate": {"est_cost_usd": jest, "basis": "item-by-item check estimate: 35% of "
+                                            f"the L2 items x questions x $0.00005 x {jfac:g} (band re-reads at "
+                                            "their expected share)"}}
+            fest += jest
+        if second_search:
+            from . import retrieval as _ret
+            n_sec = math.ceil(len(hypo_items) * _ret.SHARE_EST)
+            sest = round(float((est2 or {}).get("est_cost_usd") or 0.0) / max(1, len(hypo_items)) * n_sec, 6) \
+                if est2 and "error" not in est2 else 0.0
+            layers[_ret.KEY] = {"estimate": {"est_cost_usd": sest, "basis": f"second search upper bound: about "
+                                             f"{_ret.SHARE_EST:.0%} of the L2 items (L1 core + L2 insufficient) read "
+                                             "once more at the L2 price per item"}}
+            fest += sest
         est_cost = float(e1.get("est_cost_usd") or 0) + float(e2.get("est_cost_usd") or 0) + fest
         est_res = (float(e1.get("est_reserved_usd") or e1.get("est_cost_usd") or 0)
                    + float(e2.get("est_reserved_usd") or e2.get("est_cost_usd") or 0) + fest)
@@ -2610,7 +2868,7 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
             if forced_keys:        # ondemand._is_forced: a sieve check that is also rescued is still fetched first
                 params["l2_forced"] = list(forced_keys)
         for c in l2_sel + [by_key[k] for k in forced_keys + [x for x in rescued_keys if x not in forced_keys]]:
-            inp = _l2_input(c, docs.get(c["company_key"]), terms_by_lang, today, weak_by_lang)
+            inp = _l2_input(c, docs.get(c["company_key"]), terms_by_lang, today, weak_by_lang, pieces_weak=pieces_weak)
             if fetch_info is not None:
                 inp["doc_fetch"] = _doc_fetch(c["company_key"], inp, fetch_info)
             l2_inputs[c["company_key"]] = inp
@@ -2736,6 +2994,92 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
     elif facet_on and base_facets and not dry_run:
         _carry_facets(base_facets, l2_inputs, facets_map)
 
+    # 3c) the constraint lever (--l2-constraints): the idea's end market / place / role checked over the SAME L2
+    # text of the L2-explicit companies (score order, capped); cached, budgeted; L1 and L2 are never re-asked
+    cons_map: dict[str, dict[str, Any]] = {}
+    cinfo: dict[str, Any] | None = None
+    if l2_constraints and not dry_run:
+        from . import constraints as _cons
+        cinfo = {"items": 0, "status": "ok", "skipped": None, "cost_usd": 0.0, "requests": 0, "band_items": 0,
+                 "estimate_usd": None}
+        explicit_keys = [k for k, r in l2_res.items() if r.get("status") == "ok" and r.get("label") == "explicit"
+                         and k in l2_inputs and k in by_key and k not in unlistable]
+        explicit_keys.sort(key=lambda k: (-score_of("explicit", p_core_of(l1_res.get(k)), by_key[k]["market_cap_usd"],
+                                                    l2_inputs[k].get("evidence")),
+                                          -(by_key[k]["market_cap_usd"] or 0), by_key[k]["security_id"]))
+        cset = explicit_keys[:_cons.READ_MAX]
+        cinfo["items"] = len(cset)
+        if cquestion is None:
+            cinfo.update(status="skipped", skipped="no_constraints")
+            notes.append("限定条件检查跳过：想法里没有写明终端市场、地域或角色 / constraint check skipped: the idea names "
+                         "no end market, place or role")
+        elif cset:
+            spent_before = sum(_client_stats(c)[0] for c in clients.values() if c is not None)
+            cons_map, cinfo = _constraint_layer(make, [l2_item(by_key[k], l2_inputs[k]) for k in cset], cquestion,
+                                                budget_usd - spent_before, clients, notes, tell, read_offset)
+            # stored as their own layer (the L2 answer stays as read): calib.load_pool re-applies them, so the
+            # cards, the review preview and a rank_only version see the same labels as this run
+            rows_c = [_result_row(run_id, by_key[k], _cons.KEY, {"label": a["label"], "probs": a.get("probs") or {},
+                                                                 "request_id": a.get("request_id"), "status": "ok"},
+                                  l2_inputs[k], None) for k, a in cons_map.items() if k in by_key]
+            if rows_c:
+                _db_write(cfg, lambda con: store.upsert_many(con, "screen_results", RESULT_COLS_L2, rows_c), notes,
+                          "screen_results constraint")
+        layers["constraint"] = cinfo
+
+    # 3d) the second search (--second-search): the L1-core rows L2 found insufficient on annual-report text get ONE
+    # more L2 read over other passages of the filing matching the widened terms; its own layer, at most partial
+    second_map: dict[str, dict[str, Any]] = {}
+    second_inputs: dict[str, dict[str, Any]] = {}
+    sinfo: dict[str, Any] | None = None
+    if second_search and not dry_run:
+        from . import retrieval as _ret
+        ts = time.monotonic()
+        cand = _ret.candidates(l1_res, l2_res, l2_inputs, by_key, skip=unlistable)
+        for k in cand:
+            x = _ret.second_input(l2_inputs[k], docs.get(k), kinfo.get("second_terms") or terms_by_lang,
+                                  kinfo.get("second_weak") or weak_by_lang)
+            if x is not None:
+                second_inputs[k] = x
+        spent_before = sum(_client_stats(c)[0] for c in clients.values() if c is not None)
+        second_map, sinfo = _ret.layer(make, [l2_item(by_key[k], second_inputs[k]) for k in second_inputs], q2,
+                                       budget_usd - spent_before, clients, notes, tell, read_offset)
+        sinfo.update(candidates=len(cand), no_new_text=len(cand) - len(second_inputs),
+                     seconds=round(time.monotonic() - ts, 2))
+        rows_s = [_result_row(run_id, by_key[k], _ret.KEY, a, second_inputs[k], None)
+                  for k, a in second_map.items() if k in by_key]
+        if rows_s:
+            _db_write(cfg, lambda con: store.upsert_many(con, "screen_results", RESULT_COLS_L2, rows_s), notes,
+                      "screen_results l2_second")
+        layers[_ret.KEY] = sinfo
+    # 3d) the atomic judgement layer (--judge): product / role / target (or one ten-class question) over the SAME
+    # L2 text of every L2-verified company (score order, capped); cached, budgeted; tiers A / B / C in step 4
+    judge_map: dict[str, dict[str, Any]] = {}
+    jinfo: dict[str, Any] | None = None
+    j_not_read: set[str] = set()          # L2-verified rows beyond atomic.READ_MAX (the cap, not a failure)
+    if jquestions and not dry_run:
+        from . import atomic as _atomic
+        jkeys = [k for k, r in l2_res.items() if r.get("status") == "ok" and r.get("label") in L2_VERIFIED
+                 and k in l2_inputs and k in by_key and k not in unlistable]
+        jkeys.sort(key=lambda k: (-score_of(l2_res[k]["label"], p_core_of(l1_res.get(k)), by_key[k]["market_cap_usd"],
+                                            l2_inputs[k].get("evidence")),
+                                  -(by_key[k]["market_cap_usd"] or 0), by_key[k]["security_id"]))
+        jset = jkeys[:_atomic.READ_MAX]
+        j_not_read = set(jkeys[_atomic.READ_MAX:])
+        spent_before = sum(_client_stats(c)[0] for c in clients.values() if c is not None)
+        judge_map, jinfo = _atomic.run_layer(make, [l2_item(by_key[k], l2_inputs[k]) for k in jset], jquestions,
+                                             budget_usd - spent_before, clients, notes, tell, read_offset)
+        jinfo["mode"] = params.get("judge")
+        rows_j = [_result_row(run_id, by_key[k], _atomic.KEYS[fam], {"label": a["label"], "probs": a.get("probs") or {},
+                                                                    "request_id": a.get("request_id"), "status": "ok"},
+                              l2_inputs[k], None)
+                  for k, fams in judge_map.items() if k in by_key for fam, a in fams.items()]
+        if rows_j:
+            _db_write(cfg, lambda con: store.upsert_many(con, "screen_results", RESULT_COLS_L2, rows_j), notes,
+                      "screen_results judge")
+        layers["judge"] = jinfo
+    judge_on = jinfo is not None and jinfo.get("status") != "skipped"
+
     # 4) rank: only L2-verified companies; the rest of the L1 passes is 'unverified' (contradicted is dropped).
     # With a sieve, pins then apply (pin_and_rank): a forced company that missed L1 is ranked only when pinned.
     overflow_keys = {c["company_key"] for c in l2_overflow}
@@ -2766,11 +3110,37 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         pc = p_core_of(r1)
         evidence = inp.get("evidence") if (inp and l2_ok) else None
         agg = l2_agg.get(k) if l2_ok else None
+        c_state = None
+        s_state = None
+        if sinfo is not None and k in second_inputs:
+            from . import retrieval as _ret
+            new_label, s_state = _ret.decide(l2_label, second_map.get(k))
+            if s_state == "raised":          # read from the second passages: show them, never above partial
+                l2_label = l2_status = new_label
+                r2, inp, evidence = second_map[k], second_inputs[k], "annual_report"
+                agg = aggregate_reads([(read_offset, r2)])
+                p2s = r2.get("probs") or {}         # at most partial: the probabilities a reload gives (load_pool)
+                agg = {**agg, "p_explicit": 0.0, "p_partial": (p2s.get("explicit") or 0.0) + (p2s.get("partial")
+                                                                                             or 0.0),
+                       "p_pos_sd": None, "edge": None, "reads": None}
+                l2_ok = True
+        if cinfo is not None and l2_label == "explicit":
+            from . import constraints as _cons
+            new_label, c_state = _cons.decide(l2_label, cons_map.get(k))
+            if cquestion is None:
+                c_state = None                        # nothing to check: the lever changes nothing
+            elif new_label != l2_label:
+                l2_label = l2_status = new_label
         if rank == "ev":
-            score = score_ev((agg or {}).get("p_explicit"), (agg or {}).get("p_partial"), pc, c["market_cap_usd"],
-                             evidence)
+            from . import constraints as _cons
+            pe, pp = _cons.ev_probs((agg or {}).get("p_explicit"), (agg or {}).get("p_partial"), c_state)
+            score = score_ev(pe, pp, pc, c["market_cap_usd"], evidence)
         else:
             score = score_of(l2_label, pc, c["market_cap_usd"], evidence)
+        if s_state == "raised" and rank == "ev":
+            p2s = (r2 or {}).get("probs") or {}
+            score = score_ev(0.0, (p2s.get("explicit") or 0.0) + (p2s.get("partial") or 0.0), pc,
+                             c["market_cap_usd"], evidence)
         entry = {"company_key": k, "security_id": c["security_id"], "name": c["name"],
                  "market_cap_usd": c["market_cap_usd"], "l1_p_core": pc, "l2_label": l2_label,
                  "l2_evidence": evidence, "score": score,
@@ -2778,6 +3148,21 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                  "_x": (c, r1, r2, inp if l2_ok else None, l2_status, agg, k in forced_keys)}
         if k in rescued_ok and k not in pass_keys:
             entry["l1_rescued"] = True
+        if s_state is not None:
+            entry["l2_second_search"] = s_state
+            if s_state == "raised":
+                entry["l2_label_before_second"] = "insufficient"
+        if c_state is not None:
+            entry["l2_constraint"] = c_state
+            if c_state in ("missing", "unclear"):
+                entry["l2_label_before_constraint"] = "explicit"
+        if judge_on:
+            from . import atomic as _atomic
+            entry[_atomic.LAYER_KEY] = True        # order_rank: a row a pin brings in ranks by the pin's label
+            if l2_label in L2_VERIFIED:
+                entry.update(_atomic.row_fields(l2_label, judge_map.get(k), jtarget))
+                if k in j_not_read and entry["judge_state"] == "unchecked":
+                    entry["judge_state"] = _atomic.NOT_READ
         if l2_label in L2_VERIFIED:
             verified.append(entry)
         elif l2_label == "contradicted" and not _pin_of(pins, c):
@@ -2840,10 +3225,14 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
             "l2_read_note": agg.get("note"), "l2_read_detail": agg.get("reads"),
             "evidence_sha": inp.get("evidence_sha"), "l2_forced": forced,
             "l2_label_cap": PROFILE_CAP_ZH if (l2_label in L2_VERIFIED and inp.get("evidence") == "profile") else None,
+            **({"l2_label_before_cap": "explicit"} if (r2 or {}).get("label_capped") and l2_label == "partial"
+               else {}),
             "l2_should_pass": sp_info.get(c["company_key"]),
             "doc_fetch": (l2_inputs.get(c["company_key"]) or {}).get("doc_fetch"),
         }
-        for k in ("user_note", "user_chip", "below_cut", "user_pin_via", "user_pin_at", "l1_rescued") + SCOPE_ROW_KEYS:
+        for k in ("user_note", "user_chip", "below_cut", "user_pin_via", "user_pin_at", "l1_rescued", "l2_constraint",
+                  "l2_label_before_constraint", "l2_second_search", "l2_label_before_second") + JUDGE_ROW_KEYS \
+                + SCOPE_ROW_KEYS:
             if e.get(k) is not None:
                 row[k] = e[k]
         fl = (hits.get(c["company_key"]) or {}).get("flags")
@@ -2852,6 +3241,10 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         return row
 
     out_rows = [out_row(i, x) for i, x in ranked]
+    sl_info = None
+    if shortlist:
+        from . import shortlist as _sl
+        out_rows, sl_info = _sl.apply(out_rows)
     unv_rows = [out_row(None, x) for x in unv_top]
     excluded_rows = [out_row(None, x) for x in excluded]
     scope_rows = [out_row(None, x) for x in rank_extra.get("excluded_by_scope") or []]
@@ -2893,7 +3286,9 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
                                              "lang")
     layers["l2"]["summary_inputs"] = sum(1 for i in l2_inputs.values() if i.get("summary"))
     cost = round(layers["l1"]["cost_usd"] + layers["l2"]["cost_usd"]
-                 + float((layers.get("facet") or {}).get("cost_usd") or 0.0), 6)
+                 + float((layers.get("facet") or {}).get("cost_usd") or 0.0)
+                 + float((cinfo or {}).get("cost_usd") or 0.0) + float((sinfo or {}).get("cost_usd") or 0.0)
+                 + float((jinfo or {}).get("cost_usd") or 0.0), 6)
 
     def brief(c: dict, r: dict | None = None) -> dict:
         return {"security_id": c["security_id"], "name": c["name"], "market_cap_usd": c["market_cap_usd"],
@@ -2962,6 +3357,45 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
         "gray_private": "gray-private" in tiers_used, "errors": errors, "warnings": warnings, "notes": notes,
         "output_dir": str(out_path),
     }
+    if cinfo is not None:
+        states = [x.get("l2_constraint") for x in verified + unverified]
+        result["constraints"] = {"items": params.get("constraints") or [],
+                                 "question_sha": params.get("constraint_question_sha"),
+                                 "question": _question_dict(cquestion) if cquestion is not None else None,
+                                 "checked": sum(1 for x in states if x in ("met", "missing", "unclear")),
+                                 "demoted": sum(1 for x in states if x in ("missing", "unclear")),
+                                 "unchecked": sum(1 for x in states if x == "unchecked"),
+                                 "labels": {k: {x: v for x, v in lab.items() if x in ("label", "p", "n")}
+                                            for k, lab in sorted(cons_map.items())}}
+        if result["constraints"]["unchecked"] and status == STATUS_OK:
+            result["status"] = status = STATUS_PARTIAL
+    if jinfo is not None:
+        from . import atomic as _atomic
+        result["judge"] = {"mode": params.get("judge"), "question_sha": params.get("judge_question_sha"),
+                           "questions": _atomic.questions_dict(jquestions), "has_target": bool(jtarget),
+                           "rule": _atomic.RULE, "applied": judge_on,
+                           **_atomic.summary(verified), "review": _atomic.review_keys(verified)}
+        if judge_on and (jinfo.get("status") == "partial" or result["judge"]["unchecked"]) and status == STATUS_OK:
+            result["status"] = status = STATUS_PARTIAL
+        elif not judge_on and status == STATUS_OK:
+            result["status"] = status = STATUS_PARTIAL
+    if sl_info is not None:
+        result["shortlist"] = sl_info
+    if lang_terms or second_search:
+        result["keywords"].update(weak=kinfo.get("weak") or {}, lang_terms=kinfo.get("lang_terms"))
+        if lt_gone and result["status"] == STATUS_OK:       # the lever fell back: this run does not measure it
+            result["status"] = status = STATUS_PARTIAL
+    if sinfo is not None:
+        states = [x.get("l2_second_search") for x in verified + unverified]
+        result["second_search"] = {**{k: sinfo.get(k) for k in ("candidates", "no_new_text", "items", "answered",
+                                                                 "status", "skipped", "cost_usd", "read")},
+                                   "raised": sum(1 for x in states if x == "raised"),
+                                   "kept": sum(1 for x in states if x == "kept"),
+                                   "terms": kinfo.get("second_terms"), "weak": kinfo.get("second_weak"),
+                                   "rule": "L1 core + L2 insufficient on annual-report text: one more L2 read over "
+                                           "other passages matching the widened terms; explicit / partial -> partial"}
+        if (sinfo.get("status") == "partial" or sinfo.get("skipped")) and result["status"] == STATUS_OK:
+            result["status"] = status = STATUS_PARTIAL      # the second search did not (fully) run: said in notes
     if excluded_rows or sv is not None:
         result["excluded_by_user"] = excluded_rows
     if scope_rows or agent_rows or facet_on or agent:
@@ -3020,6 +3454,32 @@ def _screen_layers(cfg, idea: str, *, run_id, factory, out_path, params, notes, 
 
     # 5) outputs + persist
     l2_lines = None if dry_run else [_l2_input_line(by_key[it.item_id], l2_inputs[it.item_id]) for it in l2_items]
+    if l2_lines and second_inputs:      # --second-search: the other passages read again, beside the first text
+        raised = {x["company_key"] for x in verified + unverified if x.get("l2_second_search") == "raised"}
+        for j, line in enumerate(l2_lines):
+            k = line["company_key"]
+            x = second_inputs.get(k)
+            if x is None:
+                continue
+            if k in raised:     # its evidence is the second passage (the row's evidence_sha); the first text beside
+                first = {f: line.get(f) for f in ("text", "excerpts", "keyword_hit", "matched_terms", "evidence_sha")}
+                l2_lines[j] = {**_l2_input_line(by_key[k], x), "l2_second_search": "raised", "first_search": first}
+            else:
+                line["second_search"] = {"text": x["text"], "excerpts": x["excerpts"],
+                                         "matched_terms": x.get("matched_terms") or [],
+                                         "evidence_sha": x.get("evidence_sha")}
+    if result.get("shortlist") and l2_lines:
+        # a row its page would mark borderline (the excerpt shown does not mention the idea) is to confirm: the same
+        # words and texts the page uses (the result's terms and scope, l2_inputs.jsonl as it is written below)
+        from . import page as _page, shortlist as _sl
+        _sl.settle(result, _page.l2_pieces_of_lines(l2_lines))
+        out_rows = result["rows"]
+        st_rows = _shells.top_st_rows(out_rows)
+        if st_rows:
+            result["st_warning"] = {"security_ids": [r["security_id"] for r in st_rows],
+                                    "text_zh": _shells.ST_WARNING_ZH, "text_en": _shells.ST_WARNING_EN}
+        else:
+            result.pop("st_warning", None)
     ledger = None
     if pre.get("all_rows") is not None:
         ledger = _ledger(result, {**pre, "rescued": set(rescued_keys)}, by_key, l1_res, l2_res, l2_agg,
@@ -3407,7 +3867,10 @@ def write_outputs(result: dict[str, Any], out_path: Path, l2_inputs: list[dict[s
     import gzip
     from . import report
     out_path.mkdir(parents=True, exist_ok=True)
-    files = {"results.csv": _csv_text(CSV_COLUMNS, result["rows"]),
+    csv_rows = [dict(r, section="main" if r["shortlist_tier"] == "high" else "to_confirm")
+                if r.get("shortlist_tier") else r for r in result["rows"]]
+    extra_cols = tuple(c for c in CSV_LEVER_COLUMNS if any(c in r for r in csv_rows))
+    files = {"results.csv": _csv_text(CSV_COLUMNS + extra_cols, csv_rows),
              "results.json": json.dumps(result, ensure_ascii=False, indent=2, default=str)}
     dropped = (result.get("gaps") or {}).get("shells_dropped")
     if dropped:
@@ -3550,6 +4013,21 @@ def rank_only_run(cfg, idea: str, *, from_run: str, sieve: Any = "auto", change_
     q2 = build_l2_question(idea, idea_en, rules=(sv or {}).get("rules") or (), facets=(sv or {}).get("facets"))
     if params.get("l2_question_sha") and question_sha(q2) != params["l2_question_sha"]:
         raise RankOnlyUnsafe("l2_question_sha")
+    if params.get("l2_constraints"):
+        # the stored constraint answers (calib.load_pool re-applies them) must answer today's question
+        from . import constraints as _cons
+        _c, cq = constraint_question(idea, idea_en, sv)
+        if (_cons.question_sha(cq) if cq is not None else None) != params.get("constraint_question_sha"):
+            raise RankOnlyUnsafe("constraint_question_sha")
+        if (result.get("constraints") or {}).get("checked") and not any(p.get("l2_constraint") in (
+                "met", "missing", "unclear") for p in pool):
+            raise RankOnlyUnsafe("constraint answers not stored (a run made before they were)")
+    if params.get("judge"):
+        # the stored judge answers (calib.load_pool re-applies them) must answer today's questions
+        from . import atomic as _atomic
+        jq, _t = _atomic.questions_for(idea, idea_en, sv, params["judge"])
+        if _atomic.question_sha(jq) != params.get("judge_question_sha"):
+            raise RankOnlyUnsafe("judge_question_sha")
     if sieve_terms_sha(sv) != params.get("sieve_terms_sha"):
         raise RankOnlyUnsafe("sieve_terms_sha")
     fsha = scope.facets_sha(sv)
@@ -3584,7 +4062,8 @@ def rank_only_run(cfg, idea: str, *, from_run: str, sieve: Any = "auto", change_
                 fund = load_fundamentals(con, need)
     pool_by = {p["company_key"]: p for p in pool}
     keep_keys = set(SCOPE_ROW_KEYS) | {"rank", "score", "user_verdict", "verdict_source", "backfill", "user_note",
-                                       "user_chip", "below_cut", "user_pin_via", "user_pin_at"}
+                                       "user_chip", "below_cut", "user_pin_via", "user_pin_at", "shortlist_tier",
+                                       "rank_before_shortlist", "main_via", "shown_gap"}
 
     def row_of(r: dict[str, Any]) -> dict[str, Any]:
         k = r["company_key"]
@@ -3608,15 +4087,20 @@ def rank_only_run(cfg, idea: str, *, from_run: str, sieve: Any = "auto", change_
                excluded_by_agent=[row_of(r) for r in rr["excluded_by_agent"]])
     new.pop("supersedes", None)
     new.pop("outputs_written", None)
+    new.pop("shortlist", None)
+    if rr.get("shortlist") is not None:            # --shortlist: presentation only, re-applied for free
+        new["shortlist"] = rr["shortlist"]
     p2 = {k: v for k, v in params.items() if k not in ("update_budget_usd",)}
     p2.update(from_run=from_run, rank_only=True, change_kind=change_kind, l1_new=False,
               sieve_path=(str(sv_path) if sv_path else "<inline>" if sv is not None else None),
               sieve_version=(sv or {}).get("version"), sieve_sha256=_sieve_sha(sv, sv_path),
               l2_question_sha=question_sha(q2), sieve_terms_sha=sieve_terms_sha(sv), facets_sha=fsha)
+    from . import shortlist as _sl
+    p2.update(shortlist=_sl.on(params), list="main" if _sl.on(params) else "padded")
     new["params"] = p2
     lay = result.get("layers") or {}
     new["layers"] = {**lay, **{k: {**(lay.get(k) or {}), "cost_usd": 0.0, "requests": 0}
-                               for k in ("l1", "l2", "facet") if k in lay},
+                               for k in ("l1", "l2", "facet", "judge") if k in lay},
                      "rank_only": {"from_run": from_run, "change_kind": change_kind,
                                    # every current verdict of your AI, held ones too (the chat counts the same)
                                    "reviewed": sum(1 for v in agent.values() if v.get("state") in STATES_AGENT)}}
@@ -3646,6 +4130,11 @@ def rank_only_run(cfg, idea: str, *, from_run: str, sieve: Any = "auto", change_
                               "backfill": sum(1 for r in rows if r.get("backfill")),
                               "scope_answers": len(scope._entries(sv)),
                               "summary_zh": f"已加载校准：{len(answers)} 条回答，{len(scope._entries(sv))} 个范围回答"}
+    if new.get("shortlist"):
+        # the rows as written (their excerpts, the texts layer 2 read): a row its page would mark borderline is to
+        # confirm, as a screen lists it
+        from . import page as _page
+        _sl.settle(new, _page.l2_pieces_of_lines(inputs.values()) if inputs else _page.load_l2_pieces(base_dir))
     tiers = sorted({t for r in rows + new["unverified"] + new["excluded_by_user"]
                     for t in (r.get("l1_input_tier"), r.get("l2_input_tier")) if t})
     new["tiers_used"], new["gray_private"] = tiers, "gray-private" in tiers

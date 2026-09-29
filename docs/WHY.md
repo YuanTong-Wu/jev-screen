@@ -52,7 +52,8 @@ carries `agent_hint_en`.
 | `l2_unverified` | step 2 found no explicit evidence | download its annual report (`sync-cninfo/edinet/dart/bse --codes CODE`, `sync-mops --mode annual --codes CODE`, only when the key / consent exists) then rerun from the run; or better seed terms; or a pin. A market without such a command is a gap (no price shown) |
 | `ranked_below_cut` | passed both steps (or missed step 1 and was verified on its annual report), ranked below `--max-out` | nothing needed; `--max-out N` from the run |
 | `excluded_by_user` | the human said no (card or `sieve pin`) | `answer --undo N` / `sieve unpin` (human's yes) |
-| `in_output` | it is in the list (rank, marks, ST warning) | none |
+| `in_output` | it is in the list (rank, marks, ST warning); with the sections: in the confirmed list at #n, `main_via` agent / user named | none |
+| `to_confirm` | listed, but in the To confirm section, not in the confirmed list; `stages[].data.reasons` say why (first read not core, the check found it related only, profile only, the idea's market / place / role missing or not checked, judge tier not A, your AI's no waiting, a scope answer moved it down) | a human's yes (`decide cN=yes` / `sieve pin TICKER yes`) moves it into the confirmed list |
 | `forced_extra` | a sieve company outside the filters, read and reported | none (explains why it is not listed; a pinned company that only lacks a profile is ranked and gets `in_output` / `excluded_by_user`) |
 | `pre_ledger` | the run predates the ledger and the store is busy | ask again later |
 

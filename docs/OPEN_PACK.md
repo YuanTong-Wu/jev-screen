@@ -1,6 +1,7 @@
 # Open data pack
 
-The owner publishes a free daily **open data pack** as GitHub Releases (`pack-YYYY-MM-DD`). It holds only data
+The owner publishes a free **open data pack** as GitHub Releases (`pack-YYYY-MM-DD`) when available; the
+scheduled job below is not enabled yet, so there is no fixed release rhythm. It holds only data
 whose licence allows redistribution, so a new user gets official identifiers and Japanese annual-report business
 text without API keys, and without the personal-use sources ever leaving anyone's machine.
 
@@ -152,4 +153,4 @@ Built by `pack.build()` from the live store (read-only session, 0.7 s) into a te
 | **Total** | | **~2.51 MB** |
 
 Importing it into an empty store takes ~3.5 s (a re-import: 0.1 s, every document 'unchanged'). EDINET coverage
-grows with the daily job: ~3,800 listed filers when complete, so expect roughly 5-6 MB.
+grows with each new pack: ~3,800 listed filers when complete, so expect roughly 5-6 MB.

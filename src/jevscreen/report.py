@@ -177,6 +177,9 @@ def _l1_cell(r: dict) -> str | None:
     return f"{lab} (rescued)" if lab and r.get("l1_rescued") else lab
 
 
+SECOND_SEARCH_ZH = "推断：二次检索在同一份年报的另一段找到，最多算相关"   # screen --second-search raised it
+
+
 def _marks(r: dict) -> list[str]:
     """Calibration marks of a row: the user's judgment, backfill, 边缘 and a short read count."""
     out = []
@@ -194,6 +197,8 @@ def _marks(r: dict) -> list[str]:
         out.append(r["l2_read_note"])
     if r.get("l2_label_cap"):
         out.append(r["l2_label_cap"])
+    if r.get("l2_second_search") == "raised":
+        out.append(SECOND_SEARCH_ZH)
     if r.get("l2_should_pass"):
         out.append("应通过" + ("" if r["l2_should_pass"].get("held") else "，仍偏低"))
     out += [FLAG_ZH[f] for f in r.get("flags") or () if f in FLAG_ZH and f != "spac_like"]
@@ -560,14 +565,35 @@ def render_markdown(result: dict[str, Any]) -> str:
         out.append("")
         out += [f"- {e}" for e in result.get("errors", []) + result.get("notes", [])]
         out.append("")
-    out.append("## Ranked results (L2 explicit / partial)")
-    out.append("")
     rows = result.get("rows") or []
-    if rows:
-        out.append(_result_table(rows, ranked=True, lang=lang))
+    if result.get("shortlist") and any(r.get("shortlist_tier") for r in rows):
+        # the confirmed list and the to-confirm section (never padded to 10: owner decision 2026-09-29)
+        main = [r for r in rows if r.get("shortlist_tier") == "high"]
+        confirm = [r for r in rows if r.get("shortlist_tier") != "high"]
+        out.append(f"## Main list (confirmed): {len(main)}")
+        out.append("")
+        out.append("L1 core + L2 explicit (with --judge: tier A), plus the rows your AI confirmed from the text "
+                   "(marked) and your own yes answers; never padded to 10.")
+        out.append("")
+        out.append(_result_table(main, ranked=True, lang=lang) if main else
+                   "(none: no company could be confirmed from its own texts)")
+        out.append("")
+        if confirm:
+            out.append(f"## To confirm (not in the confirmed list): {len(confirm)}")
+            out.append("")
+            out.append("Related on the check, profile only, not checked for the idea's constraints, or moved down; "
+                       "listed apart and never used to fill the main list.")
+            out.append("")
+            out.append(_result_table(confirm, ranked=True, lang=lang))
+            out.append("")
     else:
-        out.append("(no rows" + (": dry run)" if dry else ": no company passed layer 2)"))
-    out.append("")
+        out.append("## Ranked results (L2 explicit / partial)")
+        out.append("")
+        if rows:
+            out.append(_result_table(rows, ranked=True, lang=lang))
+        else:
+            out.append("(no rows" + (": dry run)" if dry else ": no company passed layer 2)"))
+        out.append("")
     unv = result.get("unverified") or []
     if unv:
         out.append(f"## Unverified L1 passes (not ranked): {f.get('unverified', len(unv))}")
@@ -700,17 +726,25 @@ def format_console(result: dict[str, Any], top_n: int = 20) -> str:
         lines.append(f"error: {e}")
     lines.append(f"output: {result['output_dir']}")
     rows = (result.get("rows") or [])[:top_n]
+    sections = bool(result.get("shortlist")) and any(r.get("shortlist_tier") for r in rows)
+    if sections:
+        n_main = sum(1 for r in result.get("rows") or [] if r.get("shortlist_tier") == "high")
+        lines.append("")
+        lines.append(f"main list (confirmed): {n_main}; to confirm (not in the confirmed list): "
+                     f"{len(result.get('rows') or []) - n_main}")
     if rows:
         lines.append("")
         lines.append(_text_table(
-            ["#", "security", "name", "mcap", "L1", "p_core", "L2", "read", "score"],
+            ["#", "security", "name", "mcap", "L1", "p_core", "L2", "read", "score"] + (["list"] if sections else []),
             [[str(r["rank"]), r["security_id"], (r["name"] or "")[:32], money(r["market_cap_usd"]),
               _l1_cell(r) or "-", num(r["l1_p_core"]),
               " ".join([r["l2_label"] or "-"] + [m for m in _marks(r) if m in (USER_ONLY_ZH, BELOW_CUT_ZH,
                                                                                "递补，未经确认", "边缘", "仅简介",
                                                                                *FLAG_ZH.values())
                                                    or m.startswith(READ_NOTE_PREFIX)]),
-              r.get("l2_evidence") or "-", num(r["score"])] for r in rows]))
+              r.get("l2_evidence") or "-", num(r["score"])]
+             + ([("main" + (" (your AI)" if r.get("main_via") == "agent" else "")) if r.get("shortlist_tier") == "high"
+                 else "to confirm"] if sections else []) for r in rows]))
     if result.get("unverified"):
         lines.append(f"unverified L1 passes (not ranked): {f.get('unverified', len(result['unverified']))}; "
                      "see report.md")

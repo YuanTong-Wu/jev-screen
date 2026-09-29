@@ -260,7 +260,9 @@ Free and read-only. Why each target is (not) in the run's result (`results[]`; t
 / `plain_en` and, for one target, `who_zh` / `who_en`: `who_zh` uses the official Chinese short name when the store
 has one): `stop` (a stable id), `plain_zh` / `plain_en`,
 `stages`, `facts` / `inferences` / `gaps`, and `changes[]` with complete commands (`argv`, `command`), `cost_usd`,
-`seconds` and `ask_human`. Full schema and the stop table: [WHY.md](WHY.md). Exit 0 explained (also
+`seconds` and `ask_human`. With the sections, a listed company is `in_output` ("in the confirmed list at #n", with
+`main_via` agent / user named) or `to_confirm` ("in the To confirm section, not in the confirmed list", with the
+reasons in `plain_<lang>` and the rank stage's `data.reasons`). Full schema and the stop table: [WHY.md](WHY.md). Exit 0 explained (also
 `partial_files_only`), 1 unknown run / `choose_run` / `no_runs` / a target `not_found` or `ambiguous` (with
 `candidates` and `agent_hint_en`), 3 unreadable run files.
 
@@ -281,6 +283,22 @@ and `params.idea_en_source` `agent`; checked for company names); a `--from-run` 
 a different one. `--no-page` skips `page.html` (written after the cards otherwise). Every run writes `funnel.jsonl.gz`;
 `results.json` gains `shells`, `st_warning` (when a top-20 row is ST / *ST), `gaps.shells_dropped` and
 `calibration.extras`; rows gain `flags`.
+
+**The main list and the to-confirm section (default; owner decision 2026-09-29: never padded to 10).** Every screen
+(and every `--from-run` / free new version of one) tiers its listed rows: `shortlist_tier` `high` = the main list
+(L1 core + L2 explicit after the `--l2-constraints` check when on; with `--judge`, tier A; plus your AI's explicit
+yes with 1-3 quote_ids, `main_via: "agent"`, and the human's yes pins, `main_via: "user"`), `confirm` = the
+to-confirm section (the rest, in `shortlist.confirm_order`; a main row your AI said no to while it waits for the
+human: `main_via: "agent_no"`, last). The main list comes first and is numbered 1..n; the to-confirm rows follow and
+never fill it. A row its page would mark borderline (`shown_gap`: `no_mention`, the excerpt shown does not mention
+the idea, or `edge`, split reads) is to confirm too, with that reason, unless the human said yes (`shortlist.info.gap`
+counts them). A row a scope answer moved down (`scope_demoted`) is always to confirm, whatever your AI said; only
+the human's yes moves it back. `results.json` carries `shortlist` `{high, confirm, rule, agent?, agent_no?, user?,
+by?}` (counted over every row, a user pin listed below the cut too) and
+`params.list` `main`; `results.csv` gains `section` (`main` / `to_confirm`), `shortlist_tier`, `main_via`,
+`rank_before_shortlist`; `report.md` has "Main list (confirmed)" and "To confirm (not in the confirmed list)"; the console
+table a `list` column. `--no-shortlist` keeps the old single padded list (`params.list` `padded`, no tiers, no
+sections). A result written before the sections renders as it was; a new version of it gets the sections.
 
 ## On-demand annual reports (`screen` phase 2, `jevscreen fetch-docs`)
 
@@ -303,7 +321,9 @@ inherits the original budget.
 
 ```jsonc
 "layers": {"fetch": {
-  "mode": "auto",                    // auto (screen) | fetch-docs
+  "mode": "auto",                    // auto (screen) | fetch-docs | topn (screen / eval run --fetch-profile-only-topn,
+                                     //   --deepen-official-topn; then also "topn": {"topn", "deepen", "selected",
+                                     //   "order", "deep", "deepen_ready", "deepened", "deepen_outcomes", "stopped"})
   "status": "ok",                    // ok | partial (a source stopped / companies deferred) | interrupted | skipped
   "skip_reason": null,               // store_busy | ... when status is skipped
   "base_run": "scr-...", "time_budget_s": 120, "seconds": 71.4,
@@ -317,12 +337,19 @@ inherits the original budget.
   "questions": [{"id": "sec_email", "human_question_zh": "...", "human_question_en": "...",
                  "record_answer_commands": ["jevscreen keys set sec-email", "jevscreen consent set sec-email-ask no"],
                  "then_command": "jevscreen fetch-docs scr-...",   // run after a yes (key / consent recorded)
-                 "ask_human": true}],     // sec_email: not asked again after a recorded no (consent sec-email-ask)
+                 "names": ["NYSE:GEV", "NYSE:CAT", "NYSE:GNRC"], "thin": ["NYSE:GEV"],
+                 "ask_human": true}],     // sec_email: not asked again after a recorded no (consent sec-email-ask);
+                                          // the question names up to 3 US companies it helps, thin-profile ones
+                                          // first ("thin": they cannot be listed without the report)
   "summary_zh": "62 家读了官方年报（其中 27 家本次新抓）；20 家只读了简介：16 家市场暂无来源，4 家时间到",
   "summary_en": "62 read official annual reports (27 fetched now); 20 read the profile only: ...",
   "next_command": null,              // "jevscreen fetch-docs latest" when stored reports are not read yet
-  "update": {"run_id": "scr-...", "status": "ok", "cost_usd": 0.003, "report_path": ".../report.md", "written": true}
+  "update": {"run_id": "scr-...", "status": "ok", "cost_usd": 0.003, "report_path": ".../report.md", "written": true},
             // or {"skipped": "nothing_fetched" | "no_update" | "no_budget" | "sieve_changed" | "not_written" | ...}
+  "thin_waiting": [{"security_id": "NYSE:GEV", "name": "GE Vernova", "country": "United States",
+                    "market_cap_usd": 2.5e11, "reason": "no_key_sec"}]
+            // the L1 misses read only because their profile is too thin (screen.l1_rescued) whose annual report did
+            // not come in: they cannot be listed on the profile, so the page's gap section names them (largest 5)
 }},
 "gaps": {"l2_doc_unavailable": [{"security_id": "IDX:XXXX", "name": "...", "country": "Indonesia", "exchange": "IDX",
                                  "market_cap_usd": 2.1e9, "source": null, "reason": "no_adapter", "note": null}]},
@@ -342,7 +369,23 @@ the market yet), `edinet_pack` (Japanese text comes from the open pack), `no_pdf
 `known_failure` (tried recently; not retried for 1-30 days, also 14 days after the adapter found the newest report
 unchanged and unreadable; `--retry-failed` overrides), `deferred_time`,
 `deferred_cap` (MOPS 8, DART 20, BSE 40 per run), `source_paused` (blocked < 24 h ago), `blocked` (blocked during
-this run), `source_busy`, `store_busy`, `error`, `unresolved`. zh/en text: `jevscreen.ondemand.REASONS`.
+this run), `source_busy`, `store_busy`, `error`, `unresolved`; the top-N levers add `outside_topn` (a profile row
+below the top N: not fetched), `no_key_edinet` (EDINET needs the human's key: ask, never read it) and
+`stopped_after_block` (an earlier source refused access, so the sequential fetch stopped; nothing to do). zh/en text:
+`jevscreen.ondemand.REASONS`.
+
+The top-N levers (`screen` / `eval run --fetch-profile-only-topn N`, `--deepen-official-topn N`; both off by default)
+fetch one source at a time (BSE, DART, CNINFO, EDINET, then MOPS with its consent and SEC with its email) and stop at
+the first block. CNINFO / DART / EDINET texts they store are extracted deep: after the business section, bounded
+blocks of the same filing headed 【营业收入构成】 / 【核心竞争力分析】 / 【管理层讨论与分析（节选）】 (CNINFO full report),
+【経営者による財政状態、経営成績及びキャッシュ・フローの状況の分析】 / 【セグメント情報】 (EDINET), 【매출 및 수주상황】 /
+【이사의 경영진단 및 분석의견】 (DART), at most 20,000 characters in all (`jevscreen.sources.deep_sections`). They are the
+filing's own text (facts), never a summary; extractors `cninfo-v4`, `dart-web-v2`, `edinet-v3`. Each deep text is
+its own documents row (section `business_deep`) next to the untouched shallow one; only the top-N update pass reads
+it (its results.json `params.deep_view` lists those companies), so runs without the levers are unchanged. The update
+pass keeps the run's `--read-offset`. `topn.deepen_outcomes` codes: `deepened` (a deep text that adds to the shallow
+one is stored, now or by an earlier fetch), `unchanged` (the deep read found nothing to add), `not_stored`, the
+source's skip reasons, `known_failure` (a deep re-read failed in the last 14 days), `deferred_cap`.
 
 ### `jevscreen fetch-docs [RUN_ID|latest] [--time 300] [--sources sec,cninfo,bse,mops,dart] [--retry-failed] [--no-update] [--budget 0.05] [--dry-run] [--json]`
 
@@ -499,11 +542,30 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
             "next_command": null, "summary_zh": "…", "summary_en": "…",
             "questions": [{"id": "sec_email", "optional": true, "then_command": "jevscreen fetch-docs <run_id>",
                            "human_question_zh": "…（可选，…）", "human_question_en": "… (optional: …)"}]},
-                                    // only questions that help a company in the top 10 (sec_email: a US one,
+                                    // only questions that help a company in the top 10 (sec_email: a US one, or
+                                    // a US company whose profile is too thin to list without its report,
                                     // mops_annual: a Taiwan one, opendart: a Korean one); then_command names run_id
-  "summary": {"listed": 40, "annual_report": 22, "profile_only": 18, "edge": 5, "no_mention": 2, "cards": 8},
-                                    // no_mention: rows whose read text names none of the idea's words (gap)
-  "top": [{"rank": 1, "name": "…",  // the name the page shows: on a Chinese page the official Chinese short name
+  "summary": {"listed": 40, "annual_report": 3, "profile_only": 1, "edge": 5, "no_mention": 2, "cards": 8,
+              "main": 4, "to_confirm": 36, "main_by_agent": 1},
+                                    // no_mention: rows whose read text names none of the idea's words (gap);
+                                    // listed: every listed row; main: the confirmed list (never padded to 10: owner
+                                    // decision 2026-09-29), to_confirm: the separate to-confirm section,
+                                    // main_by_agent: main rows your review confirmed; annual_report / profile_only
+                                    // count the main list. A run made with --no-shortlist (one padded list) has no
+                                    // main / to_confirm and counts every listed row
+  "to_confirm": {"n": 36, "rows": [{"name": "…", "name_en": "…", "ticker": "…", "security_id": "…",
+                                    "country": "…", "verdict_words_zh": "相关", "verdict_words_en": "Related",
+                                    "evidence_kind": "profile", "agent": null, "moved_by_agent": false,
+                                    "unchecked": false}]},
+                                    // the page's 待核对 / To confirm section in brief (the first 10 rows): never
+                                    // numbered with `top`, never used to fill it; moved_by_agent: your review said no
+                                    // to a main-list row. null for a single padded list
+  "top_more": 0,                    // confirmed rows beyond the 10 in `top` (the page lists every confirmed row;
+                                    // text_<lang> then says so in one line); 0 when all fit or without the sections
+  "top": [{"rank": 1, "verdict": "explicit",   // verdict: explicit | partial | edge (the page's verdict word)
+           "name": "…",             // the MAIN LIST only (the first 10 of it at most, often fewer than 10: say so
+                                    // calmly, never pad);
+                                    // the name the page shows: on a Chinese page the official Chinese short name
                                     // (CNINFO 简称, MOPS 公司簡稱), else your translation, else the English name;
                                     // on an English page always the English name
            "name_en": "…", "name_zh": "…",   // name_zh: the official short name, null without one
@@ -511,15 +573,23 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
            "ticker": "…", "country": "China", "country_zh": "中国", "verdict_words_zh": "明确符合",
            "verdict_words_en": "Clearly fits", "evidence_kind": "annual_report",
            "one_line": "…",                 // what the page shows: your translation once imported, else the
-                                            // first sentence of the profile in its own language
+                                            // annual report's own business sentence when the row was checked on
+                                            // one (its overview), else the first sentence of the profile, in its
+                                            // own language
+           "one_line_source": "annual_report",   // annual_report | profile (null: no line); the annual report's
+                                         // sentence must name the company (公司 / 当社 / 당사 / We / its name) and
+                                         // not the economy, the industry, a definition or the legal set-up
            "one_line_translated": false, "one_line_original": null,   // the verbatim text when translated
            "one_line_needs_translation": true,   // still in another language than the page
            "excerpt_mentions_idea": true,   // false: none of the text the AI read names the idea (say "gap");
                                             // null: nothing to check
-           "edge": false,                   // borderline (may change on re-reading, or a gap)
+           "edge": false,                   // borderline (may change on re-reading, or a gap); the chat line says
+                                            // 边缘 / borderline once (not again when the verdict is edge)
            "user": false,                   // the human answered this company on a card
            "verdict_from_user": false,      // listed only because of that answer: say "your call", not
                                             // "annual report" (up to 10 rows)
+           "checked_by_agent": false,       // in the main list because your review confirmed it from the text (yes,
+                                            // explicit, 1-3 quote_ids): say 你的 AI 核对 / "checked by your AI"
            "unchecked": false}],            // entered after a fill / re-rank and your AI has not checked it yet:
                                             // say 未核对 / "not yet checked" (the chat line already does)
   "translation_pending": 37,        // texts on the page in another language than the page's, not translated yet
@@ -529,6 +599,15 @@ Exit code = `exit_code` = the table in [AGENTS.md](../AGENTS.md#fast-path-jevscr
                   "import_command": "jevscreen page scr-… --import-translations /…/translate/scr-…-zh.json --lang zh --json"},
                                     // do this right after relaying the first result ("Translating the page")
   "next_steps": [{"text_zh": "…", "text_en": "…", "command": null, "cost_usd": 0.25, "minutes": 4}],   // 3
+                                    // a main list under 10 rows starts with a free `jevscreen why <ticker> --run …`
+                                    // step for a company to confirm; text_<lang> then says calmly that the list only
+                                    // takes companies whose texts state the business and is not padded, with three
+                                    // companies to confirm; an empty main list says so plainly and points at the
+                                    // to-confirm section; "the list may still change" when the run did not finish
+                                    // (status ok) or the check did not read every company that passed the first read
+                                    // (short_list {sections: true, main, to_confirm, unchecked, complete,
+                                    // examples_*, why_ticker}; a --no-shortlist run keeps the earlier
+                                    // {listed, unverified, unchecked, complete, examples_*} and its wording)
   "gaps": [{"id": "no_description", "count": 1111, "text_zh": "…", "text_en": "…",
             "command": "jevscreen crawl-descriptions --countries CN --min-mcap 1e9"}],
   "error": null, "notes": [],       // error: the technical detail; text_<lang> is the sentence for the human
@@ -556,10 +635,18 @@ keeps the approval (noted in `idea_en_changes` and `text_<lang>`, nobody is aske
 company name dropped or replaced included) comes back as `reprice_idea_en` with `old_refused: true`. The refusal
 fields come back on every answer of the front, also when it returns a finished result unchanged.
 
+The top-gap fill (`top_fill` in the job file: `{status, exit, ok, n, at}`): once per job, right after the free profile
+download and before the default fill and any estimate, the 50 largest companies of the idea's scope (its
+`--countries`, else every market) at the floor that have no profile at all get one from TradingView, on the same
+polite `crawl-descriptions` path (consent, 24 h cooldown, rate budget, journal; stops at the first refusal). About
+30 s on a first run, nothing to do later; skipped after `--fill-descriptions no`.
+
 The default profile fill (`fill_default`: `{market, state: planned | running | done | skipped | blocked | failed |
 timeout | stopped | opted_out, reason, added, missing, minutes, opt_out_with: "--fill-descriptions no", text_zh,
 text_en}`, null for an idea without a market, also once it was narrowed to other markets after the fill started: that
-fill is then stopped and not waited for; `stopped`: the fill was interrupted from outside, e.g. a shutdown): China
+fill is then stopped and not waited for; `stopped`: the fill was interrupted from outside, e.g. a shutdown; `done` with `reason: "floor"`:
+the human raised the floor while the first read waited and every company at the new floor was covered, so the rest of
+the fill was stopped instead of waited for): China
 only (a Chinese idea, or one narrowed to CN; another single market keeps the
 fallback question below): when China >= 30% of its companies at the floor without any profile, or >= 3 of its 100 largest, the worker starts
 `crawl-descriptions` for that market at the floor right after the free profile download, as a detached child (the
@@ -601,8 +688,10 @@ answers) applies the answers to the newest version screened from it, so the comp
 output says so in one line (`applied_to_run` in `--json`).
 
 Money: `approved_usd` is the total cap the human approved for this idea and this English sentence. The screen always
-runs with `budget = remaining_usd`; the first run under an approval needs the dry run's reservation to fit, else
-`approve_budget` comes back with `kind: "over"` and up to three narrower `alternatives`, each one's reservation within
+runs with `budget = remaining_usd`; the first run under an approval needs the dry run's estimate to fit (the
+reservation, its safety margin, may go over: the budget is hard, the run stops at the cap), else
+`approve_budget` comes back with `kind: "over"` (the question names the estimate, with a third decimal when two would
+read as the cap) and up to three narrower `alternatives`, each one's estimate within
 what is left of the approval (rerunning with an alternative's `flags` estimates again under the same approval). The canary (one paid
 request of about $0.00005 that proves the key can pay, run after the approval and before the estimate) counts
 against it, and so does the update pass after the on-demand fetch (the `fetch` step: the same fetch and update as
@@ -635,25 +724,36 @@ After the first result the human answers no calibration cards. Instead:
 
 ```jsonc
 {"id": "agent_review", "ask_agent": true, "blocking": true, "deck_id": "adeck-scr-…-A",
- "deck_path": "/…/screens/…/agent_deck_A.json", "items": 23,
+ "deck_path": "/…/screens/…/agent_deck_A.json", "items": 41,
  "record_command": "jevscreen judge --deck adeck-scr-…-A --file <answers.json> --json",
  "skip_command": "jevscreen judge --deck adeck-scr-…-A --skip --json", "instructions_en": "…"}
 ```
 
    `text_<lang>` is only 「结果出来了，我正在逐家核对…」: the list is not relayed yet. The page shows the list with a
-   "your AI is checking" note and keeps refreshing. If nothing is recorded within 600 s, `--status` finalizes the
+   "your AI is checking" note and keeps refreshing. If nothing is recorded within 1200 s, `--status` finalizes the
    questions without the AI (`agent_review.state: "timed_out"`, a note) and the status is `done`.
 
    The deck (`jevscreen.agent_deck/1`, a local file in the run folder; personal use, keep it on this computer):
-   `items[]` = `{n, group: top|held|below_cut|gap|removed_by_scope|followup, held_sid, held_kind, company_key,
-   security_id, name, name_zh, rank, system: {label, p_pos, p_explicit, edge, facets}, evidence: {kind, source, form,
-   filing_date, lang, sentences: [[1, "…"], …]}, evidence_sha, mentions_idea}`; the header carries `criteria_en` (the
+   `items[]` = `{n, group: top|held|below_cut|gap|removed_by_scope|judge_demoted|followup, held_sid, held_kind,
+   company_key, security_id, name, name_zh, rank, section: main|to_confirm|null, system: {label, p_pos, p_explicit, edge, facets, judge?}, evidence:
+   {kind, source, form, filing_date, lang, sentences: [[1, "…"], …], more?: {sentences: [[13, "…"], …], source, form,
+   filing_date, lang}}, evidence_sha, review_sha?, mentions_idea}` (`evidence.more`: when the company has a stored
+   official filing, up to 5 more numbered sentences of it that the excerpt left out, picked by the idea's words and
+   Latin anchors, the company's own product / business sentences first, industry-trend talk last; numbered after the
+   excerpt's sentences and citable like them; a profile-only item gets them too when a filing is stored;
+   `review_sha` covers the excerpt's evidence_sha and these sentences); the header carries `criteria_en` (the
    L2 criteria plus the human's scope answers as sentences), `chips` (c-k with their zh/en words), `held_questions`
    (`[{sid, kind, criterion_en}]`), `instructions_en`, `answer_schema`, `record_command`, `skip_command`,
-   `licence_note`. Part A (<= 25: the top 10, the side-V rows of the provisional scope splits, <= 3 below-cut / gap
-   rows) blocks; part B (ranks 11..max_out, strong rows removed by scope, below-cut, gap; <= 45) never blocks
+   `licence_note`. Part A (<= 60, typically 30-45 items and 5-10 minutes of reading: the side-V rows of the
+   provisional scope splits, then every company to confirm, then every row of the main list, up to max_out (the
+   first 10 ranks for a --no-shortlist run; room is kept for the main list, the to-confirm rows fill what is left),
+   <= 3 below-cut / gap rows) blocks. A yes, level explicit, with 1-3 quote_ids on a to-confirm item moves it into the main list
+   (`main_via: "agent"`, 你的 AI 核对); partial or unsure leave it to confirm; a no on a main item takes it off the
+   main list (applied: removed; waiting for the human: to confirm, `main_via: "agent_no"`); the human's pins win.
+   Part B (listed rows part A did not hold, strong rows removed by scope, below-cut, gap; <= 45) never blocks
    (`agent_review.part_b`); follow-up parts `F<n>` come whenever a new version (your judge, a decide, a profile
-   fill) brings companies your AI has not read into the list. One with a company in the top 10 blocks like part A:
+   fill) brings companies your AI has not read into the list. One with a company in the main list's first 10 (the
+   first 10 ranks for a --no-shortlist run) blocks like part A:
    `agent_review` becomes `{state: pending, part: "F<n>", deck_id, deck_path, items, record_command, skip_command,
    blocking: true}`, the status is `needs_agent` again and `text_<lang>` says new companies are being checked; `judge`
    and `decide` return it as `review_pending`. Review it the same way before relaying. Until your AI has checked them,
@@ -670,8 +770,12 @@ After the first result the human answers no calibration cards. Instead:
              "7": {"v": "no", "chip": "k", "quote_ids": [1], "why": "…", "in_group": true, "short": "<= 10 字 / 40"}}}
 ```
 
-   yes needs `level`; no needs a chip of the deck; yes / no cite 1-3 existing `quote_ids` (else the answer counts as
-   unsure, `quote_bad`); an unsure may cite the sentences it is unsure about (an escalation without cited
+   yes needs `level`; no needs a chip of the deck; yes / no cite 1-3 existing `quote_ids` (excerpt or
+   `evidence.more` sentences; else the answer counts as unsure, `quote_bad`); the cited sentences are kept with the
+   verdict as shown (`quotes`, plus `more_source` when one came from `evidence.more`), so the page, an escalation
+   and `why` quote exactly them; a main-list item whose text contradicts a hard part of the idea (another geography,
+   a different product kind, only a plan / goal / R&D, only named in a list of many) is a no with its chip, and
+   partial on a main item is for a real but small or early offer; an unsure may cite the sentences it is unsure about (an escalation without cited
    sentences quotes the item's first sentences); `why` / `short` in the other language than `human_lang` are
    dropped (the chip or level words stand in); a missing item is "not reviewed". The answers go to `<home>/sieves/<idea_key>.agent.json`
    (`jevscreen.agent_verdicts/1`), a separate lower-precedence layer: they never set the human's `user_verdict`,
@@ -679,18 +783,31 @@ After the first result the human answers no calibration cards. Instead:
    Weak disagreements are applied without asking; an answer is **escalated** to the human (never applied) when:
    E1 unsure about the meaning on a listed / gap / below-cut row, E2 a no on a row the system is confident about,
    E3 a yes on an unverified row that would make the list, E4 a conflict with the human's own answer. Thin
-   evidence gets a gap badge, never a question.
+   evidence gets a gap badge, never a question. An escalation carries `section`: about a to-confirm row it names the
+   section, not a rank ("X（待核对）：…要不要放进确认名单？" / "X (to confirm): … Add it to the confirmed list?") and
+   is not asked in chat (`in_relayed_top` false: the page's question box has it); an E2 on a main-list row says it
+   was moved to confirm for now ("… Put it back in the confirmed list?").
 
    `jevscreen judge --deck ID (--file F | --skip) [--json]` (free, seconds): `{applied, queued, run_id, removed,
-   escalated, questions, defaults, part_b, text_zh, text_en}`. Exit 0; 1 a bad file / deck (`error_zh`,
+   escalated, questions, defaults, part_b, main_changed, text_zh, text_en}` (`main_changed`: the relayed list, the
+   confirmed list with the sections, is not the same companies as before this judge). Exit 0; 1 a bad file / deck (`error_zh`,
    `error_en`); 3 the database stayed busy. With answers it makes a new version (`change_kind: agent`, rank_only:
    no Jev call, $0); `--skip` keeps the list as it is.
 3. **The human round** (status `done`): `ask_now` (at most 3, optional, in order: `fill_descriptions`, at most 2
-   `scope_question`s, at most 2 `confirm_company` escalations on the relayed top 10 or E3/E4, the fetch questions),
+   `scope_question`s, at most 2 `confirm_company` escalations on the relayed list (the confirmed list's first 10; the
+   first 10 ranks for a --no-shortlist run) or E3/E4, the fetch questions),
    `later` (the rest, JSON only; the page's question box also shows the open scope questions and up to 3 open
    escalations by rank), `scope` `{questions,
-   defaults, answered}`, `escalations`, `agent_summary` `{read, annual, profile, removed: [<= 5 {security_id, name,
-   chip_words_zh, chip_words_en}], removed_total, text_zh, text_en}`, `agent_review` `{state: pending | done |
+   defaults, answered}` (each default applied from the idea's own words has `undo_command`, the one-line undo;
+   `text_<lang>` names it right after the counts, and the page shows it in its own box with a copy button),
+   `escalations`, `agent_summary` `{read, annual, profile, removed: [<= 5 {security_id, name, chip_words_zh,
+   chip_words_en}], removed_total, moved_in?, moved_out?, text_zh, text_en}` (`moved_in` / `moved_out`: `[{security_id,
+   name_zh, name_en}]`, the rows your AI moved into the confirmed list or to the to-confirm section, said in
+   `text_<lang>`; `read` counts every current verdict of your AI, all decks,
+   and `removed_total` every company the page lists as removed, so the chat and the page say the same numbers;
+   restated for the version the page shows: after a later version (a decide, a fill) `read` / `removed_total` /
+   `text_<lang>` are that version's, and `removed` / `names_<lang>` are emptied when the removed count changed;
+   `annual` / `profile` are null when the split is unknown), `agent_review` `{state: pending | done |
    skipped | timed_out | none, deck_id, deck_path, part_b}`, `next_action_en`, and `agent_optional` (the optional
    `facets` request before the screen). The first response whose `ask_now` is not empty fixes the chat round: each of
    its questions comes back in `ask_now` on every status, also across new versions (part B, a fill, a decide), until
@@ -728,7 +845,15 @@ undo token) and by your AI (`stop: agent_removed`, with its words and the cited 
 
 ### The one page per idea
 
-`<home>/pages/<idea_key>.html` is the only page the human needs (owner decision 2026-09-27). Top to bottom:
+`<home>/pages/<idea_key>.html` is the only page the human needs (owner decision 2026-09-27). With JavaScript it is
+one full-window 3D sand scene (three sieves: market-cap floor, first read, report check; each sieve's progress runs
+around its rim) under a restrained HUD (owner, 2026-09-28): the idea as a faint title; ONE status dot for the
+prerequisites below (green when all are ready, red with one plain sentence and its fix, the whole checklist on
+hover, tap or focus); a tiny cost / time / stage instrument; the results and scope questions in a panel on the right
+(a bottom sheet on a phone) whose rows and the amber grains light each other; model-viewer controls (wheel or pinch
+zoom, drag to orbit, right-drag or two-finger pan, double-click a sieve to fly in, a reset control). A **文字视图 /
+Text view** toggle (also `#text` at the end of the address, and what gets printed) shows the full plain page below,
+top to bottom; so does a browser without JavaScript. `--text` is unchanged:
 
 1. **Prerequisites**: Python and packages, the data-source consent, the Jev key configured **and** verified by the
    tiny paid test (with the provider's name; Vercel AI Gateway always says "version cannot be pinned"), the stock
@@ -752,8 +877,10 @@ There are no card buttons and no answer bar on the page: the cards stay a CLI to
 quickstart job file and local files only (consent answers, key presence by stat, cooldown markers, doctor's local
 checks), never from the network and never waiting on the store. The front writes the page from its first call, the
 worker opens it once at its first step (`page_opened`; not with `--no-open`) and rewrites it atomically at every job
-save and progress tick; while work runs (or waits for an answer or a key) the page carries
-`<meta http-equiv="refresh" content="3">`, which is gone once the job is done, declined or blocked for 24 hours. The
+save and progress tick; while work runs (or waits for an answer or a key) the page reloads itself every 3 s
+(`<meta name="jevscreen-refresh" content="3">` read by a small script that waits ~4 s after someone presses a pointer,
+types or uses the sand scene (a drag, a zoom, a tooltip being read); `<noscript><meta http-equiv="refresh" content="3"></noscript>` without
+JavaScript), which is gone once the job is done, declined or blocked for 24 hours. The
 quickstart JSON carries `page` / `page_uri` from the first call on. `--text` and the `<noscript>` block start with the
 same status lines.
 

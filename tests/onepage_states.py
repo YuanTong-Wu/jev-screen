@@ -44,14 +44,14 @@ def job_for(state: str, cfg, *, idea: str = IDEA_ZH, lang: str = "zh", now: dt.d
     job["worker"] = {"pid": 1, "started_at": iso(now - dt.timedelta(minutes=2)), "heartbeat_at": hb}
     if state == "downloading":
         job.update(state="running", current_step="descriptions", idea_en=IDEA_EN, idea_en_source="agent")
-        job["steps"] = [step("check"), step("universe", companies=3120)]
+        job["steps"] = [step("check"), step("universe", companies=3120, listed=21480)]
         job["progress"] = {"phase": 2, "heartbeat_at": hb, "stage": "descriptions",
                            "stage_started_at": iso(now - dt.timedelta(seconds=20)),
                            "stages": {"descriptions": {"started_at": iso(now - dt.timedelta(seconds=20)), "done0": 0,
                                                        "done": 6_300_000, "total": 15_200_000}}}
         return job
     job.update(idea_en=IDEA_EN, idea_en_source="agent")
-    job["steps"] = [step("check"), step("universe", companies=3120),
+    job["steps"] = [step("check"), step("universe", companies=3120, listed=21480),
                     step("descriptions", described=2154, share=0.69, mb=15.2), step("pack", "skipped")]
     if state == "waiting_key":
         job.update(state="waiting", waiting_on="key_jev")
@@ -84,7 +84,20 @@ def job_for(state: str, cfg, *, idea: str = IDEA_ZH, lang: str = "zh", now: dt.d
                            "stages": {"l1": {"started_at": iso(now - dt.timedelta(minutes=2)), "done0": 0,
                                              "done": 2154, "total": 2154},
                                       "l2": {"started_at": iso(now - dt.timedelta(seconds=30)), "done0": 0,
-                                             "done": 45, "total": 120}}}
+                                             "done": 45, "total": 120}},
+                           # the reading log's source: the most recent per-company answers (invented issuers); the
+                           # last two are malformed on purpose and never reach the page
+                           "event_n": 7, "events": [
+                               {"n": 1, "layer": "l1", "sid": "SZSE:399101", "label": "core", "doc": None},
+                               {"n": 2, "layer": "l1", "sid": "SSE:699102", "label": "adjacent", "doc": None},
+                               {"n": 3, "layer": "l1", "sid": "SZSE:399103", "label": "unrelated", "doc": None},
+                               {"n": 4, "layer": "l2", "sid": "SZSE:399101", "label": "explicit",
+                                "doc": "annual_report"},
+                               {"n": 5, "layer": "l2", "sid": "SSE:699102", "label": "partial", "doc": "profile"},
+                               {"n": 6, "layer": "l2", "sid": "/home/me/.jevscreen/keys/openrouter",
+                                "label": "partial", "doc": "annual_report"},
+                               {"n": 7, "layer": "l1", "sid": "SZSE:399104", "label": "sk-or-v1-0123456789abcdef",
+                                "doc": None}]}
         return job
     if state == "done":
         job.update(state="done", current_step="finish")

@@ -26,6 +26,11 @@ import safe_env  # noqa: E402,F401  (suite-wide network kill switch: tests/safe_
 from jevscreen import consent, page, quickstart as qs, review, review_cli, store, why  # noqa: E402
 from test_quickstart import IDEA as QIDEA  # noqa: E402
 from test_novice_flow import CN_ROWS, FlowCase, TestFill, add_cn  # noqa: E402
+
+
+def listed_names(out):
+    """Every listed company of a quickstart status: the main list (top) and the to-confirm section."""
+    return [r["name"] for r in out["top"] + ((out.get("to_confirm") or {}).get("rows") or [])]
 import test_review_flow as TRF  # noqa: E402
 
 CJK_TEXT = "你的 AI 核对后移出的"
@@ -57,8 +62,9 @@ class TestAskNowAcrossVersions(TRF.RelayAndPage):
         key = qs.idea_key(QIDEA)
         s = qs.status(self.cfg, key)
         self.assertEqual([i.get("cid") for i in s["ask_now"]], [e["cid"]])
-        other = next(r for r in s["top"] if r["rank"] != e["rank"])
-        code, _d = review_cli.decide(self.cfg, other["overrides"]["keep"], s["run_id"])   # a new version
+        rows = page.read_page_data(Path(s["page"]))["rows"]            # the main list and the to-confirm section
+        other = next(r for r in rows if r["rank"] != e["rank"])
+        code, _d = review_cli.decide(self.cfg, f"keep={other['security_id']}", s["run_id"])   # a new version
         self.assertEqual(code, 0)
         s2 = qs.status(self.cfg, key)
         self.assertNotEqual(s2["run_id"], s["run_id"])
@@ -372,7 +378,7 @@ class TestDefaultFill(DefaultFillCase):
         self.assertNotIn("screen", done_steps)                    # ... and before the AI's first read
         first_l1 = [it.item_id for c in self.l1_classified() for it in c.classified[0][0]]
         self.assertIn(store.company_key(None, "SZSE:300901"), first_l1)      # read in the first pass, no re-rank
-        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"]])
+        self.assertIn("Frostline Thermal", listed_names(out))
         fd = self.job(self.IDEA_ZH)["fill_default"]
         self.assertEqual((fd["state"], fd["added"], fd["market"]), ("done", 2, "CN"))
         self.assertFalse(any(i["id"] == "fill_descriptions" for i in out["pending"] + out["ask_now"]))
@@ -608,7 +614,7 @@ class TestEnglishIdeaMostlyAShares(DefaultFillCase):
         self.assertEqual(self.crawled, [(["CN"], 1e9)])
         fd = self.job(QIDEA)["fill_default"]
         self.assertEqual((fd["state"], fd["when"]), ("done", "after_l1"))
-        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"]])
+        self.assertIn("Frostline Thermal", listed_names(out))
         self.assertFalse(any(i["id"] == "fill_descriptions" for i in out["pending"] + out["ask_now"]))
         self.assertEqual(len(self.spawned), 1)                  # one worker: the first result already has them
         job = self.job(QIDEA)                                   # a resumed worker reloads the re-ranked run
@@ -649,13 +655,15 @@ class TestFillBecomesReviewed(DefaultFillCase):
         self.front(self.IDEA_ZH, fill_descriptions="yes")
         self.work(qs.idea_key(self.IDEA_ZH))
         out = qs.status(self.cfg, qs.idea_key(self.IDEA_ZH))
-        self.assertEqual((out["status"], out["exit_code"]), ("needs_agent", 11), out.get("text_en"))
-        [item] = out["pending"]
-        self.assertEqual((item["id"], item["part"]), ("agent_review", "F1"))
-        self.assertIn("新进入名单", out["text_zh"])
+        # the companies the fill brought in are all to confirm (not in the confirmed list the chat relays): their
+        # follow-up deck does not block the relay (like part B); they are marked not yet checked until it is read
+        self.assertEqual((out["status"], out["exit_code"]), ("done", 0), out.get("text_en"))
+        self.assertFalse(any(r["name"] == "Frostline Thermal" for r in out["top"]))
+        item = out["agent_review"]["followups"][-1]
+        self.assertFalse(item["blocking"])
         deck_f = json.loads(Path(item["deck_path"]).read_text(encoding="utf-8"))
         self.assertIn(store.company_key(None, "SZSE:300901"), [it["company_key"] for it in deck_f["items"]])
-        frost = next(r for r in out["top"] if r["name"] == "Frostline Thermal")
+        frost = next(r for r in out["top"] + out["to_confirm"]["rows"] if r["name"] == "Frostline Thermal")
         self.assertTrue(frost["unchecked"])
         data = page.read_page_data(Path(out["page"]))
         self.assertTrue(next(r for r in data["rows"] if r["name"] == "Frostline Thermal")["unchecked"])
@@ -667,7 +675,7 @@ class TestFillBecomesReviewed(DefaultFillCase):
         self.assertEqual(code, 0)
         out = qs.status(self.cfg, qs.idea_key(self.IDEA_ZH))
         self.assertEqual(out["status"], "done", out.get("text_en"))
-        self.assertFalse(any(r["unchecked"] for r in out["top"]))
+        self.assertFalse(any(r["unchecked"] for r in out["top"] + out["to_confirm"]["rows"]))
 
 
 # ------------------------------------------------------------------------------------------------ fill review fixes
@@ -685,7 +693,7 @@ class TestScopeChangeDuringTheFillWait(DefaultFillCase):
         def dry_run(w, *, min_mcap, countries, budget):
             dry.append(min_mcap)
             est = orig_dry(w, min_mcap=min_mcap, countries=countries, budget=budget)
-            return {**est, "est_reserved_usd": 4.0} if min_mcap < 1e9 else est     # the wider scope is over $1
+            return {**est, "est_cost_usd": 3.5, "est_reserved_usd": 4.0} if min_mcap < 1e9 else est  # over $1
         orig_merge = qs.Worker.merge_inbox
         sent = []
 
@@ -741,7 +749,7 @@ class TestAfterL1FillSettledElsewhere(DefaultFillCase):
         self.assertEqual(out["status"], "done", out.get("text_en"))
         job = self.job(QIDEA)
         self.assertEqual((job["fill_default"]["state"], job["fill_default"]["when"]), ("done", "after_l1"))
-        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"]])     # ranked in before the first result
+        self.assertIn("Frostline Thermal", listed_names(out))     # ranked in before the first result
         self.assertEqual(qs.step_of(job, "screen")["run_id"], out["run_id"])
         return out
 
@@ -894,7 +902,7 @@ class TestYesAfterAnOptOut(DefaultFillCase):
     def test_a_yes_after_the_result_fills_and_reranks(self):
         out = self.first_run(fill_descriptions="no")
         self.assertEqual(self.crawled, [])
-        self.assertNotIn("Frostline Thermal", [r["name"] for r in out["top"]])
+        self.assertNotIn("Frostline Thermal", listed_names(out))
         n = len(self.spawned)
         out = self.front(self.IDEA_ZH, fill_descriptions="yes")          # the human changed their mind
         self.assertEqual(out["status"], "running", out.get("text_en"))
@@ -903,7 +911,7 @@ class TestYesAfterAnOptOut(DefaultFillCase):
         out = qs.status(self.cfg, qs.idea_key(self.IDEA_ZH))
         self.assertEqual(self.crawled, [(["CN"], 1e9)])
         self.assertEqual(self.job(self.IDEA_ZH)["fill"]["added"], 2)
-        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"]])
+        self.assertIn("Frostline Thermal", listed_names(out))
 
     def test_a_yes_before_the_first_read_brings_the_default_fill_back(self):
         idea = self.IDEA_ZH
@@ -920,7 +928,7 @@ class TestYesAfterAnOptOut(DefaultFillCase):
         self.assertEqual(out["status"], "done", out.get("text_en"))
         self.assertEqual(self.crawled, [(["CN"], 1e9)])
         self.assertEqual(self.job(idea)["fill_default"]["state"], "done")
-        self.assertIn("Frostline Thermal", [r["name"] for r in out["top"]])     # in the first read, no question
+        self.assertIn("Frostline Thermal", listed_names(out))     # in the first read, no question
         self.assertFalse(any(i["id"] == "fill_descriptions" for i in out["pending"] + out["ask_now"]))
 
 

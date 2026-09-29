@@ -92,6 +92,13 @@ def country_words(country: str | None, lang: str) -> str | None:
     return COUNTRY_ZH.get(country, country) if lang == "zh" else country
 
 
+def iso2_words_zh(codes: list[str]) -> str:
+    """'CN, HK' for a Chinese sentence: '中国大陆、香港' (novice #4: a zh page never shows bare ISO codes)."""
+    from . import ondemand, screen
+    own = {"CN": "中国大陆", "HK": "香港", "TW": "台湾", "KR": "韩国"}
+    return "、".join(own.get(c) or ondemand.COUNTRY_ZH.get(screen.ISO2_COUNTRY.get(c, c), c) for c in codes)
+
+
 def form_words(form: Any) -> tuple[str | None, str | None]:
     """(zh, en) plain words of a filing form id; an unknown internal id (snake_case) is left out."""
     f = str(form or "").strip()

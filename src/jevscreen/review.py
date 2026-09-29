@@ -2,9 +2,12 @@
 and makes the company-level calls; only the few it is unsure about, or where it strongly disagrees with the system,
 go to the human.
 
-- decks (jevscreen.agent_deck/1): part A (blocks the relay: the top 10, the side-V rows of the provisional scope
-  splits, at most 3 below-cut / gap rows), part B (never blocks: ranks 11..max_out, strong rows removed by scope,
-  below-cut, gap) and follow-up parts F<n>; each item carries the exact L2 text Jev read, sentence-numbered;
+- decks (jevscreen.agent_deck/1): part A (blocks the relay: every listed row - the whole to-confirm section and
+  the whole main list; a single padded list: the top 10 - the side-V rows of the provisional scope splits, at most 3
+  below-cut / gap rows), part B (never blocks: the listed rows part A did not hold, strong rows removed by scope,
+  below-cut, gap) and follow-up parts F<n>; each item carries the exact L2 text Jev read, sentence-numbered, and,
+  when the company has a stored official filing, up to MORE_MAX more numbered sentences of it (evidence.more: the
+  product / business passages the excerpt left out; add_more);
 - answers (jevscreen.agent_answers/1): yes / no / unsure per item, citing sentence numbers (quote_ids), never
   copied quotes;
 - the agent layer (<home>/sieves/<idea_key>.agent.json, jevscreen.agent_verdicts/1): a lower-precedence layer of
@@ -28,9 +31,13 @@ AGENT_FORMAT = "jevscreen.agent_verdicts/1"
 DECK_FORMAT = "jevscreen.agent_deck/1"
 ANSWERS_FORMAT = "jevscreen.agent_answers/1"
 REVIEW_FORMAT = "jevscreen.review/1"
-DECK_A_MAX, DECK_A_TOP, DECK_A_HELD, DECK_A_EDGE = 25, 10, 12, 3
+# part A reads every listed row (max_out <= 40: to-confirm + main), the held rows and 3 edge rows: <= 60
+DECK_A_MAX, DECK_A_TOP, DECK_A_HELD, DECK_A_EDGE = 60, 10, 12, 3
 DECK_B_MAX, BELOW_CUT_MIN, BELOW_CUT_MAX, REMOVED_MAX, GAP_MAX = 45, 5, 12, 5, 3
 FOLLOWUP_MAX = 20
+MORE_MAX = 5                   # stored-filing sentences added to an item (evidence.more)
+NO_NEW = 1.0                   # a more-sentence that adds no new idea term counts this much less
+SHORT_PIECE = 16               # a filing piece shorter than this (flat characters) is joined to the next
 SENT_MAX = 240                 # a sentence longer than this is split at the nearest boundary
 WHY_MAX = {"zh": 80, "en": 160}
 SHORT_MAX = {"zh": 10, "en": 40}
@@ -38,7 +45,7 @@ QUOTE_TR_MAX = 200
 QUOTE_MAX = 200
 QUOTE_IDS_MAX = 3
 E2_P_EXPLICIT = 0.80
-AGENT_REVIEW_TIMEOUT_S = 600
+AGENT_REVIEW_TIMEOUT_S = 1200     # part A reads every listed row: typically 5-10 minutes
 STATES = ("applied", "escalated", "held", "not_applied")
 LICENCE_NOTE = ("Personal use. Excerpts from official filings (official-private) and company profiles "
                 "(gray-private); keep this file on this computer.")
@@ -117,6 +124,192 @@ def quote_of(text: str | None, ids: Iterable[int], limit: int = QUOTE_MAX) -> st
     sents = dict((i, s) for i, s in sentences(text))
     q = " ".join(sents[i] for i in ids if i in sents)
     return q if len(q) <= limit else q[: limit - 1].rstrip() + "…"
+
+
+def cited_text(text: str | None, ids: Iterable[int] | None, quotes: dict[str, str] | None = None,
+               limit: int = QUOTE_MAX) -> str:
+    """quote_of with the verdict's own record of what it cited (`quotes`, {"<id>": sentence}: the text your AI was
+    shown, including evidence.more sentences, which the L2 text does not hold) taking precedence."""
+    q = quotes if isinstance(quotes, dict) else {}
+    ids = list(ids or [])
+    sents = dict((i, s) for i, s in sentences(text)) if any(str(i) not in q for i in ids) else {}
+    out = " ".join(p for p in (q.get(str(i)) or sents.get(i) for i in ids) if p)
+    return out if len(out) <= limit else out[: limit - 1].rstrip() + "…"
+
+
+# ------------------------------------------------------------------------------------------------ more sentences
+
+# the company speaking of itself / of what it sells, and industry or forecast talk (a sentence about the market, not
+# the company's own offer, ranks lower)
+_OWN = re.compile(r"本公司|公司|我们|我司|本集团|集团|当社|当グループ|당사|회사|\b(?:we|our|the company|the group)\b",
+                  re.I)
+_OFFER = re.compile(r"产品|製品|제품|业务|事業|사업|批量|量产|出货|供货|订单|客户|受注|出荷|양산|수주|납품|"
+                    r"\b(?:products?|solutions?|segments?|customers?|ship(?:s|ped|ping|ments?)?|orders?|sells?|"
+                    r"offers?|provides?)\b", re.I)
+_TREND = re.compile(r"行业|市场规模|据[^。]{0,20}(?:统计|预测|数据)|预计|渗透率|市場規模|業界|시장\s*규모|업계|"
+                    r"\b(?:industry|market size|forecast|according to|is expected to|are expected to)\b", re.I)
+# single English words of an idea sentence that name no product (the multi-word phrases stay)
+_EN_PLAIN = frozenset("""listed public suppliers supplier make makes making sell sells selling own owning providing
+    provide provides manufacturers manufacturer makers maker designers designer small companies company used using
+    serving operating developing building designing contract vendors vendor producers producer leading core key main
+    major primary global based services service systems system products product solutions solution equipment
+    makers""".split())
+
+
+def _flat(t: str | None) -> str:
+    return re.sub(r"\s+", "", t or "").replace("…", "")
+
+
+_END = re.compile(r"[。！？!?；;.]\s*$")
+
+
+def _pieces(text: str) -> list[str]:
+    """The sentences of a filing text for more_sentences: sentences(), a piece shorter than SHORT_PIECE characters
+    that does not end a sentence (a table cell or a line the PDF extraction broke: '人形机器人核心' | '驱动模组') joined
+    to the next one, and exact repeats (a summary and the full report say the same) dropped."""
+    out: list[str] = []
+    buf = ""
+    for _i, x in sentences(text):
+        buf = f"{buf} {x}".strip() if buf else x
+        if len(_flat(buf)) < SHORT_PIECE and not _END.search(buf):
+            continue
+        out.append(buf)
+        buf = ""
+    if buf:
+        if out and len(out[-1]) + len(buf) + 1 <= SENT_MAX:
+            out[-1] = f"{out[-1]} {buf}"
+        else:
+            out.append(buf)
+    seen: set[str] = set()
+    uniq = []
+    for x in out:
+        f = _flat(x)
+        if f not in seen:
+            seen.add(f)
+            uniq.append(x)
+    return uniq
+
+
+def more_sentences(text: str | None, *, shown: str | None, strong: Iterable[str], weak: Iterable[str] = (),
+                   anchors: Iterable[str] = (), start: int = 1, max_n: int = MORE_MAX) -> list[list[Any]]:
+    """[[start, sentence], ...]: up to max_n sentences of a stored filing's text (_pieces) that the excerpt (`shown`)
+    did not already hold in full and that speak of the idea. Score: 2 for the first Latin anchor hit (HBM, SiC, 800G)
+    + 0.5 per further one, + 1 per distinct strong term, + 0.5 per distinct weak term (at least one anchor or strong
+    term, or three weak ones), + 0.5 when the company speaks of itself, + 0.5 when it names an offer (products,
+    shipments, customers, orders), - 2 for industry / forecast talk. Picked greedily, best first (ties: earlier); a
+    sentence that adds no term the picked ones lack counts NO_NEW less (the product list, not five copies of one
+    claim); kept at >= 1.5 and returned in document order, numbered from `start`. A kept sentence ending in a colon
+    brings the next one (the table it introduces) while there is room. Pure and deterministic."""
+    from . import screen
+    if not text:
+        return []
+    seen: set[str] = set()
+    pats: list[tuple[re.Pattern, str, str]] = []
+    for group, kind in ((anchors, "a"), (strong, "s"), (weak, "w")):
+        for t in group or ():
+            k = str(t or "").strip().casefold()
+            if k and k not in seen:
+                seen.add(k)
+                pats.append((screen._term_pattern(str(t)), kind, k))
+    if not pats:
+        return []
+    flat_shown = _flat(shown)
+    sents = _pieces(text)
+    cands: dict[int, tuple[float, set[str]]] = {}
+    for j, x in enumerate(sents):
+        f = _flat(x)
+        if len(f) < 6 or (flat_shown and f in flat_shown):
+            continue
+        hit = [(kind, k) for p, kind, k in pats if p.search(x)]
+        n_a = sum(1 for kind, _k in hit if kind == "a")
+        n_s = sum(1 for kind, _k in hit if kind == "s")
+        n_w = sum(1 for kind, _k in hit if kind == "w")
+        if not (n_a or n_s or n_w >= 3):
+            continue
+        score = (2.0 + 0.5 * (n_a - 1) if n_a else 0.0) + n_s + 0.5 * n_w \
+            + 0.5 * bool(_OWN.search(x)) + 0.5 * bool(_OFFER.search(x)) - 2.0 * bool(_TREND.search(x))
+        if score >= 1.5:
+            cands[j] = (score, {k for _kind, k in hit})
+    pick: list[int] = []
+    covered: set[str] = set()
+    while cands and len(pick) < max_n:
+        best = max(cands, key=lambda j: (cands[j][0] - (NO_NEW if cands[j][1] <= covered else 0.0), -j))
+        sc, ks = cands.pop(best)
+        if sc - (NO_NEW if ks <= covered else 0.0) < 1.5:
+            break
+        pick.append(best)
+        covered |= ks
+    pick.sort()
+    for j in list(pick):
+        if len(pick) >= max_n:
+            break
+        if sents[j].rstrip().endswith((":", "：")) and j + 1 < len(sents) and j + 1 not in pick \
+                and _flat(sents[j + 1]) not in flat_shown:
+            pick = sorted(pick + [j + 1])
+    return [[start + k, sents[j]] for k, j in enumerate(pick)]
+
+
+def _more_terms(result: dict[str, Any], lang: str) -> tuple[list[str], list[str], list[str]]:
+    """(strong, weak, anchors) the more-sentence search uses for a filing in `lang`: the run's excerpt terms of that
+    language (generic ones dropped; single plain English words weak), the idea's own words and 2-character pieces
+    (weak), and the Latin anchors of the idea (HBM, SiC, 800G: written the same way in CJK filings)."""
+    from . import retrieval, screen
+    tb = result.get("terms_by_lang") or {"en": result.get("terms") or []}
+    cal = result.get("calibration") if isinstance(result.get("calibration"), dict) else {}
+    weak_cal = {str(t).casefold() for v in (cal.get("keywords_weak") or {}).values() for t in v or []}
+
+    def plain(t: str) -> bool:
+        return " " not in t.strip() and t.strip().casefold() in _EN_PLAIN
+
+    base = [t for t in screen.terms_for(tb, lang) if t and not retrieval.is_generic(t, lang)
+            and str(t).casefold() not in weak_cal]
+    strong = [t for t in base if not plain(t) and not (" " not in t.strip() and t.isascii() and len(t) <= 3)]
+    weak = [t for t in base if t not in strong and not plain(t)]
+    weak += [p for p in screen.excerpt_terms(strong, lang) if p not in strong]
+    weak += [t for t in _terms(result) if t not in strong and not plain(t) and not retrieval.is_generic(t, lang)
+             and str(t).casefold() not in weak_cal]
+    en = screen.terms_for(tb, "en")
+    anchors = retrieval.latin_anchors(" ".join([str(result.get("idea") or ""), str(result.get("idea_en") or "")]
+                                               + [str(t) for t in en]))
+    return strong, retrieval._dedup(weak), anchors
+
+
+def review_sha(evidence_sha: str | None, more: list[list[Any]] | None) -> str:
+    raw = json.dumps([evidence_sha, more or []], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def add_more(deck: dict[str, Any], docs: dict[str, dict[str, Any]] | None, result: dict[str, Any], *,
+             max_n: int = MORE_MAX) -> dict[str, Any]:
+    """The deck with evidence.more on every item whose company has a stored official filing (`docs`: company_key ->
+    {text, source_id, form, filing_date}; review_cli.stored_filings): up to max_n more numbered sentences
+    (more_sentences, numbered after the excerpt's), and review_sha over the excerpt's evidence_sha and them. A
+    profile-only item gets the filing's sentences too (the filing is official text the profile is not). Items
+    without a stored filing are left as they are. Pure."""
+    from . import screen
+    cache: dict[str, tuple[list[str], list[str], list[str]]] = {}
+    for it in deck.get("items") or []:
+        d = (docs or {}).get(it.get("company_key") or "") or {}
+        text = d.get("text")
+        ev = it.get("evidence") or {}
+        if not text:
+            continue
+        src = d.get("source_id")
+        lang = screen.detect_language(text, default=screen.OFFICIAL_DOC_SOURCES.get(src or "", ("", "en"))[1])
+        if lang not in cache:
+            cache[lang] = _more_terms(result, lang or "en")
+        strong, weak, anchors = cache[lang]
+        sents = ev.get("sentences") or []
+        shown = " ".join(x for _i, x in sents)
+        more = more_sentences(text, shown=shown, strong=strong, weak=weak, anchors=anchors,
+                              start=len(sents) + 1, max_n=max_n)
+        if not more:
+            continue
+        ev["more"] = {"sentences": more, "source": screen.source_label(src), "form": d.get("form"),
+                      "filing_date": str(d["filing_date"])[:10] if d.get("filing_date") else None, "lang": lang}
+        it["evidence"] = ev
+        it["review_sha"] = review_sha(it.get("evidence_sha"), more)
+    return deck
 
 
 # ------------------------------------------------------------------------------------------------ agent file
@@ -221,7 +414,7 @@ def apply_agent(kept: list[dict[str, Any]], agent: dict[str, dict[str, Any]] | N
             continue
         e.update(agent_verdict=v.get("v"), agent_state=v.get("state"), agent_chip=v.get("chip"),
                  agent_why_zh=v.get("why_zh"), agent_why_en=v.get("why_en"), agent_quote_ids=v.get("quote_ids"),
-                 agent_level=v.get("level"))
+                 agent_level=v.get("level"), agent_quotes=v.get("quotes") or None)
         if v.get("state") != "applied":
             out.append(e)
             continue
@@ -274,17 +467,26 @@ def criteria_en(result: dict[str, Any], sieve: dict[str, Any] | None) -> list[st
 
 
 INSTRUCTIONS_EN = (
-    "You are the human's own AI. For every item decide from evidence.sentences ONLY whether the company offers what "
-    "the idea describes (criteria_en, including the human's own scope answers). Do not use what you know about the "
-    "company from elsewhere; the name alone is not evidence. Answer per item number: v 'yes' with level 'explicit' "
-    "(it offers exactly this) or 'partial' (related, small or early); v 'no' with the fitting chip from chips; v "
-    "'unsure' with unsure_kind 'thin' (too little text) or 'meaning' (the text is there but unclear). Every yes/no "
-    "cites 1-3 quote_ids (sentence numbers; an unsure may cite the sentences it is unsure about) and gives 'why' in "
-    "the human's language only (human_lang; at most 80 Chinese characters or 160 English characters; a why or short "
-    "in the other language is dropped). When evidence.lang differs from human_lang add quote_tr (a translation of "
-    "the cited sentences, at most 200 characters). Held items (held_sid set) also need in_group (true when the "
-    "company really is the kind named in held_questions) and short (what the company is, at most 10 Chinese "
-    "characters or 40 English characters). Skip an item you cannot judge: a missing item is 'not reviewed'. Save the "
+    "You are the human's own AI. For every item decide from evidence.sentences and evidence.more ONLY whether the "
+    "company offers what the idea describes (criteria_en, including the human's own scope answers). Do not use what "
+    "you know about the company from elsewhere; the name alone is not evidence. evidence.more, when present, holds a "
+    "few more numbered sentences of the same company's stored official filing (its source, form and filing_date "
+    "given) that the excerpt left out, often the product list: cite them by number like the others; an "
+    "industry-trend or plan sentence proves no more there than in the excerpt. Answer per item number: v 'yes' with "
+    "level 'explicit' (it offers exactly this) or 'partial' (related, small or early); v 'no' with the fitting chip "
+    "from chips; v 'unsure' with unsure_kind 'thin' (too little text) or 'meaning' (the text is there but unclear). "
+    "Every yes/no cites 1-3 quote_ids (sentence numbers; an unsure may cite the sentences it is unsure about) and "
+    "gives 'why' in the human's language only (human_lang; at most 80 Chinese characters or 160 English characters; "
+    "a why or short in the other language is dropped). When evidence.lang differs from human_lang add quote_tr (a "
+    "translation of the cited sentences, at most 200 characters). Held items (held_sid set) also need in_group "
+    "(true when the company really is the kind named in held_questions) and short (what the company is, at most 10 "
+    "Chinese characters or 40 English characters). Items with section 'to_confirm' are not on the human's list: a "
+    "yes with level 'explicit' and its quote_ids moves one into the main list, marked as checked by you, so give it "
+    "only when the cited sentences state it plainly (else 'partial', which leaves it to confirm). Items with section "
+    "'main' are on the human's list: when the text contradicts a hard part of the idea (another geography, a "
+    "different product kind, only a plan, a goal, 布局 or R&D, or the idea's product only named in a list of many) "
+    "answer 'no' with the fitting chip, which takes it off the main list; 'partial' on a main item is for an offer "
+    "that is real but small or early. Skip an item you cannot judge: a missing item is 'not reviewed'. Save the "
     "file as answer_schema shows and run record_command.")
 ANSWER_SCHEMA = {"format": ANSWERS_FORMAT, "deck_id": "<deck_id>", "agent": "<optional: product/model>",
                  "answers": {"1": {"v": "yes", "level": "explicit|partial", "quote_ids": [3],
@@ -312,8 +514,15 @@ def _item(n: int, group: str, row: dict[str, Any], inp: dict[str, Any], facets_m
             "company_key": row["company_key"], "security_id": row.get("security_id"), "name": row.get("name"),
             "name_zh": names_zh.get(row.get("security_id") or ""), "country": row.get("country"),
             "rank": row.get("rank"),
+            # the page section the row is in now: main (the confirmed list) or to_confirm (null: not listed / a
+            # single padded list)
+            "section": ({"high": "main", "confirm": "to_confirm"}.get(row.get("shortlist_tier") or "")
+                        if row.get("rank") is not None else None),
             "system": {"label": row.get("l2_label"), "p_pos": row.get("l2_p_pos"),
-                       "p_explicit": row.get("l2_p_explicit"), "edge": row.get("l2_edge"), "facets": fac},
+                       "p_explicit": row.get("l2_p_explicit"), "edge": row.get("l2_edge"), "facets": fac,
+                       # screen --judge: the tier and, for C, the counter-evidence read (an inference to check)
+                       **({"judge": {k: row.get(f"judge_{k}") for k in ("tier", "labels", "reason")}}
+                          if row.get("judge_tier") else {})},
             "evidence": {"kind": inp.get("evidence") or row.get("l2_evidence"),
                          "source": None if source == calib.PROFILE_FILING.rstrip("|") else source, "form": form,
                          "filing_date": fdate, "lang": inp.get("lang"), "sentences": sentences(text)},
@@ -355,15 +564,29 @@ def full_ranking(result: dict[str, Any], sieve: dict[str, Any] | None, pool: Ite
     return v2, u2, extra
 
 
+def review_order(rows: list[dict[str, Any]], n: int = DECK_A_TOP) -> list[dict[str, Any]]:
+    """The listed rows your AI reads (deck part A's 'top' group: n = DECK_A_TOP), in the order it reads them: with
+    the sections, the first n rows of the to-confirm section (a yes there, level explicit, moves a row into the main
+    list), then the first n of the main list (a no there moves it out); without them the first n ranks."""
+    from . import shortlist
+    ranked = sorted((r for r in rows if r.get("rank") is not None), key=lambda r: r["rank"])
+    if not any(r.get("shortlist_tier") for r in ranked):
+        return ranked[:n]
+    main, confirm = shortlist.split(ranked)
+    return confirm[:n] + main[:n]
+
+
 def build_deck(result: dict[str, Any], inputs: dict[str, Any], sieve: dict[str, Any] | None,
                agent: dict[str, dict[str, Any]] | None, *, part: str, held: list[dict[str, Any]] | None = None,
                pool: Iterable[dict[str, Any]] | None = None, names_zh: dict[str, str] | None = None,
                human_lang: str = "zh", removed_so_far: int = 0, followup_keys: Iterable[str] | None = None,
                exclude_keys: Iterable[str] = ()) -> dict[str, Any]:
     """An agent deck (deterministic, no RNG). Left out: companies a human already decided and companies with an
-    agent verdict on the same evidence. part 'A' (blocking, <= DECK_A_MAX): top = ranks 1..10, held = the side-V
-    rows of `held` (provisional questions: [{sid, kind, family, value, v: [company_key]}], <= 12, highest facet p
-    first), then below-cut + gap <= 3. part 'B' (not blocking, <= DECK_B_MAX): ranks 11..max_out, strong rows
+    agent verdict on the same evidence. part 'A' (blocking, <= DECK_A_MAX): held = the side-V rows of `held`
+    (provisional questions: [{sid, kind, family, value, v: [company_key]}], <= 12, highest facet p first), top =
+    review_order (the whole to-confirm section, then the whole main list, up to max_out; ranks 1..10 for a single
+    list), then below-cut + gap <= 3. part 'B' (not blocking, <= DECK_B_MAX): the listed rows not answered yet (same
+    order), strong rows
     removed by scope (<= 5), below-cut (max(5, removals + 3), <= 12), gap (<= 3). part 'F<n>': `followup_keys`."""
     from . import calib, scope, screen
     params = result.get("params") or {}
@@ -400,6 +623,9 @@ def build_deck(result: dict[str, Any], inputs: dict[str, Any], sieve: dict[str, 
 
     rows = [r for r in result.get("rows") or [] if r.get("rank") is not None]
     rows.sort(key=lambda r: r["rank"])
+    # the reads go to the to-confirm section first (its rows can move into the main list), then the main list;
+    # a single padded list (no tiers) is read in rank order as before
+    first = review_order(rows)
     v_all, _u, extra = full_ranking(result, sieve, pool, inputs, agent)
     below = [e["company_key"] for e in v_all if e["_pos"] > max_out]
     gap = [c["company_key"] for c in sorted(
@@ -424,17 +650,45 @@ def build_deck(result: dict[str, Any], inputs: dict[str, Any], sieve: dict[str, 
             if n_held >= DECK_A_HELD:
                 break
             n_held += add("held", k, held_of[k])
-        for r in rows[:DECK_A_TOP]:
-            add("top", r["company_key"])
+        from . import shortlist
+        if any(r.get("shortlist_tier") for r in rows):
+            # every listed row is read before the relay (the whole to-confirm section: a yes there moves a row into
+            # the main list; the whole main list: a no takes a row out). Room for the main list is kept (its rows
+            # are numbered on the page): the to-confirm rows fill what is left, and are still read first
+            first = review_order(rows, n=max_out)
+            main_first = shortlist.split(rows)[0][:max_out]
+            n_main = sum(1 for r in main_first if r["company_key"] not in used and free(r["company_key"]))
+            room = max(0, DECK_A_MAX - len(items) - n_main)
+            main_keys = {r["company_key"] for r in main_first}
+            for r in first:
+                if r["company_key"] in main_keys:
+                    add("top", r["company_key"])
+                elif room > 0:
+                    room -= add("top", r["company_key"])
+        else:
+            for r in first:
+                add("top", r["company_key"])
         n_edge = 0
         for group, keys in (("below_cut", below), ("gap", gap)):
             for k in keys:
                 if n_edge >= DECK_A_EDGE or len(items) >= DECK_A_MAX:
                     break
                 n_edge += add(group, k)
+        from . import atomic      # screen --judge: the rows moved to C on an inference go to your AI
+        for k in atomic.review_keys(v_all):
+            if len(items) >= DECK_A_MAX:
+                break
+            add("judge_demoted", k)
         items = items[:DECK_A_MAX]
     elif part == "B":
-        for r in rows[DECK_A_TOP:max_out]:
+        if any(r.get("shortlist_tier") for r in rows):
+            # the listed rows part A did not hold (exclude_keys: its items) and your AI has not answered on this
+            # evidence (free()), in the same order: the to-confirm section first (the version after part A may have
+            # moved rows between the sections, so part A's rows are named, not recomputed)
+            later = review_order(rows, n=max_out)
+        else:
+            later = rows[DECK_A_TOP:max_out]
+        for r in later:
             add("top", r["company_key"])
         strong = [e for e in extra.get("excluded_by_scope") or []
                   if e.get("l2_label") == "explicit" and (e.get("l2_p_explicit") or 0) >= E2_P_EXPLICIT]
@@ -556,7 +810,8 @@ def parse_answers(deck: dict[str, Any], data: Any, sieve: dict[str, Any] | None 
         if v == "unsure":
             ans["unsure_kind"] = a.get("unsure_kind") if a.get("unsure_kind") in UNSURE_KINDS else "meaning"
         ids = a.get("quote_ids")
-        valid = {int(i) for i, _ in (it.get("evidence") or {}).get("sentences") or []}
+        ev = it.get("evidence") or {}
+        valid = {int(i) for i, _ in (ev.get("sentences") or []) + ((ev.get("more") or {}).get("sentences") or [])}
         ok = (isinstance(ids, list) and 1 <= len(ids) <= QUOTE_IDS_MAX
               and all(isinstance(i, int) and not isinstance(i, bool) and i in valid for i in ids))
         if ok:
@@ -596,6 +851,15 @@ ESC_ZH = {
     "E3": "{name}：系统没确认，你的 AI 认为该加进来{why}。{quote}要不要？",
     "E4": "{name}：和你之前的回答不一致——你说过{prev}，你的 AI 认为{now}（{why0}）。按哪个？",
 }
+# the same questions about a row of the to-confirm section (the page shows it without a number: the section is
+# named, and a yes puts it into the confirmed list), and your AI's no on a row of the confirmed list (moved to the
+# to-confirm section until the human decides)
+ESC_ZH_CONFIRM = {
+    "E1": "{name}（待核对）：摘录的意思你的 AI 拿不准{why}。{quote}要不要放进确认名单？",
+    "E1b": "{name}（待核对）：你的 AI 判断{was}，但没指出摘录里哪句能说明{why}。{quote}要不要放进确认名单？",
+    "E2": "{name}（待核对）：系统判它符合，你的 AI 认为不符合{why}。{quote}要不要放进确认名单？",
+}
+ESC_ZH_MAIN_NO = "{name}（确认名单第 {rank} 家，已先移到待核对）：系统判它符合，你的 AI 认为不符合{why}。{quote}要不要放回确认名单？"
 ESC_EN = {
     "E1": "{name} (#{rank}): your AI is not sure what the excerpt means{why}. {quote}Keep it?",
     "E1b": "{name} (#{rank}): your AI says {was} but did not point to the sentence that shows it{why}. {quote}Keep it?",
@@ -603,6 +867,15 @@ ESC_EN = {
     "E3": "{name}: the system did not confirm it, your AI says it belongs{why}. {quote}Keep it?",
     "E4": "{name}: this differs from your earlier answer: you said {prev}, your AI says {now} ({why0}). Which one?",
 }
+ESC_EN_CONFIRM = {
+    "E1": "{name} (to confirm): your AI is not sure what the excerpt means{why}. {quote}Add it to the confirmed list?",
+    "E1b": "{name} (to confirm): your AI says {was} but did not point to the sentence that shows it{why}. {quote}Add "
+           "it to the confirmed list?",
+    "E2": "{name} (to confirm): the system says it fits, your AI says it does not{why}. {quote}Add it to the "
+          "confirmed list?",
+}
+ESC_EN_MAIN_NO = ("{name} (confirmed list #{rank}, moved to confirm for now): the system says it fits, your AI says "
+                  "it does not{why}. {quote}Put it back in the confirmed list?")
 QUOTE_ZH, QUOTE_EN = "摘录：「{q}」{tr}。", "Excerpt: \"{q}\"{tr}. "
 FALLBACK_SENTS = 2              # an escalation without cited sentences quotes the item's first sentences
 DEFAULT_WHY = {"zh": ("拿不准", ""), "en": ("not sure", "")}
@@ -621,6 +894,9 @@ def row_ctx(item: dict[str, Any], row: dict[str, Any] | None, *, max_out: int, c
         s = screen.score_of("partial", r.get("l1_p_core"), r.get("market_cap_usd"), r.get("l2_evidence"))
         would = s > cut_score
     return {"group": item.get("group"), "rank": item.get("rank"), "in_top": in_top,
+            # the page section the row was in (main / to_confirm; None: not listed or a single padded list): the
+            # question names the section, not a rank the page does not show
+            "section": item.get("section"),
             "l2_label": sysd.get("label"), "p_explicit": sysd.get("p_explicit"),
             "mentions_idea": item.get("mentions_idea"), "would_list": would}
 
@@ -653,7 +929,20 @@ def classify(ans: dict[str, Any], ctx: dict[str, Any], human: dict[str, Any] | N
 def verdict_of(item: dict[str, Any], ans: dict[str, Any], *, deck: dict[str, Any], ctx: dict[str, Any],
                state: str, code: str | None, answers_sha: str, agent_name: str | None,
                now: str | None = None) -> dict[str, Any]:
-    return {"company_key": item["company_key"], "security_id": item.get("security_id"), "name": item.get("name"),
+    ev = item.get("evidence") or {}
+    more = ev.get("more") or {}
+    shown = dict((int(i), x) for i, x in (ev.get("sentences") or []) + (more.get("sentences") or []))
+    ids = ans.get("quote_ids") or []
+    more_ids = {int(i) for i, _ in more.get("sentences") or []}
+    extra = {}
+    if ids:
+        # what was cited, as your AI was shown it: evidence.more sentences are not in the L2 text
+        extra["quotes"] = {str(i): shown[i] for i in ids if i in shown}
+    if more_ids & set(ids):
+        extra["more_source"] = {k: more.get(k) for k in ("source", "form", "filing_date", "lang")}
+    if item.get("review_sha"):
+        extra["review_sha"] = item["review_sha"]
+    return {**extra, "company_key": item["company_key"], "security_id": item.get("security_id"), "name": item.get("name"),
             "name_zh": item.get("name_zh"), "evidence_sha": item.get("evidence_sha"), "v": ans["v"],
             "level": ans.get("level"), "chip": ans.get("chip"), "unsure_kind": ans.get("unsure_kind"),
             "quote_bad": bool(ans.get("quote_bad")), "was": ans.get("was"), "quote_ids": ans.get("quote_ids") or [],
@@ -661,6 +950,8 @@ def verdict_of(item: dict[str, Any], ans: dict[str, Any], *, deck: dict[str, Any
             "held_sid": item.get("held_sid"), "held_kind": item.get("held_kind"), "in_group": ans.get("in_group"),
             "short_zh": ans.get("short_zh"), "short_en": ans.get("short_en"), "state": state, "escalation": code,
             "mentions_idea": item.get("mentions_idea"), "ctx": ctx, "deck_id": deck.get("deck_id"),
+            # what your AI read (annual report or profile): the chat's cumulative split counts it
+            "evidence_kind": (item.get("evidence") or {}).get("kind"),
             "run_id": deck.get("run_id"), "item_n": item["n"], "agent": agent_name, "answers_sha": answers_sha,
             "answered_at": now or now_iso()}
 
@@ -671,13 +962,17 @@ def escalation_item(v: dict[str, Any], cid: str, *, text: str | None, lang_ev: s
     from . import calib
     code = v.get("escalation") or "E1"
     ctx = v.get("ctx") or {}
-    quote = quote_of(text, v.get("quote_ids") or [])
+    quote = cited_text(text, v.get("quote_ids") or [], v.get("quotes"))
     name_en = v.get("name") or v.get("security_id")
     name_zh = v.get("name_zh") or name_en
     out = {"id": "confirm_company", "cid": cid, "reason": code, "ask_human": True, "optional": True,
            "security_id": v.get("security_id"), "company_key": v.get("company_key"), "name": v.get("name"),
            "name_zh": v.get("name_zh"), "rank": ctx.get("rank"),
-           "in_relayed_top": ctx.get("rank") is not None and int(ctx["rank"]) <= relayed_top,
+           # asked in chat: a row of the relayed list (with the sections: the confirmed list only; a to-confirm
+           # row is on the page's question box, not in chat)
+           "in_relayed_top": ctx.get("rank") is not None and int(ctx["rank"]) <= relayed_top
+           and ctx.get("section") in (None, "main"),
+           "section": ctx.get("section"),
            "tokens": {"yes": f"{cid}=yes", "no": f"{cid}=no", "unsure": f"{cid}=?"}}
     prev_zh = calib.answer_words_zh((human or {}).get("want"), (human or {}).get("chip"))
     prev_en = calib.answer_words_en((human or {}).get("want"), (human or {}).get("chip"))
@@ -690,18 +985,28 @@ def escalation_item(v: dict[str, Any], cid: str, *, text: str | None, lang_ev: s
         sents = [s for _i, s in sentences(text)[:FALLBACK_SENTS]]
         q = " ".join(sents)
         quote = q if len(q) <= QUOTE_MAX else q[: QUOTE_MAX - 1].rstrip() + "…"
+    if quote:
+        # a stored profile's internal source tag ("[financedatabase_local] ...") is not for the human
+        quote = re.sub(r"\[(?:[a-z0-9]+_)+[a-z0-9]+\]\s*", "", quote).strip()
     tr = v.get("quote_tr") if cited else None      # a translation belongs to the cited sentences only
     if code == "E1" and v.get("quote_bad") and v.get("was") in ("yes", "no"):
         code = "E1b"
     was_zh = {"yes": "符合", "no": "不符合"}.get(v.get("was") or "", "")
     was_en = {"yes": "it fits", "no": "it does not fit"}.get(v.get("was") or "", "")
-    why_zh = v.get("why_zh") or ""
-    why_en = v.get("why_en") or ""
-    out["question_zh"] = ESC_ZH[code].format(
+    # the templates end the why with their own full stop: one of the AI's own would double it ("。。")
+    why_zh = (v.get("why_zh") or "").rstrip().rstrip("。．.！!")
+    why_en = (v.get("why_en") or "").rstrip().rstrip(".!")
+    sec = ctx.get("section")
+    tz, te = ESC_ZH[code], ESC_EN[code]
+    if sec == "to_confirm" and code in ESC_ZH_CONFIRM:
+        tz, te = ESC_ZH_CONFIRM[code], ESC_EN_CONFIRM[code]
+    elif sec == "main" and code == "E2":
+        tz, te = ESC_ZH_MAIN_NO, ESC_EN_MAIN_NO
+    out["question_zh"] = tz.format(
         name=name_zh, rank=ctx.get("rank") or "?", was=was_zh, prev=prev_zh, now=now_zh, why0=why_zh or now_zh,
         why="" if why_zh in DEFAULT_WHY["zh"] else f"——{why_zh}",
         quote=QUOTE_ZH.format(q=quote, tr=TR_ZH.format(t=tr) if tr and lang_ev != "zh" else "") if quote else "")
-    out["question_en"] = ESC_EN[code].format(
+    out["question_en"] = te.format(
         name=name_en, rank=ctx.get("rank") or "?", was=was_en, prev=prev_en, now=now_en, why0=why_en or now_en,
         why="" if why_en in DEFAULT_WHY["en"] else f": {why_en}",
         quote=QUOTE_EN.format(q=quote, tr=TR_EN.format(t=tr) if tr and lang_ev != "en" else "") if quote else "")

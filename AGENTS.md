@@ -22,7 +22,8 @@ sentence changes its meaning, or the Jev provider reports no credit. Optional qu
 only when it helps this idea and labelled optional: filling missing company profiles of the idea's market (when the
 default China fill below failed or timed out, not after a block, or for an idea narrowed to another single market), an
 SEC contact name and email (only when a US company is
-in the top 10) and Taiwan annual reports from MOPS (only when a Taiwan company is in the top 10). Before the install the human may also meet two system steps: on a Mac, the first `git` can open a
+in the top 10, or a large US company's profile is too thin to judge without its annual report; the question names
+them) and Taiwan annual reports from MOPS (only when a Taiwan company is in the top 10). Before the install the human may also meet two system steps: on a Mac, the first `git` can open a
 box offering the command line developer tools (they click Install, a few minutes); and when neither `uv` nor a
 Python >= 3.10 exists, they run one command that installs uv (Step 1 below).
 
@@ -32,7 +33,9 @@ the human sets up the key, and the first AI read covers those companies (`fill_d
 says so in one sentence). If the human says they do not want it, rerun `next_command` plus `--fill-descriptions no`
 (a running fill is stopped; if they change their mind, `--fill-descriptions yes` brings it back). An English idea
 whose first read passes mostly A-shares gets the same fill, and its companies ranked in, before the first result. No
-question is asked for this.
+question is asked for this. Every idea also gets, once, the profiles of the 50 largest companies in its scope that
+have none (any market, about 30 s, the same polite path; `top_fill` in the job), so a large company is not skipped
+only because its profile was missing.
 
 After the result, at most 3 optional questions in one message: filling missing profiles (optional: when the default
 China fill failed, timed out or did not cover a floor lowered later, not after a block since a 24 h cooldown applies,
@@ -55,7 +58,7 @@ output: [docs/AGENT_API.md](docs/AGENT_API.md#jevscreen-quickstart).
 **0. Before you install, say this** (in the human's language; both versions are also in every `quickstart` JSON as
 `before_you_start_zh` / `before_you_start_en`):
 
-> 开始前说明：①会问你可不可以用两个数据源（TradingView 的股票清单、Yahoo 的公司简介）：它们的条款限制程序取用，只能你个人研究用、不能分享；②要一个能付费用 Jev（读简介和年报的 AI 服务）的账号：TypeSafe 官方 API、OpenRouter 或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。出结果后，你的 AI 会再逐家读约 25–40 家公司的摘录来核对，用的是它自己的额度，要几分钟。
+> 开始前说明：①会问你可不可以用两个数据源（TradingView 的股票清单、Yahoo 的公司简介）：它们的条款限制程序取用，只能你个人研究用、不能分享；②要一个能付费用 Jev（读简介和年报的 AI 服务）的账号：TypeSafe 官方 API、OpenRouter 或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。出结果后，你的 AI 会再逐家读约 30–45 家公司的摘录和年报原文来核对，用的是它自己的额度，要 5–10 分钟。
 
 > Before we start: (1) I will ask if you are OK with two data sources (TradingView's stock list, Yahoo company
 > profiles) whose terms restrict automated use: for your personal research only, never shared; (2) you need an account
@@ -64,8 +67,8 @@ output: [docs/AGENT_API.md](docs/AGENT_API.md#jevscreen-quickstart).
 > plus a payment fee; see the provider's payment page) and needs a card that pays in US dollars; this screen uses
 > about $0.30 of it and the rest stays for later. (3) About 15–25 minutes the first time, including the sign-up. On a
 > Mac, a box may offer to install the command line developer tools: click Install (a few minutes). You answer one
-> round of questions. After the result, your AI reads the excerpts of about 25-40 companies to check them, on its
-> own quota; that takes a few minutes.
+> round of questions. After the result, your AI reads the excerpts and filing text of about 30-45 companies to check
+> them, on its own quota; that takes 5-10 minutes.
 
 **1. Install** (no admin rights, no Homebrew, no system Python needed):
 
@@ -118,8 +121,12 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
 - **`agent_review` (exit 11, once per idea after the first result).** Tell the human one line first
   (`text_<lang>`). Open `deck_path`.
 
-  For every item, decide from `evidence.sentences` **only**. Do not use what you know about the company from
-  elsewhere; the name alone is not evidence. Follow `criteria_en`, including the human's own scope answers.
+  The deck holds every listed company (the whole to-confirm section and the whole main list; typically 30–45 items,
+  5–10 minutes of reading). For every item, decide from `evidence.sentences` and `evidence.more` **only**.
+  `evidence.more`, when present, is a few more numbered sentences of the company's own stored official filing that
+  the excerpt left out (often the product list): cite them by number like the others. Do not use what you know
+  about the company from elsewhere; the name alone is not evidence. Follow `criteria_en`, including the human's own
+  scope answers.
 
   Answer:
   - `yes` with `level` `explicit` (it offers exactly this) or `partial` (related, small or early);
@@ -130,17 +137,29 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
   chars). When the evidence is in another language, add `quote_tr`. For `held` items also give `in_group` (is it
   really the kind named in `held_questions`?) and `short` (what the company is, ≤ 10 字 / 40 chars).
 
+  The deck puts the companies to confirm first (`section: "to_confirm"`: not on the human's list). Your `yes` with
+  `level` `explicit` and its `quote_ids` moves one into the main list, marked 你的 AI 核对 / "checked by your AI":
+  give it only when the cited sentences state it plainly (else `partial`, which leaves it to confirm). A `no` on a
+  `section: "main"` item takes it off the main list: answer `no` with its chip when the text contradicts a hard part
+  of the idea (another geography, a different product kind, only a plan / goal / 布局 / R&D, or the product only
+  named in a list of many); `partial` on a main item is for an offer that is real but small or early. A company a
+  scope answer moved down stays to confirm whatever you answer. The human's answers still override yours.
+
   Save the file anywhere in the jev-screen folder and run `record_command` (`jevscreen judge --deck ... --file
   ... --json`). It is free and takes seconds. Then run `jevscreen quickstart --status --key K --json` and relay as
   for `done`: `text_<lang>`, the `top` rows and the `ask_now` items, in one message.
 
-  After relaying, if `agent_review.part_b` is pending, review it the same way. It never blocks. Tell the human only
-  if it changed the top 10.
+  After relaying, if `agent_review.part_b` is pending (a few below-cut, gap or scope-removed companies), review it
+  the same way. It never blocks. Tell the human only
+  if it changed the main list (`main_changed: true` in the `judge` JSON; `text_<lang>` then names the companies moved
+  into the confirmed list or out of it).
 
-  Whenever a new version brings companies you have not read into the top 10 (after your judge, the human's
-  `decide`, or a profile fill), `agent_review` comes back once more (part `F1`, `F2` …, status `needs_agent`; `judge`
-  and `decide` also return it as `review_pending`): review those few the same way before you relay anything. Until
-  you have, they are marked 未核对 / "not yet checked" (`unchecked: true` in `top`, and on the page).
+  Whenever a new version brings companies you have not read into the first 10 of the main list (after your judge,
+  the human's `decide`, or a profile fill), `agent_review` comes back once more (part `F1`, `F2` …, status
+  `needs_agent`; `judge` and `decide` also return it as `review_pending`): review those few the same way before you
+  relay anything. New companies that land only in the to-confirm section get a follow-up deck that does not block
+  (`agent_review.followups`, `blocking: false`): review it after relaying, like part B. Until you have, they are
+  marked 未核对 / "not yet checked" (`unchecked: true` in `top` and `to_confirm.rows`, and on the page).
 
   Never answer the human's scope questions or escalations yourself. Never turn an escalation into a pin without the
   human's answer. Put all of the human's answers into ONE `decide` command (`jevscreen decide "s1=no c3=yes"
@@ -193,8 +212,16 @@ It returns in seconds and never uses the network itself. Trust the `status` fiel
   (`page`) opened at the first step shows the same progress live; if `page_opened` is false, give them `page_uri`. Never rerun the
   front command while the status is `running`.
 - `done` / `partial` (exit 0): relay `text_<lang>` (the counts, the idea's total time and cost, the page, and what
-  changed in this version) and the `top` rows as a short list in chat (translate `one_line` into the human's
-  language when `one_line_needs_translation` is true). Say whether the page opened (`page_opened`); if not, give
+  changed in this version) and the `top` rows as a short numbered list in chat (translate `one_line` into the human's
+  language when `one_line_needs_translation` is true). `top` is the main list: only the companies confirmed from
+  their own texts (plus the ones your review confirmed, `checked_by_agent`), often fewer than 10 and sometimes none.
+  Never pad it: the companies to confirm (`to_confirm`: `n` and brief `rows`) are a separate section on the page and
+  are never numbered with `top`. The page lists every confirmed company; `top` holds at most the first 10, and when
+  there are more `top_more` counts the rest and `text_<lang>` says the page lists all of them: relay that line, do
+  not list the rest in chat. `text_<lang>` already gives the counts calmly ("确认 3 家；另有 7 家待核对"), and
+  when the main list is under 10 it says it is not padded, names a few companies to confirm and where they are; it
+  also names any scope applied automatically from the idea's own words with its undo reply: relay those lines as
+  they are. A short or empty main list is a normal result, not an error: do not apologise for it. Say whether the page opened (`page_opened`); if not, give
   them `page_uri`. There is one page per idea (`page`, `<home>/pages/<key>.html`): it always shows the newest
   version, so the human only refreshes it. The worker already fetched missing annual reports and updated the result
   (`fetch`: "Annual reports fetched during the screen" below).
@@ -479,8 +506,8 @@ The budget is hard: the run stops before spending more. Exit `5` means the budge
 written): ask before raising it. Exit `6` means Jev is unavailable (missing or rejected key, or HTTP 402: no credit
 left, the human must add some): run `jevscreen doctor --check-jev --json`. Exit `4` means another screen is running.
 
-**Verify:** exit code 0 and a folder `data/screens/<timestamp>-<idea>/` with `report.md`. Summarise the top rows and
-the "unverified" list for the human; say which companies had official annual-report evidence and which only a
+**Verify:** exit code 0 and a folder `data/screens/<timestamp>-<idea>/` with `report.md`. Summarise the main list
+(report.md "Main list (confirmed)", never padded to 10), the count to confirm and the "unverified" list for the human; say which companies had official annual-report evidence and which only a
 profile; point them to `report.md` for the details. Remind them: personal use only, do not share the list.
 If any of the top rows is marked ST / *ST (the console prints 「注意：交易所风险警示（ST）…」), say so in one plain
 sentence: the exchange flags financial trouble; *ST means possible delisting.

@@ -83,6 +83,10 @@ class PayJev(TS.FakeJev):
 
 
 class FlowCase(unittest.TestCase):
+    # the review mechanics over one ranked list (--no-shortlist): ranks, the relayed top 10, parts A / B and the
+    # follow-up decks; the same flow with the main list and the to-confirm section: test_no_padding.SectionsFlow
+    SHORTLIST = False
+
     def setUp(self):
         env = mock.patch.dict(os.environ)
         env.start()
@@ -101,7 +105,7 @@ class FlowCase(unittest.TestCase):
         calib.save_sieve(calib.sieve_path(self.cfg, IDEA), sv)
         self.base = screen.screen(self.cfg, IDEA, jev_factory=self.factory, keywords_fn=TS.FakeKeywords(),
                                   sieve="auto", facet_scan=True, max_out=20, min_mcap_usd=0,
-                                  out_dir=self.home / "base", translate=False)
+                                  out_dir=self.home / "base", translate=False, shortlist=self.SHORTLIST)
 
     def factory(self, cfg, *, run_id, layer, budget_usd, dry_run):
         return PayJev(cfg, run_id=run_id, layer=layer, budget_usd=budget_usd, dry_run=dry_run)

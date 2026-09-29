@@ -68,7 +68,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import agent_cli, eval_cli, ondemand_cli, quickstart_cli
+from . import agent_cli, eval_cli, ondemand_cli, quickstart_cli, topn_fetch
 from . import review_cli, why_cli
 
 EXIT_OK, EXIT_ERROR, EXIT_BLOCKED, EXIT_LOCKED, EXIT_BUSY, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -315,11 +315,44 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also read the facet layer (role / scope / geo of each verified company, a few cents at "
                          "most, cached): what the scope questions and the human's scope answers need; on by itself "
                          "when the sieve has an enforced scope answer or the --from-run base read facets")
+    sc.add_argument("--l2-constraints", dest="l2_constraints", action="store_const", const=True, default=None,
+                    help="lever (off by default; a --from-run keeps the base run's setting): an explicit L2 answer "
+                         "also needs the idea's end market / place / role stated in the same text (one cheap extra "
+                         "question over the explicit companies, cached; L1 and L2 are not asked again); otherwise "
+                         "the company is listed as related")
+    sc.add_argument("--no-l2-constraints", dest="l2_constraints", action="store_const", const=False,
+                    help="turn --l2-constraints off (e.g. for a --from-run of a run made with it)")
+    sc.add_argument("--shortlist", dest="shortlist", action="store_const", const=True, default=None,
+                    help="the default (a --from-run keeps the base run's setting): the main list holds only the "
+                         "confirmed companies (L1 core + L2 explicit; with --judge, tier A), never padded to 10; the "
+                         "others go to a separate to-confirm section; results.json / results.csv get shortlist_tier "
+                         "and section")
+    sc.add_argument("--no-shortlist", dest="shortlist", action="store_const", const=False,
+                    help="the old single list, padded with the companies to confirm (no sections)")
+    sc.add_argument("--judge", dest="judge", choices=("none", "atomic3", "single10"), default=None,
+                    help="lever (off by default; a --from-run keeps the base run's setting): the item-by-item check "
+                         "over the same L2 text of every verified company (atomic3: product / role / target "
+                         "questions; single10: one ten-class question, cheaper), cached; tiers A / B / C order the "
+                         "list, C only on counter-evidence the text states (never removed); none turns it off")
+    sc.add_argument("--lang-terms", dest="lang_terms", action="store_const", const=True, default=None,
+                    help="lever (off by default; a --from-run keeps the base run's setting): annual-report search "
+                         "terms for every document language (en / zh / ja / ko) from the local keyword model, also "
+                         "when --idea-en is given (the English sentence is not changed); generic words count as weak "
+                         "terms. Filings whose excerpts change are read again by L2 (paid, cached)")
+    sc.add_argument("--no-lang-terms", dest="lang_terms", action="store_const", const=False,
+                    help="turn --lang-terms off (e.g. for a --from-run of a run made with it)")
+    sc.add_argument("--second-search", dest="second_search", action="store_const", const=True, default=None,
+                    help="lever (off by default; a --from-run keeps the base run's setting): companies L1 judged core "
+                         "whose annual-report excerpts L2 found insufficient get one more L2 read over other passages "
+                         "of the filing that match the widened terms; a yes there lists them as related at most")
+    sc.add_argument("--no-second-search", dest="second_search", action="store_const", const=False,
+                    help="turn --second-search off (e.g. for a --from-run of a run made with it)")
     sc.add_argument("--rank", choices=RANK_CHOICES, default=None, action=_Given,
                     help="label (default: the L2 label's weight) or ev (the mean probabilities; measured, not the "
                          "default)")
     why_cli.add_screen_arguments(sc, _Given)   # --shells drop|keep, --idea-of RUN_ID (idea optional)
     ondemand_cli.add_screen_flags(sc)   # --fetch-docs / --fetch-time / --fetch-sources (on-demand annual reports)
+    topn_fetch.add_flags(sc)   # --fetch-profile-only-topn / --deepen-official-topn / --topn-fetch-time (default off)
     sc.set_defaults(given=frozenset())
     ca = sub.add_parser("cards", help="rebuild or reprint the calibration cards of a screen run from its stored "
                         "results (free)")
@@ -1143,6 +1176,19 @@ def _screen_arg(args, dest: str, value: Any, unset: Any) -> Any:
     return value if dest in given else unset
 
 
+def _lever(args, dest: str, unset: Any) -> Any:
+    """screen()'s value of an on/off lever: True / False when --x / --no-x was given, else `unset` (the --from-run
+    base run's setting, or off)."""
+    v = getattr(args, dest, None)
+    return unset if v is None else bool(v)
+
+
+def _judge_arg(args, unset: Any) -> Any:
+    """screen()'s judge: None for --judge none, the arm for atomic3 / single10, else `unset` (the base run's)."""
+    v = getattr(args, "judge", None)
+    return unset if v is None else (None if v == "none" else v)
+
+
 def _jev_exit(e: BaseException) -> int | None:
     """The exit code of a Jev error that escaped screen() / a trial client (None: not a Jev error)."""
     from . import screen
@@ -1183,6 +1229,9 @@ def cmd_screen(args, cfg) -> int:
             l1_new=bool(getattr(args, "l1_new", False)), sieve=getattr(args, "sieve", "auto"), rank=_screen_arg(args, "rank", getattr(args, "rank", None), u),
             shells=_screen_arg(args, "shells", getattr(args, "shells", None), u),
             facet_scan=True if getattr(args, "scope_scan", False) else "auto",
+            l2_constraints=_lever(args, "l2_constraints", u), shortlist=_lever(args, "shortlist", u),
+            judge=_judge_arg(args, u),
+            lang_terms=_lever(args, "lang_terms", u), second_search=_lever(args, "second_search", u),
             **({"idea_en": args.idea_en} if getattr(args, "idea_en", None) else {}))
     except ValueError as e:
         print(f"error: screen: {e}", file=sys.stderr)
@@ -1202,7 +1251,13 @@ def cmd_screen(args, cfg) -> int:
     text = report.format_console(result)
     print(ondemand_cli.dry_run_text(args, cfg, result, text) if args.dry_run else text, flush=True)
     phase1_status = result["status"]
-    if not args.dry_run and ondemand_cli.fetch_mode(args) == "auto":
+    if not args.dry_run and topn_fetch.wanted(args):
+        try:     # phase 2 of the top-N levers (replaces --fetch-docs auto; also after a --from-run)
+            result = topn_fetch.fetch_phase(args, cfg, result)
+        except KeyboardInterrupt:
+            print("error: screen: annual-report fetch interrupted; the first report is kept", file=sys.stderr)
+            return EXIT_INTERRUPTED
+    elif not args.dry_run and ondemand_cli.fetch_mode(args) == "auto":
         try:     # phase 2: fetch missing annual reports, update the same report (never changes the exit code)
             result = ondemand_cli.fetch_phase(args, cfg, result)
         except KeyboardInterrupt:

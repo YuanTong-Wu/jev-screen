@@ -82,6 +82,7 @@ HEARTBEAT_STALE_S = 60.0
 HEARTBEAT_EVERY_S = 10.0
 PROGRESS_EVERY_S = 10.0
 PAGE_EVERY_S = 2.0                  # the worker rewrites the idea's page at most this often between job saves
+EVENTS_MAX = 60                     # the page's reading log: answers kept in the job (pagestatus.push_event)
 RETRY_NET_S = 15 * 60
 WAIT_DEFAULT_S, WAIT_MAX_S = 100.0, 110.0
 RELAY_EVERY_S = 60
@@ -134,7 +135,7 @@ STRINGS: dict[str, dict[str, str]] = {
                   "或 Vercel AI Gateway 任选一家，价格一样。第一次一般要先充值（最低充值额通常是几美元，另有支付手续费，以各家"
                   "付款页为准），需要能付美元的卡；这次筛选只从余额里扣约 $0.3（约 ¥2），剩下的留着下次用；③第一次约 15–25 分钟"
                   "（含注册账号）。Mac 第一次用可能弹出「安装命令行开发者工具」，点安装即可（几分钟）。你只需要回答一轮问题。出结果后，你的 AI 会再"
-                  "逐家读约 25–40 家公司的摘录来核对，用的是它自己的额度，要几分钟。",
+                  "逐家读约 30–45 家公司的摘录和年报原文来核对，用的是它自己的额度，要 5–10 分钟。",
         "intro": "接下来：先下载股票清单和公司简介（免费，约 1 分钟），再让 AI 读这些简介、用年报核对（约 3 分钟，约 $0.3），"
                  "最后在浏览器里给你一个排好序的名单，每家都附原文证据。",
         "bg_started": "免费下载已经在后台开始了，你准备 key 的时候不耽误。",
@@ -144,7 +145,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "budget_q_early": "这次最多花 ${x}（约 ¥{y}）可以吗？预计约 ${est}。发给 AI 的英文句子写好后会一起给你看。"
                           "开始前会先用约 $0.0001 试一下 key 能不能付费。",
         "budget_topup_q": "预算用完了：结果页先给出已核对的部分。继续需要再同意约 ${more}，也就是把总上限提高到 ${total}。可以吗？",
-        "over_q": "预计要预留 ${r}，超过你同意的 ${x}。可以缩小范围：{alts}；或者明确同意一个更高的上限，比如 ${r_up}。",
+        "over_q": "预计要花 ${r}，超过你同意的 ${x}。可以缩小范围：{alts}；或者明确同意一个更高的上限，比如 ${r_up}。",
         "uncertain_q": "上次中断时有 {n} 条请求结果不明，重发约 ${c}（超过 1 美分）。同意把总上限提高到 ${total} 吗？",
         "reprice_q": "发给 AI 的英文要从 '{old}' 改成 '{new}'。这会重新计费（AI 初读约 ${l1}）。同意改用新的英文，并重新确认"
                      "预算上限 ${x} 吗？不同意就继续用原来的英文。",
@@ -179,6 +180,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "p_l2": "[4/5] AI 核对 {done}/{total} 家…", "p_finish": "[5/5] 生成结果页…",
         "done": "完成：{n} 家入选（年报确认 {a}，只有简介 {p}）。这个想法从你同意起共用时 {t}（不算等你回答的时间），"
                 "共花费 ${c}（{y}）。结果页：{where}。仅供你个人研究，请勿分享。",
+        # the confirmed list and the to-confirm section (never padded to 10)
+        "done_split": "完成：确认 {m} 家{src}{more}。这个想法从你同意起共用时 {t}"
+                      "（不算等你回答的时间），共花费 ${c}（{y}）。结果页：{where}。仅供你个人研究，请勿分享。",
+        "done_split0": "完成：这次没有公司能从原文确认{more}。这个想法从你同意起共用时 {t}"
+                       "（不算等你回答的时间），共花费 ${c}（{y}）。结果页：{where}。仅供你个人研究，请勿分享。",
+        "done_src": "（年报 {a}，只有简介 {p}）", "done_more": "；另有 {u} 家待核对，不算入选",
+        "done_more0": "，也没有待核对的公司",
+        "mark_agent": "，你的 AI 核对",
         "done_version": "这是第 {v} 版：{change}。",
         "fill_q": "可选，问你一件事：这次有 {n} 家{market}公司（市值 ≥ {floor}，占{market}公司的 {pct}%）没有公司简介，AI 没读到"
                   "{names}。要补吗？补简介免费、在后台跑，约 {m} 分钟；补完只让 AI 初读新补的这些公司并重新排序，"
@@ -221,6 +230,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "next_idea": "换一个想法：直接告诉你的 AI（约 4 分钟，约 $0.25，不用再下载）",
         "review_wait": "结果出来了，我正在逐家核对年报和简介的摘录（约 2–4 分钟），核对完再给你看名单。",
         "review_page_line": "页面上「帮 AI 把范围定准」里点答案，把生成的那行发给我就行（免费，几秒更新）。",
+        "default_label": "已自动套用：",
         "review_timeout": "你的 AI 没有完成核对，先给你系统的名单。",
         "review_wait_new": "名单有变化：有 {n} 家新进入名单、我还没核对过，我先逐家核对它们的摘录（约 1–2 分钟），核对完再给你看名单。",
         "ask_label": "问题 {i}：",
@@ -262,8 +272,8 @@ STRINGS: dict[str, dict[str, str]] = {
                   "needs a card that pays in US dollars; this screen uses about $0.30 of it and the rest stays for later. "
                   "(3) About 15–25 minutes the first time, including the sign-up. On a Mac, a box may offer to install "
                   "the command line developer tools: click Install (a few minutes). You answer one round of questions. "
-                  "After the result, your AI reads the excerpts of about 25-40 companies to check them, on its own "
-                  "quota; that takes a few minutes.",
+                  "After the result, your AI reads the excerpts and filing text of about 30-45 companies to check "
+                  "them, on its own quota; that takes 5-10 minutes.",
         "intro": "Next: download the stock list and company profiles (free, about 1 min), have an AI read them and check "
                  "against annual reports (about 3 min, about $0.30), then show you a ranked list with evidence in your "
                  "browser.",
@@ -279,7 +289,7 @@ STRINGS: dict[str, dict[str, str]] = {
                           "checks that the key can pay.",
         "budget_topup_q": "The budget ran out: the page shows what was checked so far. Continuing needs about ${more} more, "
                           "i.e. a total cap of ${total}. OK?",
-        "over_q": "This needs a reservation of ${r}, above the ${x} you approved. Narrow it: {alts}; or explicitly approve "
+        "over_q": "This is estimated at ${r}, above the ${x} you approved. Narrow it: {alts}; or explicitly approve "
                   "a higher cap such as ${r_up}.",
         "uncertain_q": "{n} requests had an unknown outcome when the run stopped; resending costs about ${c} (over 1 "
                        "cent). OK to raise the total cap to ${total}?",
@@ -326,6 +336,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "done": "Done: {n} companies listed ({a} confirmed by annual report, {p} by profile only). This idea took {t} in "
                 "total since you agreed (not counting time waiting for your answers) and cost ${c} in total. Results "
                 "page: {where}. For your personal research only; please do not share.",
+        # the confirmed list and the to-confirm section (never padded to 10)
+        "done_split": "Done: {m} confirmed{src}{more}. This idea took {t} in total since you agreed (not counting "
+                      "time waiting for your answers) and cost ${c} in total. Results page: {where}. For your "
+                      "personal research only; please do not share.",
+        "done_split0": "Done: no company could be confirmed from its own texts{more}. This idea took {t} in total "
+                       "since you agreed (not counting time waiting for your answers) and cost ${c} in total. Results "
+                       "page: {where}. For your personal research only; please do not share.",
+        "done_src": " ({a} by annual report, {p} by profile only)",
+        "done_more": "; {u} more to confirm (not in the confirmed list)", "done_more0": ", and none is left to confirm",
+        "mark_agent": ", checked by your AI",
         "done_version": "This is version {v}: {change}.",
         "fill_q": "Optional question: {n} {market} companies (market cap ≥ {floor}, {pct}% of {market} companies) have no "
                   "company profile, so the AI could not read them{names}. Fill them in? Filling is "
@@ -380,6 +400,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "ev_user": "your call (the AI did not confirm it from the text)", "mark_user": ", your call",
         "mark_edge": ", borderline", "mark_unchecked": ", not yet checked",
         "next_idea": "Try another idea: just tell your AI (about 4 min, about $0.25, no downloads)",
+        "default_label": "Applied automatically: ",
         "review_wait": "The list is ready; I'm checking the annual-report and profile excerpts company by company "
                        "(about 2-4 minutes) before I show it to you.",
         "review_page_line": "On the page, pick your answers under \"Help the AI get the scope right\" and send me the "
@@ -1445,75 +1466,8 @@ def market_hole(con, market: str, floor: float) -> dict[str, Any]:
             "large": bool(missing) and (share >= FILL_MIN_SHARE or top_missing >= FILL_MIN_TOP)}
 
 
-_WORD = re.compile(r"[A-Za-z][A-Za-z\-]{3,}")
-
-
-def idea_match_words(terms: list[str]) -> list[str]:
-    """The words a missing company's name or industry is matched against for the fill question's examples: the
-    idea's CJK pieces (2+ characters) and its English content words (>= 4 letters, no generic ones such as
-    'suppliers' or 'systems'), a plural 's' dropped ('joints' -> 'joint')."""
-    from . import page
-    out: list[str] = []
-    for t in terms or []:
-        t = str(t)
-        cjk = page._CJK_RUN.findall(t)
-        if cjk:
-            out += [c for c in cjk if len(c) >= 2 and c not in page.GENERIC_CJK]
-            continue
-        for w in _WORD.findall(t):
-            w = w.lower()
-            if w in page.GENERIC_EN:
-                continue
-            out.append(w[:-1] if w.endswith("s") and not w.endswith("ss") and len(w) > 4 else w)
-    return list(dict.fromkeys(out))
-
-
-def fill_examples(con, run_id: str | None, missing: list[tuple],
-                  terms: list[str] | None = None) -> tuple[list[dict[str, Any]], str]:
-    """The missing companies the fill question names (at most FILL_NAMES) and why ('idea_words' | 'related' |
-    'largest'): first those whose name (English or the official Chinese short name) or industry carries the idea's
-    own words (most words first, then market cap: e.g. a thermal-management maker for a liquid-cooling idea); else
-    those in the industries of the run's L1 passes (most passes first, then market cap), never a bank or insurer
-    unless the passes include finance; else the largest non-financial ones. `missing` rows: (security_id, name,
-    country, exchange, market_cap_usd, described, sector, industry), largest first."""
-    from collections import Counter
-    from . import screen
-    words = idea_match_words(terms or [])
-    if words and missing:
-        zh = _local_names(con, [r[0] for r in missing])
-
-        def hits(r: tuple) -> int:
-            hay = " ".join(str(x or "") for x in (r[1], zh.get(r[0]), r[6], r[7])).lower()
-            return sum(1 for w in words if w in hay)
-        scored = sorted(((hits(r), r) for r in missing), key=lambda t: (-t[0], -(t[1][4] or 0), t[1][0]))
-        picked = [r for n, r in scored if n > 0][:FILL_NAMES]
-        if picked:
-            return [{"name": r[1], "name_en": plain_name(r[1]), "name_zh": zh.get(r[0]) or plain_name(r[1]),
-                     "ticker": r[0].split(":", 1)[-1], "security_id": r[0], "market_cap_usd": r[4],
-                     "industry": r[7]} for r in picked], "idea_words"
-    ind: Counter = Counter()
-    sectors: set = set()
-    if run_id:
-        for label, probs, status, sector, industry in con.execute(
-                """SELECT r.label, r.probs_json, r.status, u.sector, u.industry FROM screen_results r
-                   JOIN universe u ON u.company_key = r.company_key
-                   WHERE r.run_id = ? AND r.layer = 'l1'""", [run_id]).fetchall():
-            try:
-                pr = json.loads(probs) if probs else {}
-            except ValueError:
-                pr = {}
-            if screen.l1_passes({"status": status, "label": label, "probs": pr}):
-                if industry:
-                    ind[industry] += 1
-                if sector:
-                    sectors.add(sector)
-    pool = [r for r in missing if "Finance" in sectors or r[6] != "Finance"]
-    related = sorted((r for r in pool if r[7] and ind[r[7]]), key=lambda r: (-ind[r[7]], -(r[4] or 0)))
-    basis, picked = ("related", related[:FILL_NAMES]) if related else ("largest", pool[:FILL_NAMES])
-    local = _local_names(con, [r[0] for r in picked])
-    return [{"name": r[1], "name_en": plain_name(r[1]), "name_zh": local.get(r[0]) or plain_name(r[1]),
-             "ticker": r[0].split(":", 1)[-1], "security_id": r[0], "market_cap_usd": r[4],
-             "industry": r[7]} for r in picked], basis
+from . import fillgap  # noqa: E402 - profile-gap helpers (moved for size)
+from .fillgap import fill_examples, idea_match_words  # noqa: E402,F401 - re-exported
 
 
 def fill_item(cfg, job: dict[str, Any], spent: float | None = None) -> dict[str, Any] | None:
@@ -1602,8 +1556,10 @@ def budget_item(cfg, job: dict[str, Any], spent: float | None = None, *,
         alts = est.get("alternatives") or []
         az = "、".join(f"{x['label_zh']}（约 ${_usd(x['estimate_usd'])}）" for x in alts) or "（没有更小的范围）"
         ae = ", ".join(f"{x['label_en']} (about ${_usd(x['estimate_usd'])})" for x in alts) or "(no narrower scope)"
-        qz = STRINGS["zh"]["over_q"].format(r=_usd(r), x=f"{a['usd']:g}", alts=az, r_up=f"{r_up:.2f}")
-        qe = STRINGS["en"]["over_q"].format(r=_usd(r), x=f"{a['usd']:g}", alts=ae, r_up=f"{r_up:.2f}")
+        ev = float(est.get("est_cost_usd") or r)
+        rs = _usd(ev) if _usd(ev) != f"{a['usd']:.2f}" else _usd(ev, 3)     # never '$0.30 is over $0.30'
+        qz = STRINGS["zh"]["over_q"].format(r=rs, x=f"{a['usd']:.2f}", alts=az, r_up=f"{r_up:.2f}")
+        qe = STRINGS["en"]["over_q"].format(r=rs, x=f"{a['usd']:.2f}", alts=ae, r_up=f"{r_up:.2f}")
         rerun = f"--approve-budget {r_up:.2f}"
     elif kind == "uncertain":
         c = float(job.get("uncertain_usd") or 0.0)
@@ -1690,7 +1646,8 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
     spent = spent_usd(cfg, job) if a else None
     job = newest_view(cfg, job)
     if (job.get("result") or {}).get("fetch"):
-        job = {**job, "result": {**job["result"], "fetch": open_fetch_questions(cfg, job["result"]["fetch"])}}
+        from . import ondemand
+        job = {**job, "result": {**job["result"], "fetch": ondemand.open_fetch_questions(cfg, job["result"]["fetch"])}}
     items = pending(cfg, job, spent) if items is None else items
     status = derive_status(cfg, job, items)
     res = job.get("result") or {}
@@ -1715,7 +1672,7 @@ def response(cfg, job: dict[str, Any], items: list[dict[str, Any]] | None = None
         "version": res.get("version"), "change_zh": res.get("change_zh"), "change_en": res.get("change_en"),
         "idea_en_changes": job.get("idea_en_changes") or [],
         "timing": {s["id"]: s.get("seconds") for s in job.get("steps") or [] if s.get("seconds") is not None},
-        "summary": res.get("summary"), "top": res.get("top") or [],
+        "summary": res.get("summary"), "top": res.get("top") or [], "to_confirm": res.get("to_confirm"),
         "next_steps": shown_next_steps(cfg, job, res.get("next_steps") or []),
         "gaps": res.get("gaps") or [], "fetch": res.get("fetch"),
         "translation": res.get("translation"),
@@ -1799,8 +1756,9 @@ def review_view(job: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, A
     res = job.get("result") or {}
     run_id = rv.get("run_id") or res.get("run_id")
     ans = rv.get("answered") or {}
+    # restated with the shown version's counts (the page's), so the JSON never keeps an older version's numbers
     empty = {"agent_review": ar, "scope": None, "escalations": [], "ask_now": [], "later": [],
-             "agent_summary": rv.get("agent_summary")}
+             "agent_summary": review_cli.current_summary(rv.get("agent_summary"), res)}
     if not rv or (ar or {}).get("state") == "pending":
         fill = [i for i in items if i.get("id") == "fill_descriptions"]
         return {**empty, "ask_now": fill}
@@ -1825,7 +1783,10 @@ def review_view(job: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, A
     else:
         ask_now = order[:CHAT_Q_MAX]
         later = order[CHAT_Q_MAX:] + [e for e in escs if e not in esc_now]
-    scope = {"questions": scope_items, "defaults": rv.get("defaults") or [], "answered": ans}
+    # each default applied from the idea's words carries its one-line undo (free, seconds)
+    defaults = [{**d, "undo_command": review_cli.decide_command(run_id, d["token"]) if run_id and d.get("token")
+                 else None} for d in rv.get("defaults") or []]
+    scope = {"questions": scope_items, "defaults": defaults, "answered": ans}
     return {**empty, "scope": scope, "escalations": escs, "ask_now": ask_now, "later": later}
 
 
@@ -1900,8 +1861,10 @@ def top_evidence(T: dict[str, str], r: dict[str, Any]) -> str:
         ev = T.get(f"ev_{kind}", kind)
     if r.get("user") and not r.get("verdict_from_user"):
         ev += T["mark_user"]
-    if r.get("edge"):
+    if r.get("edge") and r.get("verdict") != "edge":        # said once
         ev += T["mark_edge"]
+    if r.get("checked_by_agent"):
+        ev += T["mark_agent"]
     if r.get("unchecked"):
         ev += T["mark_unchecked"]
     return ev
@@ -1937,10 +1900,25 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
             lines.append(T["reused"])
         if status == "budget_exhausted":
             lines.append(T["budget_exhausted"].format(n=s.get("listed", 0), x=_usd(job.get("topup_usd") or 0.25)))
-        lines.append(T["done"].format(n=s.get("listed", 0), a=s.get("annual_report", 0), p=s.get("profile_only", 0),
-                                      c=_usd(c), y=_cny_words(c), t=t, where=where))
+        if "main" in s:              # the confirmed list and the to-confirm section
+            u, p = int(s.get("to_confirm") or 0), int(s.get("profile_only") or 0)
+            # the evidence split only when a profile-only row is in the main list (usually every one has a report)
+            src = T["done_src"].format(a=s.get("annual_report", 0), p=p) if p else ""
+            more = T["done_more"].format(u=u) if u else (T["done_more0"] if not s["main"] else "")
+            lines.append(T["done_split" if s["main"] else "done_split0"].format(
+                m=s["main"], src=src, more=more, c=_usd(c), y=_cny_words(c), t=t, where=where))
+        else:
+            lines.append(T["done"].format(n=s.get("listed", 0), a=s.get("annual_report", 0),
+                                          p=s.get("profile_only", 0), c=_usd(c), y=_cny_words(c), t=t, where=where))
         if (res.get("version") or 1) > 1 and res.get(f"change_{lang}"):
             lines.append(T["done_version"].format(v=res["version"], change=res[f"change_{lang}"]))
+        view = view if view is not None else review_view(job, items)
+        # a scope default taken from the idea's own words removed companies: said up front, with its undo reply
+        for d in (view.get("scope") or {}).get("defaults") or []:
+            lines.append(T["default_label"] + d[f"text_{lang}"])
+        from . import short_list
+        if status != "budget_exhausted" and (short := short_list.text(res, lang, status)):
+            lines.append(short)
         lines += fixes
         fdf = job.get("fill_default") or {}
         mz = FILL_MARKET_WORDS.get(fdf.get("market") or "", (fdf.get("market"), fdf.get("market")))[
@@ -1960,12 +1938,13 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
             lines.append(fill[f"message_{lang}"])
         elif fill.get("finished_at") and fill.get("answer") == "yes" and not fill.get("added"):
             lines.append(T["fill_none"])
-        view = view if view is not None else review_view(job, items)
         summ = view.get("agent_summary") or {}
         if summ.get(f"text_{lang}"):
-            lines.append(summ[f"text_{lang}"])                 # 我核对了 n 家的摘录 …（first person）
-        for d in (view.get("scope") or {}).get("defaults") or []:
-            lines.append(d[f"text_{lang}"])
+            # 我核对了 n 家的摘录 …（first person), with the counts of the version the page shows
+            from . import review_cli
+            lines.append(review_cli.summary_text(summ, lang, reviewed=res.get("agent_reviewed"),
+                                                 removed=res.get("removed_n"),
+                                                 by_answers=res.get("removed_by_answers")))
         if (job.get("agent_review") or {}).get("state") == "timed_out":
             lines.append(T["review_timeout"])                  # why no check by your AI happened
         for i, it in enumerate(view.get("ask_now") or [], 1):
@@ -1985,6 +1964,9 @@ def human_text(job: dict[str, Any], status: str, items: list[dict[str, Any]], la
                                               country=(lang == "zh" and r.get("country_zh")) or r.get("country")
                                               or "?", one=one,
                                               verdict=r[f"verdict_words_{lang}"], evidence=top_evidence(T, r)))
+        if k := res.get("top_more"):                   # at most 10 here; the page lists every confirmed row
+            n = len(res.get("top") or [])
+            lines.append(PAGE_STRINGS[lang]["chat_top_more"].format(n=n, k=k, m=n + int(k)))
         steps = next_steps if next_steps is not None else shown_next_steps(None, job, res.get("next_steps") or [])
         for i, ns in enumerate(steps, 1):
             lines.append(f"{'下一步' if lang == 'zh' else 'Next'} {i}{'：' if lang == 'zh' else ': '}{ns[f'text_{lang}']}"
@@ -2357,6 +2339,7 @@ class Deps:
     pack_pull: Callable | None = None                      # (cfg, repo) -> summary; None = jevscreen.pack
     crawl_client: Callable[[Any], Any] | None = None       # cfg -> the polite crawl client (cli.make_crawl_client)
     crawl_descriptions: Callable | None = None             # (cfg, client, *, countries, min_mcap_usd) -> summary
+    top_crawl: Callable | None = None      # fillgap.top_gap_fill's crawl (cfg, client, *, countries, min_mcap_usd, limit)
     fill_start: Callable | None = None     # (cfg, key, market, floor) -> {'pid'} | {'refused'}: starts the default
                                            # profile fill (fill_child); None = the detached child process
 
@@ -2664,7 +2647,7 @@ class Worker:
         with self.mu:
             p = self.job.get("progress") or {}
             changed = p.get("phase") != phase
-            keep = {k: p[k] for k in ("stages", "spent_before", "run_spent_usd") if k in p}
+            keep = {k: p[k] for k in ("stages", "spent_before", "run_spent_usd", "events", "event_n") if k in p}
             if phase < 4:
                 keep.pop("run_spent_usd", None)
             new = {"phase": phase, "done": done, "total": total, "text_zh": text_zh, "text_en": text_en,
@@ -2686,6 +2669,12 @@ class Worker:
                 self.save()
             elif time.monotonic() - self.last_page >= PAGE_EVERY_S:
                 self.page()
+
+    def event(self, ev: dict[str, Any]) -> None:
+        """screen's events callback: one company's answer into the page's reading log (pagestatus.push_event)."""
+        from . import pagestatus
+        with self.mu:
+            pagestatus.push_event(self.job.setdefault("progress", {}), ev, EVENTS_MAX)
 
     def stage_count(self, stage: str, done: int, total: int | None) -> None:
         """A stage's count without a new progress line (the bytes of the profile download)."""
@@ -2815,7 +2804,8 @@ class Worker:
         if facts["companies"] and facts["age_days"] is not None and facts["age_days"] <= UNIVERSE_FRESH_DAYS:
             zh = T["zh"]["p_universe_skip"].format(age=UNIVERSE_FRESH_DAYS)
             en = T["en"]["p_universe_skip"].format(age=UNIVERSE_FRESH_DAYS)
-            self.record("universe", "skipped", t0, zh, en, companies=facts["at_floor"])
+            self.record("universe", "skipped", t0, zh, en, companies=facts["at_floor"],
+                        listed=facts["companies"])
             self.progress(2, zh, en, force=True)
             return "ok"
         if self.backoff("universe"):
@@ -2841,7 +2831,8 @@ class Worker:
                                                  s=int(time.monotonic() - t0))
             en = T["en"]["p_universe_ok"].format(n=f"{facts['at_floor']:,}", floor=floor,
                                                  s=int(time.monotonic() - t0))
-            self.record("universe", "ok", t0, zh, en, companies=facts["at_floor"])
+            self.record("universe", "ok", t0, zh, en, companies=facts["at_floor"],
+                        listed=facts["companies"])
             self.progress(2, zh, en, force=True)
             return "ok"
         if code == ops.EXIT_CONSENT:
@@ -3092,17 +3083,17 @@ class Worker:
     def alternatives(self, remaining: float) -> list[dict[str, Any]]:
         """Up to 3 narrower scopes, most relevant first: countries named in the idea; the idea's language market
         (zh: CN + HK, ja: JP, ko: KR); a higher floor ($5B)."""
-        from . import screen
+        from . import l10n, screen
         idea = self.job["idea"]
         cands: list[tuple[dict[str, Any], str, str]] = []
         named = [iso2 for iso2, words in COUNTRY_WORDS.items() if any(w in idea for w in words)]
         if named:
-            cands.append(({"countries": named}, "只看 " + "、".join(named), "only " + ", ".join(named)))
+            cands.append(({"countries": named}, "只看" + l10n.iso2_words_zh(named), "only " + ", ".join(named)))
         c = screen.script_counts(idea)
         lang_c = ["CN", "HK"] if c.get("han", 0) and not c.get("kana") else ["JP"] if c.get("kana") else \
             ["KR"] if c.get("hangul") else None
         if lang_c and lang_c != named:
-            cands.append(({"countries": lang_c}, "只看 " + "、".join(lang_c), "only " + ", ".join(lang_c)))
+            cands.append(({"countries": lang_c}, "只看" + l10n.iso2_words_zh(lang_c), "only " + ", ".join(lang_c)))
         cands.append(({"min_mcap_usd": 5e9}, "只看市值 ≥ $5B", "market cap ≥ $5B only"))
         out = []
         for args, zh, en in cands[:3]:
@@ -3113,7 +3104,7 @@ class Worker:
                 continue
             flag = (["--countries", ",".join(args["countries"])] if "countries" in args
                     else ["--min-mcap", _num(args["min_mcap_usd"])])
-            if e.get("est_reserved_usd") is not None and float(e["est_reserved_usd"]) > remaining + 1e-9:
+            if float(e.get("est_cost_usd") or 0.0) > remaining + 1e-9:
                 continue            # still over the approval: picking it would only ask again
             out.append({"args": args, "flags": _command(*flag), "label_zh": zh, "label_en": en,
                         "estimate_usd": e["est_cost_usd"], "reserved_usd": e["est_reserved_usd"],
@@ -3154,7 +3145,9 @@ class Worker:
         with self.mu:
             self.job["estimate"] = {**est, "for": [self.job["idea_en"], self.job["min_mcap_usd"],
                                                    self.job.get("countries")], "alternatives": []}
-        if first and float(est.get("est_reserved_usd") or 0.0) > rem + 1e-9:
+        # novice #4 P1-1: asked only when the estimate itself is over the cap; a reserve (safety margin) over it
+        # is not a question: the budget is hard, the run stops at the cap
+        if first and float(est.get("est_cost_usd") or 0.0) > rem + 1e-9:
             alts = self.alternatives(rem)
             with self.mu:
                 self.job["estimate"]["alternatives"] = alts
@@ -3233,6 +3226,7 @@ class Worker:
         with self.mu:       # a new screen: its stages start empty; the page adds its cost to what was spent before
             p = self.job.setdefault("progress", {})
             p["stages"] = {k: v for k, v in (p.get("stages") or {}).items() if k not in ("l1", "l2", "fetch")}
+            p["events"] = []           # the reading log starts again (its sequence numbers keep growing)
             a = self.job.get("approval") or {}
             p["spent_before"] = round(max(0.0, float(a.get("usd") or 0.0) - rem), 6)
             p["run_spent_usd"] = 0.0
@@ -3249,7 +3243,7 @@ class Worker:
                                 min_mcap_usd=float(self.job["min_mcap_usd"]), countries=self.job.get("countries"),
                                 budget_usd=rem, reads=READS, sieve="auto", out_dir=out_dir,
                                 retry_uncertain=retry_unc, progress=on_progress, facet_scan=True,
-                                jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn)
+                                jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn, events=self.event)
         except ValueError as e:
             return self.fail("failed", str(e)[:300], reason="screen_args")
         except (KeyboardInterrupt, SystemExit):
@@ -3350,7 +3344,8 @@ class Worker:
         if (ret or {}).get("fetch") and not (final.get("layers") or {}).get("fetch"):
             final["layers"] = {**(final.get("layers") or {}), "fetch": ret["fetch"]}   # run_fetch records it too
         self.result = final
-        fetch = _fetch_brief((ret or {}).get("fetch")) or {}
+        from . import ondemand
+        fetch = ondemand.fetch_brief((ret or {}).get("fetch")) or {}
         self.record(sid, "ok", t0, fetch.get("summary_zh") or "", fetch.get("summary_en") or "",
                     update_run_id=upd.get("run_id"), cost_usd=upd.get("cost_usd"), fetched=fetch.get("fetched"))
         return "ok"
@@ -3487,6 +3482,9 @@ class Worker:
                 stopped = "scope"                   # narrowed to other markets since it started: not waited for
             elif stopped is None and (now_utc() - t0).total_seconds() > cap:
                 stopped = "timeout"
+            elif stopped is None and time.monotonic() - last >= PROGRESS_EVERY_S and fillgap.floor_covered(
+                    self.cfg, market, floor, self.job.get("min_mcap_usd")):
+                stopped = "floor"                   # a raised floor is covered: the rest is never read
             if stopped is not None and not getattr(self, "_fill_term_sent", False):
                 proc = getattr(self, "_fill_proc", None)
                 if proc is not None and os.name != "nt":
@@ -3531,9 +3529,11 @@ class Worker:
                 stopped = "opted_out"
             elif not fill_in_scope(self.job):
                 stopped = "scope"
+        if code not in (0, 2) and stopped == "floor":
+            code = 0
         state = ("done" if code == 0 else "blocked" if code == 2 else
                  (stopped or ("failed" if outcome.get("status") != "interrupted" else "stopped")))
-        reason = "scope" if state == "scope" else None
+        reason = "scope" if state == "scope" else "floor" if stopped == "floor" else None
         state = "skipped" if state == "scope" else state
         with self.mu:
             f = self.job["fill_default"]
@@ -3637,7 +3637,7 @@ class Worker:
         try:
             res = screen.screen(self.cfg, self.job["idea"], idea_en=self.job["idea_en"], from_run=base, l1_new=True,
                                 budget_usd=rem, reads=READS, sieve="auto", out_dir=out_dir, progress=on_progress,
-                                jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn)
+                                jev_factory=self.d.jev_factory, keywords_fn=self.d.keywords_fn, events=self.event)
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:  # noqa: BLE001 - the current result stands
@@ -3900,6 +3900,7 @@ class Worker:
             if step_done(self.job, "descriptions") and not self.job.get("fill_default") \
                     and not step_done(self.job, "screen"):
                 try:                                    # the free default fill: never worth a failed job
+                    fillgap.top_fill_once(self)         # the largest companies with no profile (any market)
                     self.maybe_start_fill()
                 except Exception as e:  # noqa: BLE001
                     self.note(f"default profile fill not started: {type(e).__name__}: {str(e)[:160]}")
@@ -3964,22 +3965,30 @@ def result_block(cfg, job: dict[str, Any], res: dict[str, Any], deck: dict[str, 
                  data: dict[str, Any] | None, *, stable: Path | None, opened: bool, cost: float | None,
                  seconds: float | None) -> dict[str, Any]:
     """job['result'] of a finished run: the page, deck, summary, top rows, next steps and the on-demand fetch."""
-    from . import page
+    from . import ondemand, page, short_list
     sv = _sieve(cfg, job["idea"])
     gaps = (data or {}).get("gaps") or []
-    top = page.top_rows(data, 10)
+    top = page.top_rows(data, 10)                    # the main list only (never padded with the to-confirm rows)
     change = (data or {}).get("change") or page.change_of(res) or {}
+    short = short_list.of(data)
     return {"run_id": res["run_id"], "status": res["status"], "output_dir": res["output_dir"],
             "started_at": res.get("started_at"),
             "page": str(stable) if stable else None, "run_page": str(path) if path else None,
             "page_opened": opened, "deck_id": (deck or {}).get("deck_id"), "cost_usd": cost,
             "seconds": seconds, "summary": page.summary_of(data, deck),
-            "top": top, "next_steps": _next_steps(gaps), "gaps": gaps,
+            "top": top, "top_more": page.top_more(data, len(top)), "to_confirm": page.to_confirm_brief(data),
+            "next_steps": (short_list.steps(short, res["run_id"]) + _next_steps(gaps))[:3],
+            "gaps": gaps, "short_list": short,
             "version": (data or {}).get("version") or 1, "change_zh": change.get("zh"), "change_en": change.get("en"),
             "sieve_version": (sv or {}).get("version"), "idea_en": job.get("idea_en"),
             "min_mcap_usd": job.get("min_mcap_usd"), "countries": job.get("countries"),
-            "fetch": _retarget_fetch(_fetch_brief((res.get("layers") or {}).get("fetch")), res["run_id"], top),
-            "translation": _translation_of(cfg, res["run_id"], data)}
+            "fetch": _retarget_fetch(ondemand.fetch_brief((res.get("layers") or {}).get("fetch")), res["run_id"],
+                                     page.top_rows(data, 10, section="all")),
+            "translation": _translation_of(cfg, res["run_id"], data),
+            # the page's own counts, so the chat line of your AI's check says the same numbers as this version's page
+            "agent_reviewed": ((res.get("layers") or {}).get("rank_only") or {}).get("reviewed"),
+            "removed_n": len((data or {}).get("removed") or []) if data is not None else None,
+            "removed_by_answers": bool((data or {}).get("removed_by_answers")) if data is not None else None}
 
 
 def _translation_of(cfg, run_id: str, data: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -4042,7 +4051,10 @@ def _page_view(cfg, data: dict[str, Any]) -> dict[str, Any]:
     """What a finished job reads from its page every time: the top rows (with the agent's translations once they
     are imported) and the translation step still to do (quickstart_cli.translation_block)."""
     from . import page, quickstart_cli
-    return {"top": page.top_rows(data, 10),
+    from . import short_list
+    top = page.top_rows(data, 10)
+    return {"top": top, "top_more": page.top_more(data, len(top)), "to_confirm": page.to_confirm_brief(data),
+            "short_list": short_list.of(data),
             "translation": quickstart_cli.translation_block(cfg, data.get("run_id"), data)}
 
 
@@ -4076,7 +4088,7 @@ def newest_view(cfg, job: dict[str, Any]) -> dict[str, Any]:
            "change_en": (data.get("change") or {}).get("en"), "newer_than_job": True,
            "cost_usd": data.get("cost_usd"), "seconds": data.get("seconds"), **_page_view(cfg, data)}
     if res.get("fetch"):
-        new["fetch"] = _retarget_fetch(res["fetch"], data["run_id"], page.top_rows(data, 10))
+        new["fetch"] = _retarget_fetch(res["fetch"], data["run_id"], page.top_rows(data, 10, section="all"))
     return {**job, "result": new}
 
 
@@ -4117,7 +4129,8 @@ def _retarget_fetch(fetch: dict[str, Any] | None, run_id: str | None,
     if not fetch:
         return fetch
     countries = {(r.get("country") or "") for r in top or []}
-    need = {"sec_email": "United States" in countries, "mops_annual": "Taiwan" in countries,
+    need = {"sec_email": "United States" in countries or bool(next((q.get("thin") for q in fetch.get(
+                "questions") or [] if q.get("id") == "sec_email"), None)), "mops_annual": "Taiwan" in countries,
             "opendart": "South Korea" in countries}
     qs_out = []
     for q in fetch.get("questions") or []:
@@ -4133,27 +4146,6 @@ def _retarget_fetch(fetch: dict[str, Any] | None, run_id: str | None,
                 q[k] = q[k] + STRINGS[lang]["optional_q"]
         qs_out.append(q)
     return {**fetch, "questions": qs_out}
-
-
-def open_fetch_questions(cfg, fetch: dict[str, Any] | None) -> dict[str, Any] | None:
-    """fetch.questions without the ones the human already settled since the fetch ran: the SEC contact (set, or
-    'no' recorded with `consent set sec-email-ask no`), the Taiwan annual-report consent (recorded either way) and the
-    OpenDART key (set). A settled question is never asked again, in chat or on the page."""
-    if not fetch or not fetch.get("questions"):
-        return fetch
-    from . import consent, keys, ondemand
-    settled: set[str] = set()
-    with contextlib.suppress(Exception):
-        if keys.presence(cfg, "sec-email").get("configured") \
-                or consent.get(cfg, ondemand.SEC_ASK_TOPIC)["state"] == "no":
-            settled.add("sec_email")
-    with contextlib.suppress(Exception):
-        if consent.get(cfg, ondemand.MOPS_TOPIC)["state"] in ("yes", "no"):
-            settled.add("mops_annual")
-    with contextlib.suppress(Exception):
-        if keys.presence(cfg, "opendart").get("configured"):
-            settled.add("opendart")
-    return {**fetch, "questions": [q for q in fetch["questions"] if q.get("id") not in settled]}
 
 
 def crawl_hidden(cfg, idea: str | None) -> bool:
@@ -4177,18 +4169,6 @@ def sec_declined(cfg) -> bool:
             and consent.get(cfg, ondemand.SEC_ASK_TOPIC)["state"] == "no"
     except Exception:  # noqa: BLE001
         return False
-
-
-def _fetch_brief(fetch: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The job result's view of layers.fetch: status, companies fetched per source, seconds, the update's outcome,
-    the next command and the human questions (sec_email / opendart / mops consent)."""
-    if not fetch:
-        return None
-    upd = fetch.get("update") or {}
-    return {"status": fetch.get("status"), "fetched": fetch.get("fetched") or {}, "seconds": fetch.get("seconds"),
-            "update": {k: upd.get(k) for k in ("run_id", "status", "cost_usd", "skipped") if upd.get(k) is not None},
-            "next_command": fetch.get("next_command"), "questions": fetch.get("questions") or [],
-            "summary_zh": fetch.get("summary_zh"), "summary_en": fetch.get("summary_en")}
 
 
 def store_locked() -> type:

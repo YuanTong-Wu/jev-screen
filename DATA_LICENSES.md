@@ -54,7 +54,7 @@ API, OpenRouter or Vercel AI Gateway, same price. Its answers are yours; the iss
   `tests/fixtures/MANIFEST.json`, and `tools/release_check.py` refuses undeclared fixtures. No third-party page,
   PDF, filing or API response is included. Company names, tickers and ISINs in test code are factual identifiers
   used as examples.
-- **The daily open data pack** (hosted by the maintainer as GitHub releases; see [docs/OPEN_PACK.md](docs/OPEN_PACK.md)).
+- **The open data pack** (hosted by the maintainer as GitHub releases, published when available; see [docs/OPEN_PACK.md](docs/OPEN_PACK.md)).
   Only sources on the explicit allowlist `jevscreen.pack.PACK_SOURCES` ship, each with its attribution text:
   - `sec_tickers` (official-open): the SEC ticker list, unchanged in content.
   - `edinet_yuho` (official-private, allowlisted under PDL 1.0): the EDINET code list (listed filers only, never
